@@ -1,0 +1,4 @@
+bin/
+gorover_credentials.toml
+.gorover_credentials.toml
+.DS_Store
