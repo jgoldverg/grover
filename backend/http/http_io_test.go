@@ -5,9 +5,4 @@ import (
 )
 
 func TestNewHttpReader(t *testing.T) {
-	tests := []struct {
-	}{
-		{},
-	}
-
 }

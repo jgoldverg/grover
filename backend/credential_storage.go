@@ -10,17 +10,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/google/uuid"
+	"github.com/jgoldverg/grover/backend/fs"
 )
-
-type Credential interface {
-	GetName() string
-	GetType() string
-	GetUrl() string
-	Validate() error
-	GetUUID() uuid.UUID
-}
-
-// Concrete credential types
 
 type SSHCredential struct {
 	Name           string    `toml:"name"`
@@ -102,7 +93,7 @@ type CredentialEntry struct {
 	// JWT, S3, etc. can be added here
 }
 
-func (ce CredentialEntry) ToCredential() (Credential, error) {
+func (ce CredentialEntry) ToCredential() (fs.Credential, error) {
 	switch ce.Type {
 	case "ssh":
 		if ce.SSH == nil {
@@ -119,7 +110,7 @@ func (ce CredentialEntry) ToCredential() (Credential, error) {
 	}
 }
 
-func FromCredential(cred Credential) (CredentialEntry, error) {
+func FromCredential(cred fs.Credential) (CredentialEntry, error) {
 	switch c := cred.(type) {
 	case *SSHCredential:
 		return CredentialEntry{Type: "ssh", SSH: c}, nil
@@ -132,18 +123,6 @@ func FromCredential(cred Credential) (CredentialEntry, error) {
 	default:
 		return CredentialEntry{}, errors.New("unsupported credential type")
 	}
-}
-
-// Interface
-
-type CredentialStorage interface {
-	GetCredentialByUUID(uuid.UUID) (Credential, error)
-	GetCredentialByName(name string) (Credential, error)
-	AddCredential(Credential) error
-	DeleteCredential(uuid.UUID) error
-	DeleteCredentialByName(string) error
-	ListCredentials() ([]Credential, error)
-	ListCredentialsByType(string) ([]Credential, error)
 }
 
 // TOML storage implementation
@@ -204,7 +183,7 @@ func (s *TomlCredentialStorage) saveToFile() error {
 	return nil
 }
 
-func (s *TomlCredentialStorage) GetCredentialByUUID(id uuid.UUID) (Credential, error) {
+func (s *TomlCredentialStorage) GetCredentialByUUID(id uuid.UUID) (fs.Credential, error) {
 	entry, ok := s.Credentials[id.String()]
 	if !ok {
 		return nil, errors.New("credential not found")
@@ -212,7 +191,7 @@ func (s *TomlCredentialStorage) GetCredentialByUUID(id uuid.UUID) (Credential, e
 	return entry.ToCredential()
 }
 
-func (s *TomlCredentialStorage) GetCredentialByName(name string) (Credential, error) {
+func (s *TomlCredentialStorage) GetCredentialByName(name string) (fs.Credential, error) {
 	for _, entry := range s.Credentials {
 		cred, err := entry.ToCredential()
 		if err != nil {
@@ -225,7 +204,7 @@ func (s *TomlCredentialStorage) GetCredentialByName(name string) (Credential, er
 	return nil, errors.New("credential not found")
 }
 
-func (s *TomlCredentialStorage) AddCredential(cred Credential) error {
+func (s *TomlCredentialStorage) AddCredential(cred fs.Credential) error {
 	if cred.GetUUID() == uuid.Nil {
 		return errors.New("credential must have a UUID")
 	}
@@ -263,8 +242,8 @@ func (s *TomlCredentialStorage) DeleteCredentialByName(name string) error {
 	return errors.New("credential not found")
 }
 
-func (s *TomlCredentialStorage) ListCredentials() ([]Credential, error) {
-	var creds []Credential
+func (s *TomlCredentialStorage) ListCredentials() ([]fs.Credential, error) {
+	var creds []fs.Credential
 	for _, entry := range s.Credentials {
 		cred, err := entry.ToCredential()
 		if err == nil {
@@ -274,8 +253,8 @@ func (s *TomlCredentialStorage) ListCredentials() ([]Credential, error) {
 	return creds, nil
 }
 
-func (s *TomlCredentialStorage) ListCredentialsByType(typ string) ([]Credential, error) {
-	var creds []Credential
+func (s *TomlCredentialStorage) ListCredentialsByType(typ string) ([]fs.Credential, error) {
+	var creds []fs.Credential
 	for _, entry := range s.Credentials {
 		if entry.Type == typ {
 			cred, err := entry.ToCredential()

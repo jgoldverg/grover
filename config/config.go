@@ -1,40 +1,59 @@
 package config
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
-	"github.com/pterm/pterm"
+	"github.com/jgoldverg/grover/backend/fs"
 	"github.com/spf13/viper"
 )
 
-var LogLevel = func() pterm.LogLevel {
-	switch os.Getenv("GOROVER_LOG_LEVEL") {
-	case "debug":
-		return pterm.LogLevelDebug
-	case "warn":
-		return pterm.LogLevelWarn
-	default:
-		return pterm.LogLevelInfo
-
-	}
+type AppConfig struct {
+	CredentialsFile string
 }
 
-var Log = pterm.DefaultLogger.
-	WithLevel(LogLevel()).
-	WithFormatter(pterm.LogFormatterColorful)
-
-type AutoConfig struct {
-	TomlFilePath string
+type ListerConfig struct {
+	Credential fs.Credential
 }
 
-func NewAutoConfig() *AutoConfig {
+func LoadAppConfig(configPath string) (*AppConfig, error) {
 	v := viper.New()
+
+	if configPath != "" {
+		v.SetConfigFile(configPath)
+	} else {
+		// default config location
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		v.AddConfigPath(filepath.Join(home, ".grover"))
+		v.SetConfigName("config")
+		v.SetConfigType("toml")
+	}
+
 	v.AutomaticEnv()
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	ac := AutoConfig{
-		TomlFilePath: ".gorover_credentials.toml",
+
+	// Set default for credentials file path
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
 	}
-	Log.Debug("Credential file path being used: " + ac.TomlFilePath)
-	return &ac
+	v.SetDefault("credentials_file", filepath.Join(home, ".grover_credentials.toml"))
+
+	// Read config file (if exists)
+	err = v.ReadInConfig()
+	if err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return nil, fmt.Errorf("failed to read config file: %w", err)
+		}
+	}
+	cfg := &AppConfig{
+		CredentialsFile: v.GetString("credentials_file"),
+	}
+
+	return cfg, nil
 }

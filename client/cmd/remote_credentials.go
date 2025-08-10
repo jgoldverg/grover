@@ -6,7 +6,8 @@ import (
 	"os/user"
 
 	"github.com/google/uuid"
-	"github.com/jgoldverg/GoRover/backend"
+	"github.com/jgoldverg/grover/backend"
+	"github.com/jgoldverg/grover/backend/fs"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -50,7 +51,7 @@ type S3CredentialOpts struct {
 	Endpoint     string
 }
 
-func RemoteCredentialsCommand(ctx context.Context, storage backend.CredentialStorage) *cobra.Command {
+func RemoteCredentialsCommand(ctx context.Context, storage fs.CredentialStorage) *cobra.Command {
 	var commonOpts AddCredentialOpts
 
 	cmd := &cobra.Command{
@@ -90,7 +91,7 @@ func RemoteCredentialsCommand(ctx context.Context, storage backend.CredentialSto
 	return cmd
 }
 
-func AddBasicCredentialCommand(storage backend.CredentialStorage, commonOpts *AddCredentialOpts) *cobra.Command {
+func AddBasicCredentialCommand(storage fs.CredentialStorage, commonOpts *AddCredentialOpts) *cobra.Command {
 	var (
 		basicOpts BasicAuthCredentialOpts
 	)
@@ -145,7 +146,7 @@ func AddBasicCredentialCommand(storage backend.CredentialStorage, commonOpts *Ad
 	return cmd
 }
 
-func AddSShCredentialCommand(storage backend.CredentialStorage, commonOpts *AddCredentialOpts) *cobra.Command {
+func AddSShCredentialCommand(storage fs.CredentialStorage, commonOpts *AddCredentialOpts) *cobra.Command {
 	var (
 		sshOpts SSHCredentialOpts
 	)
@@ -200,7 +201,7 @@ func AddSShCredentialCommand(storage backend.CredentialStorage, commonOpts *AddC
 	return cmd
 }
 
-func ListCredentialCommand(storage backend.CredentialStorage) *cobra.Command {
+func ListCredentialCommand(storage fs.CredentialStorage) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls", "l"},
@@ -222,7 +223,7 @@ func ListCredentialCommand(storage backend.CredentialStorage) *cobra.Command {
 	return cmd
 }
 
-func VisualizeCredentialList(credList []backend.Credential) {
+func VisualizeCredentialList(credList []fs.Credential) {
 	for _, cred := range credList {
 		pterm.Printfln("[%s]", cred.GetName())
 		pterm.Printfln("type = %s", cred.GetType())
