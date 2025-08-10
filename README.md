@@ -21,19 +21,19 @@ Hence the expectation this is a very slow burn of a project and one where I just
 
 ## Project Organization
 
-├── backend // shared code that enables transfer functionality for server and client. 
-│   ├── http //example protocol implementation
-│   └── localfs // impl for interacting with local file system 
+├── backend // shared code that enables transfer functionality for server and client.
+│   ├── http // example protocol implementation
+│   └── localfs // impl for interacting with local file system
 ├── bin
-├── client //just cli stuff but i think its important to say the cli is 100% encompassing the entire project. Transfer, server, client, absolutely everything is done through this b/c its so nice to have vs tests and bash scripts.
-│   └── cmd
-├── config //overall config
-├── pb // pb code for HTTP 2 transfers
-│   └── github.com
-│       └── jgoldverg
-│           └── grover
-│               └── pb
+├── client // just CLI stuff but I think it's important to say the CLI is 100% encompassing the entire project. Transfer, server, client, absolutely everything is done through this b/c it's so nice to have vs tests and bash scripts.
+│   └── cmd
+├── config // overall config
+├── pb // pb code for HTTP/2 transfers
+│   └── github.com
+│   └── jgoldverg
+│   └── grover
+│   └── pb
 ├── proto
-├── server // this is where we will implement the grpc server
+├── server // this is where we will implement the gRPC server
 ├── utils
-└── vendor //ya not sure but think maven but no ~/.m2 
+└── vendor // ya not sure but think maven but no ~/.m2
