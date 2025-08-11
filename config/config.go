@@ -12,6 +12,7 @@ import (
 
 type AppConfig struct {
 	CredentialsFile string
+	ServerURL       string
 }
 
 type ListerConfig struct {
