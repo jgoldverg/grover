@@ -7,7 +7,8 @@ import (
 
 	"github.com/jgoldverg/grover/backend"
 	"github.com/jgoldverg/grover/backend/fs"
-	"github.com/jgoldverg/grover/client/cli_output"
+	"github.com/jgoldverg/grover/cmd/grover-client/cli_output"
+	"github.com/jgoldverg/grover/cmd/grover-client/remote"
 	"github.com/jgoldverg/grover/config"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
@@ -19,8 +20,8 @@ type DryRunOpts struct {
 }
 
 type ListCommandOpts struct {
-	credentialName string
-	path           string
+	CredentialName string
+	Path           string
 }
 
 func BackendCommand() *cobra.Command {
@@ -74,56 +75,68 @@ func listCommand() *cobra.Command {
 			// Validate endpointType
 			switch endpointType {
 			case fs.ListerFilesystem, fs.ListerHTTP:
-				// valid
+
 			default:
 				return fmt.Errorf("invalid endpoint-type: %s, must be one of [%s, %s]",
 					endpointType, fs.ListerFilesystem, fs.ListerHTTP)
 			}
 
-			if opts.path == "" {
+			if opts.Path == "" {
 				pwd, err := os.Getwd()
 				if err != nil {
 					return err
 				}
-				opts.path = pwd
+				opts.Path = pwd
 			}
 
 			pterm.DefaultSection.Println("Listing files on backend")
 			pterm.DefaultBasicText.Println("  Endpoint Type:", endpointType)
-			pterm.DefaultBasicText.Println("  Path:", opts.path)
-			pterm.DefaultBasicText.Println("  Credential Name:", opts.credentialName)
+			pterm.DefaultBasicText.Println("  Path:", opts.Path)
+			pterm.DefaultBasicText.Println("  Credential Name:", opts.CredentialName)
 
 			appConfig := GetAppConfig(cmd)
-			storage, err := backend.NewTomlCredentialStorage(appConfig.CredentialsFile)
-			if err != nil {
-				return fmt.Errorf("failed to create credential store: path we got %s: %w", appConfig.CredentialsFile, err)
-			}
-
-			var cfg config.ListerConfig
-			if opts.credentialName == "" {
-				cfg.Credential = nil
-			} else {
-				cred, err := storage.GetCredentialByName(opts.credentialName)
+			if len(appConfig.ServerURL) > 0 {
+				//now we want to issue the proto request and not use the local ls
+				files, err := remote.ListOnRemote(endpointType, appConfig.ServerURL, opts.Path)
 				if err != nil {
 					return err
 				}
-				cfg.Credential = cred
+
+				if err := cli_output.PrintFileTable(files); err != nil {
+					return err
+				}
+				return nil
+			} else {
+				storage, err := backend.NewTomlCredentialStorage(appConfig.CredentialsFile)
+				if err != nil {
+					return fmt.Errorf("failed to create credential store: path we got %s: %w", appConfig.CredentialsFile, err)
+				}
+
+				var cfg config.ListerConfig
+				if opts.CredentialName == "" {
+					cfg.Credential = nil
+				} else {
+					cred, err := storage.GetCredentialByName(opts.CredentialName)
+					if err != nil {
+						return err
+					}
+					cfg.Credential = cred
+				}
+
+				lister := backend.ListerFactory(endpointType, cfg)
+
+				fileInfo := lister.List(opts.Path)
+
+				if err := cli_output.PrintFileTable(fileInfo); err != nil {
+					return err
+				}
 			}
-
-			lister := backend.ListerFactory(endpointType, cfg)
-
-			fileInfo := lister.List(opts.path)
-
-			if err := cli_output.PrintFileTable(fileInfo); err != nil {
-				return err
-			}
-
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.credentialName, "credential-name", "", "The Credential name to use for doing a list")
-	cmd.Flags().StringVar(&opts.path, "path", "", "The path to list (default is pwd)")
+	cmd.Flags().StringVar(&opts.CredentialName, "credential-name", "", "The Credential name to use for doing a list")
+	cmd.Flags().StringVar(&opts.Path, "path", "", "The path to list (default is pwd)")
 
 	return cmd
 }

@@ -4,12 +4,12 @@ PROTO_DIR := proto
 OUT_DIR := pb
 PROTO_FILES := $(wildcard $(PROTO_DIR)/*.proto)
 
-SERVER_DIR := server
-CLIENT_DIR := client
+SERVER_DIR := cmd/grover-server
+CLIENT_DIR := cmd/grover-client
 
 BIN_DIR := bin
-SERVER_BIN := $(BIN_DIR)/go-rover
-CLIENT_BIN := $(BIN_DIR)/go-rover
+SERVER_BIN := $(BIN_DIR)/grover-server
+CLIENT_BIN := $(BIN_DIR)/grover-client
 
 .PHONY: all proto build-server build-client clean test
 

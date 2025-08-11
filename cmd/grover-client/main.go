@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	"github.com/jgoldverg/grover/client/cmd"
+	cmd "github.com/jgoldverg/grover/cmd/grover-client/cmd"
 )
 
 func main() {

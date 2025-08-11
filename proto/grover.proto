@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package grover;
+
+
+option go_package = "github.com/jgoldverg/grover/pb;pb";
+
+enum EndpointType {
+  ENDPOINT_TYPE_UNSPECIFIED = 0;  // default value, must be 0
+  HTTP = 1;
+  LOCAL_FS = 2;
+}
+
+service FileService {
+  rpc List(ListFilesRequest) returns (ListFilesResponse);
+  rpc Remove(RemoveFileRequest) returns (RemoveFileResponse);
+}
+
+message FileInfo {
+  string path = 1;
+  string id = 2;
+  uint64 size = 3; 
+}
+
+message ListFilesRequest {
+  EndpointType type = 1;
+  string path = 2;
+  oneof credential_identifier {
+    string credentialName = 3;
+    string credentialUUID = 4;
+  }
+}
+
+message ListFilesResponse {
+    repeated FileInfo files = 1;
+}
+
+message RemoveFileRequest {
+  EndpointType type = 1;
+  string path = 2;
+  oneof credential_identifier {
+    string credentialName = 3;
+    string credentialUUID = 4;
+  }
+}
+
+message RemoveFileResponse {
+  bool success = 1;
+}
