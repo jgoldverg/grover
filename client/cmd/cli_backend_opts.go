@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -24,7 +23,7 @@ type ListCommandOpts struct {
 	path           string
 }
 
-func BackendCommand(ctx context.Context, credentialStorage fs.CredentialStorage) *cobra.Command {
+func BackendCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "backend",
 		Short:   "Commands related to managing local and remote backend file servers",
@@ -35,13 +34,13 @@ func BackendCommand(ctx context.Context, credentialStorage fs.CredentialStorage)
 		},
 	}
 
-	cmd.AddCommand(DryRunCommand(credentialStorage))
-	cmd.AddCommand(listCommand(ctx, credentialStorage))
+	cmd.AddCommand(DryRunCommand())
+	cmd.AddCommand(listCommand())
 
 	return cmd
 }
 
-func DryRunCommand(credentialStorage fs.CredentialStorage) *cobra.Command {
+func DryRunCommand() *cobra.Command {
 	var opts DryRunOpts
 
 	cmd := &cobra.Command{
@@ -52,21 +51,6 @@ func DryRunCommand(credentialStorage fs.CredentialStorage) *cobra.Command {
 			if opts.CredentialName == "" && opts.CredentialUUID == "" {
 				return errors.New("Must provide either the credential uuid or the name")
 			}
-			// var credential backend.Credential
-			// if opts.CredentialName != "" {
-			// 	credential, err := credentialStorage.GetCredentialByName(opts.CredentialName)
-			// 	if err != nil {
-			// 		pterm.Error.Printf("Failed to get credential for name = %s", credential)
-			// 	}
-			// }
-			// if opts.CredentialUUID != "" {
-			// 	credUuid, err := uuid.Parse(opts.CredentialUUID)
-			// 	if err != nil {
-			// 		pterm.Error.Printf("Failed to parse passing in UUID = %s", opts.CredentialUUID)
-			// 	}
-			// 	credential, err := credentialStorage.GetCredentialByUUID(credUuid)
-			// }
-
 			return nil
 		},
 	}
@@ -76,7 +60,7 @@ func DryRunCommand(credentialStorage fs.CredentialStorage) *cobra.Command {
 	return cmd
 }
 
-func listCommand(ctx context.Context, storage fs.CredentialStorage) *cobra.Command {
+func listCommand() *cobra.Command {
 	opts := &ListCommandOpts{}
 
 	cmd := &cobra.Command{
@@ -103,11 +87,17 @@ func listCommand(ctx context.Context, storage fs.CredentialStorage) *cobra.Comma
 				}
 				opts.path = pwd
 			}
-			
+
 			pterm.DefaultSection.Println("Listing files on backend")
 			pterm.DefaultBasicText.Println("  Endpoint Type:", endpointType)
 			pterm.DefaultBasicText.Println("  Path:", opts.path)
 			pterm.DefaultBasicText.Println("  Credential Name:", opts.credentialName)
+
+			appConfig := GetAppConfig(cmd)
+			storage, err := backend.NewTomlCredentialStorage(appConfig.CredentialsFile)
+			if err != nil {
+				return fmt.Errorf("failed to create credential store: path we got %s: %w", appConfig.CredentialsFile, err)
+			}
 
 			var cfg config.ListerConfig
 			if opts.credentialName == "" {

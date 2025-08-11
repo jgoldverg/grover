@@ -54,13 +54,12 @@ type BasicAuthCredential struct {
 	Name     string    `toml:"name"`
 	Username string    `toml:"username"`
 	Password string    `toml:"password"`
-	Host     string    `toml:"host"`
-	Port     int       `toml:"port,omitempty"`
+	URL      string    `toml:"url"`
 	UUID     uuid.UUID `toml:"uuid"`
 }
 
 func (c *BasicAuthCredential) GetUrl() string {
-	return fmt.Sprintf("%s:%s", c.Host, strconv.Itoa(c.Port))
+	return c.URL
 }
 
 func (c *BasicAuthCredential) GetUserName() string {
@@ -76,8 +75,8 @@ func (c *BasicAuthCredential) Validate() error {
 	if c.Name == "" {
 		return errors.New("name is required")
 	}
-	if c.Host == "" {
-		return errors.New("host is required")
+	if c.URL == "" {
+		return errors.New("url is required")
 	}
 	return nil
 }

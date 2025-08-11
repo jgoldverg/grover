@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"context"
 	"errors"
+	"fmt"
 	"os/user"
 
 	"github.com/google/uuid"
@@ -51,7 +51,12 @@ type S3CredentialOpts struct {
 	Endpoint     string
 }
 
-func RemoteCredentialsCommand(ctx context.Context, storage fs.CredentialStorage) *cobra.Command {
+type DeleteCredentialOpts struct {
+	CredentialName string
+	CredentialUUID string
+}
+
+func RemoteCredentialsCommand() *cobra.Command {
 	var commonOpts AddCredentialOpts
 
 	cmd := &cobra.Command{
@@ -67,16 +72,19 @@ func RemoteCredentialsCommand(ctx context.Context, storage fs.CredentialStorage)
 	// Store subcommand constructors (not instances)
 	subcommands := []func(*AddCredentialOpts) *cobra.Command{
 		func(opts *AddCredentialOpts) *cobra.Command {
-			return AddBasicCredentialCommand(storage, opts)
+			return AddBasicCredentialCommand(opts)
 		},
 		func(opts *AddCredentialOpts) *cobra.Command {
-			return AddSShCredentialCommand(storage, opts)
+			return AddSShCredentialCommand(opts)
 		},
 	}
 
 	basicCommands := []func() *cobra.Command{
 		func() *cobra.Command {
-			return ListCredentialCommand(storage)
+			return ListCredentialCommand()
+		},
+		func() *cobra.Command {
+			return DeleteCredentialCommand()
 		},
 	}
 
@@ -91,7 +99,7 @@ func RemoteCredentialsCommand(ctx context.Context, storage fs.CredentialStorage)
 	return cmd
 }
 
-func AddBasicCredentialCommand(storage fs.CredentialStorage, commonOpts *AddCredentialOpts) *cobra.Command {
+func AddBasicCredentialCommand(commonOpts *AddCredentialOpts) *cobra.Command {
 	var (
 		basicOpts BasicAuthCredentialOpts
 	)
@@ -119,8 +127,7 @@ func AddBasicCredentialCommand(storage fs.CredentialStorage, commonOpts *AddCred
 				Name:     commonOpts.CredentialName,
 				Username: basicOpts.Username,
 				Password: basicOpts.Password,
-				Host:     commonOpts.URL,
-				Port:     0,
+				URL:      commonOpts.URL,
 				UUID:     uuid.New(),
 			}
 
@@ -128,6 +135,12 @@ func AddBasicCredentialCommand(storage fs.CredentialStorage, commonOpts *AddCred
 			if err != nil {
 				return errors.New("Failed to validate basic-credential: " + err.Error())
 			}
+			appConfig := GetAppConfig(cmd)
+			storage, err := backend.NewTomlCredentialStorage(appConfig.CredentialsFile)
+			if err != nil {
+				return fmt.Errorf("failed to create credential store: path we got %s: %w", appConfig.CredentialsFile, err)
+			}
+
 			err = storage.AddCredential(credential)
 			if err != nil {
 				return errors.New("failed to add credential: " + err.Error())
@@ -146,7 +159,7 @@ func AddBasicCredentialCommand(storage fs.CredentialStorage, commonOpts *AddCred
 	return cmd
 }
 
-func AddSShCredentialCommand(storage fs.CredentialStorage, commonOpts *AddCredentialOpts) *cobra.Command {
+func AddSShCredentialCommand(commonOpts *AddCredentialOpts) *cobra.Command {
 	var (
 		sshOpts SSHCredentialOpts
 	)
@@ -183,6 +196,12 @@ func AddSShCredentialCommand(storage fs.CredentialStorage, commonOpts *AddCreden
 			if err != nil {
 				return errors.New("Failed in validating SSH credential: " + err.Error())
 			}
+			appConfig := GetAppConfig(cmd)
+			storage, err := backend.NewTomlCredentialStorage(appConfig.CredentialsFile)
+			if err != nil {
+				return fmt.Errorf("failed to create credential store: path we got %s: %w", appConfig.CredentialsFile, err)
+			}
+
 			err = storage.AddCredential(credential)
 			if err != nil {
 				return errors.New("Failed to add credential: " + err.Error())
@@ -201,13 +220,19 @@ func AddSShCredentialCommand(storage fs.CredentialStorage, commonOpts *AddCreden
 	return cmd
 }
 
-func ListCredentialCommand(storage fs.CredentialStorage) *cobra.Command {
+func ListCredentialCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls", "l"},
 		Long:    "List credentials stored in the credential storage",
 		Short:   "List credentials stored in the credential storage",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			appConfig := GetAppConfig(cmd)
+			storage, err := backend.NewTomlCredentialStorage(appConfig.CredentialsFile)
+			if err != nil {
+				return fmt.Errorf("failed to create credential store: path we got %s: %w", appConfig.CredentialsFile, err)
+			}
+
 			credList, err := storage.ListCredentials()
 			if err != nil {
 				return errors.New("Failed to list the stored credentials: " + err.Error())
@@ -221,6 +246,45 @@ func ListCredentialCommand(storage fs.CredentialStorage) *cobra.Command {
 	}
 
 	return cmd
+}
+
+func DeleteCredentialCommand() *cobra.Command {
+	var deleteCredOpts DeleteCredentialOpts
+
+	cmd := &cobra.Command{
+		Use:     "delete",
+		Aliases: []string{"rm", "d"},
+		Long:    "Delete a credential from the configured credential store path",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			appConfig := GetAppConfig(cmd)
+			storage, err := backend.NewTomlCredentialStorage(appConfig.CredentialsFile)
+			if err != nil {
+				return fmt.Errorf("failed to create credential store path: we got %s: %w", appConfig.CredentialsFile, err)
+			}
+			if deleteCredOpts.CredentialName == "" && deleteCredOpts.CredentialUUID == "" {
+				return errors.New("must pass in either the credential name or the credential uuid")
+			}
+
+			if deleteCredOpts.CredentialName != "" {
+				return storage.DeleteCredentialByName(deleteCredOpts.CredentialName)
+			}
+
+			if deleteCredOpts.CredentialUUID != "" {
+				credUuid, err := uuid.Parse(deleteCredOpts.CredentialUUID)
+				if err != nil {
+					return errors.New("the credential uuid is not valid: " + err.Error())
+				}
+				return storage.DeleteCredential(credUuid)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&deleteCredOpts.CredentialName, "name", "", "The name of the stored credential")
+	cmd.Flags().StringVar(&deleteCredOpts.CredentialUUID, "uuid", "", "The uuid assigned to the credential")
+
+	return cmd
+
 }
 
 func VisualizeCredentialList(credList []fs.Credential) {

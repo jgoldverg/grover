@@ -2,66 +2,73 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 
-	"github.com/jgoldverg/grover/backend"
-	"github.com/jgoldverg/grover/backend/fs"
 	"github.com/jgoldverg/grover/config"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
 
-var (
-	appConfigPath   string
-	appCfg          *config.AppConfig
-	credentialStore fs.CredentialStorage
-)
+type ctxKey string
+
+const appCtxKey ctxKey = "appData"
 
 func NewRootCommand() *cobra.Command {
+	var appConfigPath string
+	var serverURLFlag string
+
 	rootCmd := &cobra.Command{
-		Use:   "gorover",
+		Use:   "grover",
 		Short: "grover is a file transfer tool for common protocols",
 		Long:  `grover is a CLI tool that can perform scatter and gather operations while supporting high levels of parallelism. Best of all we do network monitoring and reporting as well!`,
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			// Load app config
+			cfg, err := config.LoadAppConfig(appConfigPath)
+			if err != nil {
+				return fmt.Errorf("failed to load app config: %w", err)
+			}
+
+			// Override ServerURL if flag is set
+			if serverURLFlag != "" {
+				cfg.ServerURL = serverURLFlag
+			}
+
+			pterm.Println("Using credentials file:", cfg.CredentialsFile)
+
+			// Ensure credentials file directory exists
+			dir := filepath.Dir(cfg.CredentialsFile)
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return fmt.Errorf("failed to create directory for credentials file: %w", err)
+			}
+
+			ctx := context.WithValue(cmd.Context(), appCtxKey, cfg)
+			cmd.SetContext(ctx)
+
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()
 		},
 	}
 
-	// Persistent flag for app config file path
 	rootCmd.PersistentFlags().StringVar(&appConfigPath, "app-config", "", "Path to app config file (TOML)")
+	rootCmd.PersistentFlags().StringVar(&serverURLFlag, "server-url", "", "URL of the server to connect to")
 
-	// Initialize config and credential storage before running any command
-	cobra.OnInitialize(initConfigAndStorage)
-
-	// Pass a pointer to the credential store so commands can use it
-	rootCmd.AddCommand(BackendCommand(context.Background(), credentialStore))
-	rootCmd.AddCommand(RemoteCredentialsCommand(context.Background(), credentialStore))
+	// Notice we pass no context or credentialStore here — subcommands get them from cmd.Context()
+	rootCmd.AddCommand(BackendCommand())
+	rootCmd.AddCommand(RemoteCredentialsCommand())
 
 	return rootCmd
 }
 
-func initConfigAndStorage() {
-	cfg, err := config.LoadAppConfig(appConfigPath)
-	if err != nil {
-		pterm.Error.Printf("Failed to load app config: %v\n", err)
-		os.Exit(1)
+// Helper function for subcommands to get appData
+func GetAppConfig(cmd *cobra.Command) *config.AppConfig {
+	if v := cmd.Context().Value(appCtxKey); v != nil {
+		if data, ok := v.(*config.AppConfig); ok {
+			return data
+		}
 	}
-	appCfg = cfg
-
-	pterm.Println("Using credentials file:", appCfg.CredentialsFile)
-
-	// Make sure the directory for the credentials file exists
-	dir := filepath.Dir(appCfg.CredentialsFile)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		pterm.Error.Printf("Failed to create directory for credentials file: %v\n", err)
-		os.Exit(1)
-	}
-
-	store, err := backend.NewTomlCredentialStorage(appCfg.CredentialsFile)
-	if err != nil {
-		pterm.Error.Printf("Failed to initialize credential storage: %v\n", err)
-		os.Exit(1)
-	}
-	credentialStore = store
+	return nil
 }
