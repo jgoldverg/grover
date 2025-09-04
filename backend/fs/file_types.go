@@ -1,11 +1,23 @@
 package fs
 
-type ListerType string
+type BackendType string
 
 const (
-	ListerFilesystem ListerType = "localfs"
-	ListerHTTP       ListerType = "http"
+	LOCALFSBackend BackendType = "localfs"
+	HTTPBackend    BackendType = "http"
+	GROVERBackend  BackendType = "grover"
 )
+
+var backends = map[BackendType]struct{}{
+	LOCALFSBackend: {},
+	HTTPBackend:    {},
+	GROVERBackend:  {},
+}
+
+func IsBackendTypeValid(bt BackendType) bool {
+	_, ok := backends[bt]
+	return ok
+}
 
 type Chunk interface {
 	FileID() string
@@ -15,12 +27,12 @@ type Chunk interface {
 	Data() [][]byte
 }
 
-type FileLister interface {
+type ListOperation interface {
 	List(rootPath string) []FileInfo
 }
 
 type RmOperation interface {
-	Rm(filePath string) FileInfo
+	Rm(filePath string) bool
 }
 
 type FileInfo struct {

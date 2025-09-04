@@ -2,9 +2,12 @@ package localfs
 
 import (
 	"io/fs"
+	"os"
 	"path/filepath"
 
 	groverFs "github.com/jgoldverg/grover/backend/fs"
+	"github.com/jgoldverg/grover/server/log"
+	"github.com/pterm/pterm"
 )
 
 type FileSystemReader struct {
@@ -15,14 +18,14 @@ type FileSystemWriter struct {
 	absPath string
 }
 
-type FileSystemLister struct {
+type FileSystemOperations struct {
 }
 
-func NewFileSystemLister() *FileSystemLister {
-	return &FileSystemLister{}
+func NewFileSystemOperations() *FileSystemOperations {
+	return &FileSystemOperations{}
 }
 
-func (fsl *FileSystemLister) List(rootPath string) []groverFs.FileInfo {
+func (fsl *FileSystemOperations) List(rootPath string) []groverFs.FileInfo {
 	var files []groverFs.FileInfo
 
 	err := filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
@@ -51,6 +54,15 @@ func (fsl *FileSystemLister) List(rootPath string) []groverFs.FileInfo {
 	return files
 }
 
+func (fsl *FileSystemOperations) Rm(path string) bool {
+	err := os.RemoveAll(path)
+	if err != nil {
+		log.Structured(&pterm.Error, "failed to rm path", log.Fields{"path": path})
+		return false
+	}
+	return true
+}
+
 func NewFileSystemReader(file groverFs.FileInfo) *FileSystemReader {
 	return &FileSystemReader{
 		absPath: file.AbsPath,
@@ -58,7 +70,6 @@ func NewFileSystemReader(file groverFs.FileInfo) *FileSystemReader {
 }
 
 func (fr *FileSystemReader) Read() (*groverFs.Chunk, error) {
-
 	return nil, nil
 }
 

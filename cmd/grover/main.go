@@ -3,11 +3,11 @@ package main
 import (
 	"log"
 
-	cmd "github.com/jgoldverg/grover/cmd/grover-client/cmd"
+	"github.com/jgoldverg/grover/cli"
 )
 
 func main() {
-	rootCmd := cmd.NewRootCommand()
+	rootCmd := cli.NewRootCommand()
 
 	if err := rootCmd.Execute(); err != nil {
 		log.Fatalf("error: %v\n", err)

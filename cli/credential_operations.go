@@ -1,4 +1,4 @@
-package cmd
+package cli
 
 import (
 	"errors"
@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jgoldverg/grover/backend"
-	"github.com/jgoldverg/grover/backend/fs"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -56,7 +55,7 @@ type DeleteCredentialOpts struct {
 	CredentialUUID string
 }
 
-func RemoteCredentialsCommand() *cobra.Command {
+func CredentialCommand() *cobra.Command {
 	var commonOpts AddCredentialOpts
 
 	cmd := &cobra.Command{
@@ -66,7 +65,7 @@ func RemoteCredentialsCommand() *cobra.Command {
 	}
 
 	// Add persistent flags
-	cmd.PersistentFlags().StringVarP(&commonOpts.URL, "url", "u", "", "Backend URL")
+	cmd.PersistentFlags().StringVarP(&commonOpts.URL, "--server-url", "u", "", "Backend URL")
 	cmd.PersistentFlags().StringVarP(&commonOpts.CredentialName, "name", "n", "", "Credential name")
 
 	// Store subcommand constructors (not instances)
@@ -108,6 +107,10 @@ func AddBasicCredentialCommand(commonOpts *AddCredentialOpts) *cobra.Command {
 		Long:  "Add a basic credential for a remote server",
 		Short: "Add a basic credential for a remote server",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg := GetAppConfig(cmd)
+			if cfg.ServerURL != "" {
+
+			}
 			if commonOpts.URL == "" {
 				return errors.New("must specify a URL to the server")
 			}
@@ -287,7 +290,7 @@ func DeleteCredentialCommand() *cobra.Command {
 
 }
 
-func VisualizeCredentialList(credList []fs.Credential) {
+func VisualizeCredentialList(credList []backend.Credential) {
 	for _, cred := range credList {
 		pterm.Printfln("[%s]", cred.GetName())
 		pterm.Printfln("type = %s", cred.GetType())

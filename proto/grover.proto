@@ -2,7 +2,6 @@ syntax = "proto3";
 
 package grover;
 
-
 option go_package = "github.com/jgoldverg/grover/pb;pb";
 
 enum EndpointType {
@@ -19,7 +18,7 @@ service FileService {
 message FileInfo {
   string path = 1;
   string id = 2;
-  uint64 size = 3; 
+  uint64 size = 3;
 }
 
 message ListFilesRequest {
@@ -32,7 +31,7 @@ message ListFilesRequest {
 }
 
 message ListFilesResponse {
-    repeated FileInfo files = 1;
+  repeated FileInfo files = 1;
 }
 
 message RemoveFileRequest {
@@ -47,3 +46,71 @@ message RemoveFileRequest {
 message RemoveFileResponse {
   bool success = 1;
 }
+
+
+
+
+service CredentialService {
+  rpc Create (CreateCredentialRequest)  returns (CreateCredentialResponse);
+  rpc Get    (GetCredentialRequest)     returns (GetCredentialResponse);
+  rpc List   (ListCredentialsRequest)   returns (ListCredentialsResponse);
+  rpc Delete (DeleteCredentialRequest)  returns (DeleteCredentialResponse);
+}
+
+enum CredentialType {
+  CREDENTIAL_TYPE_UNSPECIFIED = 0;
+  SSH_CREDENTIAL_TYPE = 1;
+  BASIC_CREDENTIAL_TYPE = 2;
+}
+
+// Selector used in requests (UUID or name).
+message CredentialRef {
+  oneof ref {
+    string credential_uuid = 1;
+    string credential_name = 2;
+  }
+}
+
+// Full credential (includes secrets by design).
+message Credential {
+  string credential_uuid = 1;   // SSHCredential.UUID / BasicAuthCredential.UUID
+  string credential_name = 2;   // .Name
+  CredentialType type = 3;   // "ssh"/"basic" -> enum below
+
+  oneof details {
+    BasicDetails basic = 10;    // for BASIC
+    SshDetails   ssh = 11;    // for SSH
+  }
+}
+
+message BasicDetails {
+  string username = 1;          // BasicAuthCredential.Username
+  string password = 2;          // BasicAuthCredential.Password  (secret)
+  string url = 3;          // BasicAuthCredential.URL
+}
+
+message SshDetails {
+  string username = 1;
+  string host = 2;
+  int32  port = 3;
+  string public_key = 4;
+  string private_key = 5;
+  bool   use_agent = 6;
+}
+
+message CreateCredentialRequest  {Credential credential = 1;}
+message CreateCredentialResponse {}
+
+message GetCredentialRequest     {CredentialRef ref = 1;}
+message GetCredentialResponse    {Credential credential = 1;}
+
+message ListCredentialsRequest {
+  CredentialType type = 1;
+}
+message ListCredentialsResponse {
+  repeated Credential credentials = 1;
+  string next_page_token = 2;
+}
+
+message DeleteCredentialRequest  {CredentialRef ref = 1;}
+message DeleteCredentialResponse {}

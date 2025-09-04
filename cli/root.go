@@ -1,4 +1,4 @@
-package cmd
+package cli
 
 import (
 	"context"
@@ -58,7 +58,7 @@ func NewRootCommand() *cobra.Command {
 
 	// Notice we pass no context or credentialStore here — subcommands get them from cmd.Context()
 	rootCmd.AddCommand(BackendCommand())
-	rootCmd.AddCommand(RemoteCredentialsCommand())
+	rootCmd.AddCommand(CredentialCommand())
 
 	return rootCmd
 }

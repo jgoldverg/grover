@@ -10,8 +10,25 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/google/uuid"
-	"github.com/jgoldverg/grover/backend/fs"
 )
+
+type Credential interface {
+	GetName() string
+	GetType() string
+	GetUrl() string
+	Validate() error
+	GetUUID() uuid.UUID
+}
+
+type CredentialStorage interface {
+	GetCredentialByUUID(uuid.UUID) (Credential, error)
+	GetCredentialByName(name string) (Credential, error)
+	AddCredential(Credential) error
+	DeleteCredential(uuid.UUID) error
+	DeleteCredentialByName(string) error
+	ListCredentials() ([]Credential, error)
+	ListCredentialsByType(string) ([]Credential, error)
+}
 
 type SSHCredential struct {
 	Name           string    `toml:"name"`
@@ -21,6 +38,7 @@ type SSHCredential struct {
 	PrivateKeyPath string    `toml:"private_key_path"`
 	PublicKeyPath  string    `toml:"public_key_path,omitempty"`
 	PublicKey      string    `toml:"public_key,omitempty"`
+	PrivateKey     string    `toml:"private_key,omitempty"`
 	UUID           uuid.UUID `toml:"uuid"`
 	UseAgent       bool      `toml:"use_agent,omitempty"`
 }
@@ -92,7 +110,7 @@ type CredentialEntry struct {
 	// JWT, S3, etc. can be added here
 }
 
-func (ce CredentialEntry) ToCredential() (fs.Credential, error) {
+func (ce CredentialEntry) ToCredential() (Credential, error) {
 	switch ce.Type {
 	case "ssh":
 		if ce.SSH == nil {
@@ -109,7 +127,7 @@ func (ce CredentialEntry) ToCredential() (fs.Credential, error) {
 	}
 }
 
-func FromCredential(cred fs.Credential) (CredentialEntry, error) {
+func FromCredential(cred Credential) (CredentialEntry, error) {
 	switch c := cred.(type) {
 	case *SSHCredential:
 		return CredentialEntry{Type: "ssh", SSH: c}, nil
@@ -131,7 +149,7 @@ type TomlCredentialStorage struct {
 	Credentials map[string]CredentialEntry `toml:"credentials"`
 }
 
-func NewTomlCredentialStorage(filePath string) (*TomlCredentialStorage, error) {
+func NewTomlCredentialStorage(filePath string) (CredentialStorage, error) {
 	storage := &TomlCredentialStorage{
 		filePath:    filePath,
 		Credentials: make(map[string]CredentialEntry),
@@ -182,7 +200,7 @@ func (s *TomlCredentialStorage) saveToFile() error {
 	return nil
 }
 
-func (s *TomlCredentialStorage) GetCredentialByUUID(id uuid.UUID) (fs.Credential, error) {
+func (s *TomlCredentialStorage) GetCredentialByUUID(id uuid.UUID) (Credential, error) {
 	entry, ok := s.Credentials[id.String()]
 	if !ok {
 		return nil, errors.New("credential not found")
@@ -190,7 +208,7 @@ func (s *TomlCredentialStorage) GetCredentialByUUID(id uuid.UUID) (fs.Credential
 	return entry.ToCredential()
 }
 
-func (s *TomlCredentialStorage) GetCredentialByName(name string) (fs.Credential, error) {
+func (s *TomlCredentialStorage) GetCredentialByName(name string) (Credential, error) {
 	for _, entry := range s.Credentials {
 		cred, err := entry.ToCredential()
 		if err != nil {
@@ -203,7 +221,7 @@ func (s *TomlCredentialStorage) GetCredentialByName(name string) (fs.Credential,
 	return nil, errors.New("credential not found")
 }
 
-func (s *TomlCredentialStorage) AddCredential(cred fs.Credential) error {
+func (s *TomlCredentialStorage) AddCredential(cred Credential) error {
 	if cred.GetUUID() == uuid.Nil {
 		return errors.New("credential must have a UUID")
 	}
@@ -241,8 +259,8 @@ func (s *TomlCredentialStorage) DeleteCredentialByName(name string) error {
 	return errors.New("credential not found")
 }
 
-func (s *TomlCredentialStorage) ListCredentials() ([]fs.Credential, error) {
-	var creds []fs.Credential
+func (s *TomlCredentialStorage) ListCredentials() ([]Credential, error) {
+	var creds []Credential
 	for _, entry := range s.Credentials {
 		cred, err := entry.ToCredential()
 		if err == nil {
@@ -252,8 +270,8 @@ func (s *TomlCredentialStorage) ListCredentials() ([]fs.Credential, error) {
 	return creds, nil
 }
 
-func (s *TomlCredentialStorage) ListCredentialsByType(typ string) ([]fs.Credential, error) {
-	var creds []fs.Credential
+func (s *TomlCredentialStorage) ListCredentialsByType(typ string) ([]Credential, error) {
+	var creds []Credential
 	for _, entry := range s.Credentials {
 		if entry.Type == typ {
 			cred, err := entry.ToCredential()

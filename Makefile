@@ -4,12 +4,12 @@ PROTO_DIR := proto
 OUT_DIR := pb
 PROTO_FILES := $(wildcard $(PROTO_DIR)/*.proto)
 
-SERVER_DIR := cmd/grover-server
-CLIENT_DIR := cmd/grover-client
+SERVER_DIR := cmd/groverd
+CLIENT_DIR := cmd/grover
 
 BIN_DIR := bin
-SERVER_BIN := $(BIN_DIR)/grover-server
-CLIENT_BIN := $(BIN_DIR)/grover-client
+SERVER_BIN := $(BIN_DIR)/groverd
+CLIENT_BIN := $(BIN_DIR)/grover
 
 .PHONY: all proto build-server build-client clean test
 
@@ -20,7 +20,9 @@ proto:
 	protoc \
 		--proto_path=$(PROTO_DIR) \
 		--go_out=$(OUT_DIR) \
+		--go_opt=paths=source_relative \
 		--go-grpc_out=$(OUT_DIR) \
+		--go-grpc_opt=paths=source_relative \
 		$(PROTO_FILES)
 	@echo "Protobuf generation complete."
 
@@ -38,11 +40,10 @@ build-client:
 
 clean:
 	@echo "Cleaning generated files and binaries..."
-	rm -f $(OUT_DIR)/*.pb.go
-	rm -f $(SERVER_BIN) $(CLIENT_BIN)
+	rm -rf $(OUT_DIR)/*.pb.go
+	rm -rf $(BIN_DIR)
 	@echo "Clean complete."
 
 test:
 	@echo "Running all Go tests..."
 	go test ./...
-
