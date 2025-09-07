@@ -7,7 +7,7 @@ import (
 	"sync"
 
 	"github.com/jgoldverg/grover/backend"
-	"github.com/jgoldverg/grover/backend/fs"
+	"github.com/jgoldverg/grover/backend/filesystem"
 )
 
 var (
@@ -29,7 +29,7 @@ type HttpClientPool struct {
 	online      bool // Pool status flag
 }
 
-func NewHttpClientPool(size int, credential fs.Credential) (*HttpClientPool, error) {
+func NewHttpClientPool(size int, credential filesystem.Credential) (*HttpClientPool, error) {
 	basicCredential, ok := credential.(*backend.BasicAuthCredential)
 	if !ok {
 		return nil, fmt.Errorf("unsupported credential type: %T", credential)

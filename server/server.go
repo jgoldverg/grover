@@ -36,7 +36,7 @@ func NewGroverServer(serverConfig *config.ServerConfig) *GroverServer {
 	}
 	server := grpc.NewServer(grpc.Creds(certs))
 	reflection.Register(server)
-	fs := NewFileService(serverConfig)
+	fs, _ := NewFileService(serverConfig)
 	cs := NewCredentialOps(serverConfig)
 
 	pb.RegisterFileServiceServer(server, fs)

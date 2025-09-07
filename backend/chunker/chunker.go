@@ -1,6 +1,6 @@
 package chunker
 
-import "github.com/jgoldverg/grover/backend/fs"
+import "github.com/jgoldverg/grover/backend/filesystem"
 
 type FileChunk struct {
 	fileId   string
@@ -12,7 +12,7 @@ type FileChunk struct {
 
 type Chunker struct {
 	fileParts chan FileChunk
-	fileInfo  *fs.FileInfo
+	fileInfo  *filesystem.FileInfo
 	chunkSize uint64
 }
 
@@ -28,7 +28,7 @@ func (fc *FileChunk) Length() uint64 {
 	return fc.length
 }
 
-func (fc *FileChunk) Lastpart() bool {
+func (fc *FileChunk) LastPart() bool {
 	return fc.lastpart
 }
 
@@ -36,7 +36,7 @@ func (fc *FileChunk) Data() [][]byte {
 	return fc.data
 }
 
-func (ckr *Chunker) NewChunker(fileInfo *fs.FileInfo, chunkSize uint64) *Chunker {
+func (ckr *Chunker) NewChunker(fileInfo *filesystem.FileInfo, chunkSize uint64) *Chunker {
 	totalChunkCount := (fileInfo.Size + chunkSize - 1) / chunkSize
 
 	return &Chunker{

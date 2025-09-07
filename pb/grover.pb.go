@@ -119,351 +119,7 @@ func (CredentialType) EnumDescriptor() ([]byte, []int) {
 	return file_grover_proto_rawDescGZIP(), []int{1}
 }
 
-type FileInfo struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	Id            string                 `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`
-	Size          uint64                 `protobuf:"varint,3,opt,name=size,proto3" json:"size,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *FileInfo) Reset() {
-	*x = FileInfo{}
-	mi := &file_grover_proto_msgTypes[0]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *FileInfo) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*FileInfo) ProtoMessage() {}
-
-func (x *FileInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[0]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use FileInfo.ProtoReflect.Descriptor instead.
-func (*FileInfo) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *FileInfo) GetPath() string {
-	if x != nil {
-		return x.Path
-	}
-	return ""
-}
-
-func (x *FileInfo) GetId() string {
-	if x != nil {
-		return x.Id
-	}
-	return ""
-}
-
-func (x *FileInfo) GetSize() uint64 {
-	if x != nil {
-		return x.Size
-	}
-	return 0
-}
-
-type ListFilesRequest struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	Type  EndpointType           `protobuf:"varint,1,opt,name=type,proto3,enum=grover.EndpointType" json:"type,omitempty"`
-	Path  string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
-	// Types that are valid to be assigned to CredentialIdentifier:
-	//
-	//	*ListFilesRequest_CredentialName
-	//	*ListFilesRequest_CredentialUUID
-	CredentialIdentifier isListFilesRequest_CredentialIdentifier `protobuf_oneof:"credential_identifier"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
-}
-
-func (x *ListFilesRequest) Reset() {
-	*x = ListFilesRequest{}
-	mi := &file_grover_proto_msgTypes[1]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ListFilesRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ListFilesRequest) ProtoMessage() {}
-
-func (x *ListFilesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[1]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ListFilesRequest.ProtoReflect.Descriptor instead.
-func (*ListFilesRequest) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{1}
-}
-
-func (x *ListFilesRequest) GetType() EndpointType {
-	if x != nil {
-		return x.Type
-	}
-	return EndpointType_ENDPOINT_TYPE_UNSPECIFIED
-}
-
-func (x *ListFilesRequest) GetPath() string {
-	if x != nil {
-		return x.Path
-	}
-	return ""
-}
-
-func (x *ListFilesRequest) GetCredentialIdentifier() isListFilesRequest_CredentialIdentifier {
-	if x != nil {
-		return x.CredentialIdentifier
-	}
-	return nil
-}
-
-func (x *ListFilesRequest) GetCredentialName() string {
-	if x != nil {
-		if x, ok := x.CredentialIdentifier.(*ListFilesRequest_CredentialName); ok {
-			return x.CredentialName
-		}
-	}
-	return ""
-}
-
-func (x *ListFilesRequest) GetCredentialUUID() string {
-	if x != nil {
-		if x, ok := x.CredentialIdentifier.(*ListFilesRequest_CredentialUUID); ok {
-			return x.CredentialUUID
-		}
-	}
-	return ""
-}
-
-type isListFilesRequest_CredentialIdentifier interface {
-	isListFilesRequest_CredentialIdentifier()
-}
-
-type ListFilesRequest_CredentialName struct {
-	CredentialName string `protobuf:"bytes,3,opt,name=credentialName,proto3,oneof"`
-}
-
-type ListFilesRequest_CredentialUUID struct {
-	CredentialUUID string `protobuf:"bytes,4,opt,name=credentialUUID,proto3,oneof"`
-}
-
-func (*ListFilesRequest_CredentialName) isListFilesRequest_CredentialIdentifier() {}
-
-func (*ListFilesRequest_CredentialUUID) isListFilesRequest_CredentialIdentifier() {}
-
-type ListFilesResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Files         []*FileInfo            `protobuf:"bytes,1,rep,name=files,proto3" json:"files,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ListFilesResponse) Reset() {
-	*x = ListFilesResponse{}
-	mi := &file_grover_proto_msgTypes[2]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ListFilesResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ListFilesResponse) ProtoMessage() {}
-
-func (x *ListFilesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[2]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ListFilesResponse.ProtoReflect.Descriptor instead.
-func (*ListFilesResponse) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *ListFilesResponse) GetFiles() []*FileInfo {
-	if x != nil {
-		return x.Files
-	}
-	return nil
-}
-
-type RemoveFileRequest struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	Type  EndpointType           `protobuf:"varint,1,opt,name=type,proto3,enum=grover.EndpointType" json:"type,omitempty"`
-	Path  string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
-	// Types that are valid to be assigned to CredentialIdentifier:
-	//
-	//	*RemoveFileRequest_CredentialName
-	//	*RemoveFileRequest_CredentialUUID
-	CredentialIdentifier isRemoveFileRequest_CredentialIdentifier `protobuf_oneof:"credential_identifier"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
-}
-
-func (x *RemoveFileRequest) Reset() {
-	*x = RemoveFileRequest{}
-	mi := &file_grover_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *RemoveFileRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*RemoveFileRequest) ProtoMessage() {}
-
-func (x *RemoveFileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use RemoveFileRequest.ProtoReflect.Descriptor instead.
-func (*RemoveFileRequest) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *RemoveFileRequest) GetType() EndpointType {
-	if x != nil {
-		return x.Type
-	}
-	return EndpointType_ENDPOINT_TYPE_UNSPECIFIED
-}
-
-func (x *RemoveFileRequest) GetPath() string {
-	if x != nil {
-		return x.Path
-	}
-	return ""
-}
-
-func (x *RemoveFileRequest) GetCredentialIdentifier() isRemoveFileRequest_CredentialIdentifier {
-	if x != nil {
-		return x.CredentialIdentifier
-	}
-	return nil
-}
-
-func (x *RemoveFileRequest) GetCredentialName() string {
-	if x != nil {
-		if x, ok := x.CredentialIdentifier.(*RemoveFileRequest_CredentialName); ok {
-			return x.CredentialName
-		}
-	}
-	return ""
-}
-
-func (x *RemoveFileRequest) GetCredentialUUID() string {
-	if x != nil {
-		if x, ok := x.CredentialIdentifier.(*RemoveFileRequest_CredentialUUID); ok {
-			return x.CredentialUUID
-		}
-	}
-	return ""
-}
-
-type isRemoveFileRequest_CredentialIdentifier interface {
-	isRemoveFileRequest_CredentialIdentifier()
-}
-
-type RemoveFileRequest_CredentialName struct {
-	CredentialName string `protobuf:"bytes,3,opt,name=credentialName,proto3,oneof"`
-}
-
-type RemoveFileRequest_CredentialUUID struct {
-	CredentialUUID string `protobuf:"bytes,4,opt,name=credentialUUID,proto3,oneof"`
-}
-
-func (*RemoveFileRequest_CredentialName) isRemoveFileRequest_CredentialIdentifier() {}
-
-func (*RemoveFileRequest_CredentialUUID) isRemoveFileRequest_CredentialIdentifier() {}
-
-type RemoveFileResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *RemoveFileResponse) Reset() {
-	*x = RemoveFileResponse{}
-	mi := &file_grover_proto_msgTypes[4]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *RemoveFileResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*RemoveFileResponse) ProtoMessage() {}
-
-func (x *RemoveFileResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[4]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use RemoveFileResponse.ProtoReflect.Descriptor instead.
-func (*RemoveFileResponse) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{4}
-}
-
-func (x *RemoveFileResponse) GetSuccess() bool {
-	if x != nil {
-		return x.Success
-	}
-	return false
-}
-
-// Selector used in requests (UUID or name).
+// Unified selector for referring to a credential.
 type CredentialRef struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Ref:
@@ -477,7 +133,7 @@ type CredentialRef struct {
 
 func (x *CredentialRef) Reset() {
 	*x = CredentialRef{}
-	mi := &file_grover_proto_msgTypes[5]
+	mi := &file_grover_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -489,7 +145,7 @@ func (x *CredentialRef) String() string {
 func (*CredentialRef) ProtoMessage() {}
 
 func (x *CredentialRef) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[5]
+	mi := &file_grover_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -502,7 +158,7 @@ func (x *CredentialRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CredentialRef.ProtoReflect.Descriptor instead.
 func (*CredentialRef) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{5}
+	return file_grover_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *CredentialRef) GetRef() isCredentialRef_Ref {
@@ -546,12 +202,280 @@ func (*CredentialRef_CredentialUuid) isCredentialRef_Ref() {}
 
 func (*CredentialRef_CredentialName) isCredentialRef_Ref() {}
 
+type FileInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Id            string                 `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`
+	Size          uint64                 `protobuf:"varint,3,opt,name=size,proto3" json:"size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FileInfo) Reset() {
+	*x = FileInfo{}
+	mi := &file_grover_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FileInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FileInfo) ProtoMessage() {}
+
+func (x *FileInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FileInfo.ProtoReflect.Descriptor instead.
+func (*FileInfo) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *FileInfo) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *FileInfo) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *FileInfo) GetSize() uint64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+type ListFilesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Type          EndpointType           `protobuf:"varint,1,opt,name=type,proto3,enum=grover.EndpointType" json:"type,omitempty"`
+	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
+	CredentialRef *CredentialRef         `protobuf:"bytes,3,opt,name=credential_ref,json=credentialRef,proto3" json:"credential_ref,omitempty"` // optional for localfs; required for some remote backends
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListFilesRequest) Reset() {
+	*x = ListFilesRequest{}
+	mi := &file_grover_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListFilesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListFilesRequest) ProtoMessage() {}
+
+func (x *ListFilesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListFilesRequest.ProtoReflect.Descriptor instead.
+func (*ListFilesRequest) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ListFilesRequest) GetType() EndpointType {
+	if x != nil {
+		return x.Type
+	}
+	return EndpointType_ENDPOINT_TYPE_UNSPECIFIED
+}
+
+func (x *ListFilesRequest) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *ListFilesRequest) GetCredentialRef() *CredentialRef {
+	if x != nil {
+		return x.CredentialRef
+	}
+	return nil
+}
+
+type ListFilesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Files         []*FileInfo            `protobuf:"bytes,1,rep,name=files,proto3" json:"files,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListFilesResponse) Reset() {
+	*x = ListFilesResponse{}
+	mi := &file_grover_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListFilesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListFilesResponse) ProtoMessage() {}
+
+func (x *ListFilesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListFilesResponse.ProtoReflect.Descriptor instead.
+func (*ListFilesResponse) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ListFilesResponse) GetFiles() []*FileInfo {
+	if x != nil {
+		return x.Files
+	}
+	return nil
+}
+
+type RemoveFileRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Type          EndpointType           `protobuf:"varint,1,opt,name=type,proto3,enum=grover.EndpointType" json:"type,omitempty"`
+	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
+	CredentialRef *CredentialRef         `protobuf:"bytes,3,opt,name=credential_ref,json=credentialRef,proto3" json:"credential_ref,omitempty"` // may be required depending on backend
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RemoveFileRequest) Reset() {
+	*x = RemoveFileRequest{}
+	mi := &file_grover_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoveFileRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoveFileRequest) ProtoMessage() {}
+
+func (x *RemoveFileRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemoveFileRequest.ProtoReflect.Descriptor instead.
+func (*RemoveFileRequest) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *RemoveFileRequest) GetType() EndpointType {
+	if x != nil {
+		return x.Type
+	}
+	return EndpointType_ENDPOINT_TYPE_UNSPECIFIED
+}
+
+func (x *RemoveFileRequest) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *RemoveFileRequest) GetCredentialRef() *CredentialRef {
+	if x != nil {
+		return x.CredentialRef
+	}
+	return nil
+}
+
+type RemoveFileResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RemoveFileResponse) Reset() {
+	*x = RemoveFileResponse{}
+	mi := &file_grover_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoveFileResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoveFileResponse) ProtoMessage() {}
+
+func (x *RemoveFileResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemoveFileResponse.ProtoReflect.Descriptor instead.
+func (*RemoveFileResponse) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *RemoveFileResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
 // Full credential (includes secrets by design).
 type Credential struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
-	CredentialUuid string                 `protobuf:"bytes,1,opt,name=credential_uuid,json=credentialUuid,proto3" json:"credential_uuid,omitempty"` // SSHCredential.UUID / BasicAuthCredential.UUID
-	CredentialName string                 `protobuf:"bytes,2,opt,name=credential_name,json=credentialName,proto3" json:"credential_name,omitempty"` // .Name
-	Type           CredentialType         `protobuf:"varint,3,opt,name=type,proto3,enum=grover.CredentialType" json:"type,omitempty"`               // "ssh"/"basic" -> enum below
+	CredentialUuid string                 `protobuf:"bytes,1,opt,name=credential_uuid,json=credentialUuid,proto3" json:"credential_uuid,omitempty"`
+	CredentialName string                 `protobuf:"bytes,2,opt,name=credential_name,json=credentialName,proto3" json:"credential_name,omitempty"`
+	Type           CredentialType         `protobuf:"varint,3,opt,name=type,proto3,enum=grover.CredentialType" json:"type,omitempty"`
 	// Types that are valid to be assigned to Details:
 	//
 	//	*Credential_Basic
@@ -655,9 +579,9 @@ func (*Credential_Ssh) isCredential_Details() {}
 
 type BasicDetails struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"` // BasicAuthCredential.Username
-	Password      string                 `protobuf:"bytes,2,opt,name=password,proto3" json:"password,omitempty"` // BasicAuthCredential.Password  (secret)
-	Url           string                 `protobuf:"bytes,3,opt,name=url,proto3" json:"url,omitempty"`           // BasicAuthCredential.URL
+	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	Password      string                 `protobuf:"bytes,2,opt,name=password,proto3" json:"password,omitempty"` // secret
+	Url           string                 `protobuf:"bytes,3,opt,name=url,proto3" json:"url,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -719,7 +643,7 @@ type SshDetails struct {
 	Host          string                 `protobuf:"bytes,2,opt,name=host,proto3" json:"host,omitempty"`
 	Port          int32                  `protobuf:"varint,3,opt,name=port,proto3" json:"port,omitempty"`
 	PublicKey     string                 `protobuf:"bytes,4,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"`
-	PrivateKey    string                 `protobuf:"bytes,5,opt,name=private_key,json=privateKey,proto3" json:"private_key,omitempty"`
+	PrivateKey    string                 `protobuf:"bytes,5,opt,name=private_key,json=privateKey,proto3" json:"private_key,omitempty"` // secret
 	UseAgent      bool                   `protobuf:"varint,6,opt,name=use_agent,json=useAgent,proto3" json:"use_agent,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1145,31 +1069,27 @@ var File_grover_proto protoreflect.FileDescriptor
 
 const file_grover_proto_rawDesc = "" +
 	"\n" +
-	"\fgrover.proto\x12\x06grover\"B\n" +
-	"\bFileInfo\x12\x12\n" +
-	"\x04path\x18\x01 \x01(\tR\x04path\x12\x0e\n" +
-	"\x02id\x18\x02 \x01(\tR\x02id\x12\x12\n" +
-	"\x04size\x18\x03 \x01(\x04R\x04size\"\xbd\x01\n" +
-	"\x10ListFilesRequest\x12(\n" +
-	"\x04type\x18\x01 \x01(\x0e2\x14.grover.EndpointTypeR\x04type\x12\x12\n" +
-	"\x04path\x18\x02 \x01(\tR\x04path\x12(\n" +
-	"\x0ecredentialName\x18\x03 \x01(\tH\x00R\x0ecredentialName\x12(\n" +
-	"\x0ecredentialUUID\x18\x04 \x01(\tH\x00R\x0ecredentialUUIDB\x17\n" +
-	"\x15credential_identifier\";\n" +
-	"\x11ListFilesResponse\x12&\n" +
-	"\x05files\x18\x01 \x03(\v2\x10.grover.FileInfoR\x05files\"\xbe\x01\n" +
-	"\x11RemoveFileRequest\x12(\n" +
-	"\x04type\x18\x01 \x01(\x0e2\x14.grover.EndpointTypeR\x04type\x12\x12\n" +
-	"\x04path\x18\x02 \x01(\tR\x04path\x12(\n" +
-	"\x0ecredentialName\x18\x03 \x01(\tH\x00R\x0ecredentialName\x12(\n" +
-	"\x0ecredentialUUID\x18\x04 \x01(\tH\x00R\x0ecredentialUUIDB\x17\n" +
-	"\x15credential_identifier\".\n" +
-	"\x12RemoveFileResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess\"l\n" +
+	"\fgrover.proto\x12\x06grover\"l\n" +
 	"\rCredentialRef\x12)\n" +
 	"\x0fcredential_uuid\x18\x01 \x01(\tH\x00R\x0ecredentialUuid\x12)\n" +
 	"\x0fcredential_name\x18\x02 \x01(\tH\x00R\x0ecredentialNameB\x05\n" +
-	"\x03ref\"\xeb\x01\n" +
+	"\x03ref\"B\n" +
+	"\bFileInfo\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12\x0e\n" +
+	"\x02id\x18\x02 \x01(\tR\x02id\x12\x12\n" +
+	"\x04size\x18\x03 \x01(\x04R\x04size\"\x8e\x01\n" +
+	"\x10ListFilesRequest\x12(\n" +
+	"\x04type\x18\x01 \x01(\x0e2\x14.grover.EndpointTypeR\x04type\x12\x12\n" +
+	"\x04path\x18\x02 \x01(\tR\x04path\x12<\n" +
+	"\x0ecredential_ref\x18\x03 \x01(\v2\x15.grover.CredentialRefR\rcredentialRef\";\n" +
+	"\x11ListFilesResponse\x12&\n" +
+	"\x05files\x18\x01 \x03(\v2\x10.grover.FileInfoR\x05files\"\x8f\x01\n" +
+	"\x11RemoveFileRequest\x12(\n" +
+	"\x04type\x18\x01 \x01(\x0e2\x14.grover.EndpointTypeR\x04type\x12\x12\n" +
+	"\x04path\x18\x02 \x01(\tR\x04path\x12<\n" +
+	"\x0ecredential_ref\x18\x03 \x01(\v2\x15.grover.CredentialRefR\rcredentialRef\".\n" +
+	"\x12RemoveFileResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\"\xeb\x01\n" +
 	"\n" +
 	"Credential\x12'\n" +
 	"\x0fcredential_uuid\x18\x01 \x01(\tR\x0ecredentialUuid\x12'\n" +
@@ -1246,12 +1166,12 @@ var file_grover_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_grover_proto_goTypes = []any{
 	(EndpointType)(0),                // 0: grover.EndpointType
 	(CredentialType)(0),              // 1: grover.CredentialType
-	(*FileInfo)(nil),                 // 2: grover.FileInfo
-	(*ListFilesRequest)(nil),         // 3: grover.ListFilesRequest
-	(*ListFilesResponse)(nil),        // 4: grover.ListFilesResponse
-	(*RemoveFileRequest)(nil),        // 5: grover.RemoveFileRequest
-	(*RemoveFileResponse)(nil),       // 6: grover.RemoveFileResponse
-	(*CredentialRef)(nil),            // 7: grover.CredentialRef
+	(*CredentialRef)(nil),            // 2: grover.CredentialRef
+	(*FileInfo)(nil),                 // 3: grover.FileInfo
+	(*ListFilesRequest)(nil),         // 4: grover.ListFilesRequest
+	(*ListFilesResponse)(nil),        // 5: grover.ListFilesResponse
+	(*RemoveFileRequest)(nil),        // 6: grover.RemoveFileRequest
+	(*RemoveFileResponse)(nil),       // 7: grover.RemoveFileResponse
 	(*Credential)(nil),               // 8: grover.Credential
 	(*BasicDetails)(nil),             // 9: grover.BasicDetails
 	(*SshDetails)(nil),               // 10: grover.SshDetails
@@ -1266,34 +1186,36 @@ var file_grover_proto_goTypes = []any{
 }
 var file_grover_proto_depIdxs = []int32{
 	0,  // 0: grover.ListFilesRequest.type:type_name -> grover.EndpointType
-	2,  // 1: grover.ListFilesResponse.files:type_name -> grover.FileInfo
-	0,  // 2: grover.RemoveFileRequest.type:type_name -> grover.EndpointType
-	1,  // 3: grover.Credential.type:type_name -> grover.CredentialType
-	9,  // 4: grover.Credential.basic:type_name -> grover.BasicDetails
-	10, // 5: grover.Credential.ssh:type_name -> grover.SshDetails
-	8,  // 6: grover.CreateCredentialRequest.credential:type_name -> grover.Credential
-	7,  // 7: grover.GetCredentialRequest.ref:type_name -> grover.CredentialRef
-	8,  // 8: grover.GetCredentialResponse.credential:type_name -> grover.Credential
-	1,  // 9: grover.ListCredentialsRequest.type:type_name -> grover.CredentialType
-	8,  // 10: grover.ListCredentialsResponse.credentials:type_name -> grover.Credential
-	7,  // 11: grover.DeleteCredentialRequest.ref:type_name -> grover.CredentialRef
-	3,  // 12: grover.FileService.List:input_type -> grover.ListFilesRequest
-	5,  // 13: grover.FileService.Remove:input_type -> grover.RemoveFileRequest
-	11, // 14: grover.CredentialService.Create:input_type -> grover.CreateCredentialRequest
-	13, // 15: grover.CredentialService.Get:input_type -> grover.GetCredentialRequest
-	15, // 16: grover.CredentialService.List:input_type -> grover.ListCredentialsRequest
-	17, // 17: grover.CredentialService.Delete:input_type -> grover.DeleteCredentialRequest
-	4,  // 18: grover.FileService.List:output_type -> grover.ListFilesResponse
-	6,  // 19: grover.FileService.Remove:output_type -> grover.RemoveFileResponse
-	12, // 20: grover.CredentialService.Create:output_type -> grover.CreateCredentialResponse
-	14, // 21: grover.CredentialService.Get:output_type -> grover.GetCredentialResponse
-	16, // 22: grover.CredentialService.List:output_type -> grover.ListCredentialsResponse
-	18, // 23: grover.CredentialService.Delete:output_type -> grover.DeleteCredentialResponse
-	18, // [18:24] is the sub-list for method output_type
-	12, // [12:18] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	2,  // 1: grover.ListFilesRequest.credential_ref:type_name -> grover.CredentialRef
+	3,  // 2: grover.ListFilesResponse.files:type_name -> grover.FileInfo
+	0,  // 3: grover.RemoveFileRequest.type:type_name -> grover.EndpointType
+	2,  // 4: grover.RemoveFileRequest.credential_ref:type_name -> grover.CredentialRef
+	1,  // 5: grover.Credential.type:type_name -> grover.CredentialType
+	9,  // 6: grover.Credential.basic:type_name -> grover.BasicDetails
+	10, // 7: grover.Credential.ssh:type_name -> grover.SshDetails
+	8,  // 8: grover.CreateCredentialRequest.credential:type_name -> grover.Credential
+	2,  // 9: grover.GetCredentialRequest.ref:type_name -> grover.CredentialRef
+	8,  // 10: grover.GetCredentialResponse.credential:type_name -> grover.Credential
+	1,  // 11: grover.ListCredentialsRequest.type:type_name -> grover.CredentialType
+	8,  // 12: grover.ListCredentialsResponse.credentials:type_name -> grover.Credential
+	2,  // 13: grover.DeleteCredentialRequest.ref:type_name -> grover.CredentialRef
+	4,  // 14: grover.FileService.List:input_type -> grover.ListFilesRequest
+	6,  // 15: grover.FileService.Remove:input_type -> grover.RemoveFileRequest
+	11, // 16: grover.CredentialService.Create:input_type -> grover.CreateCredentialRequest
+	13, // 17: grover.CredentialService.Get:input_type -> grover.GetCredentialRequest
+	15, // 18: grover.CredentialService.List:input_type -> grover.ListCredentialsRequest
+	17, // 19: grover.CredentialService.Delete:input_type -> grover.DeleteCredentialRequest
+	5,  // 20: grover.FileService.List:output_type -> grover.ListFilesResponse
+	7,  // 21: grover.FileService.Remove:output_type -> grover.RemoveFileResponse
+	12, // 22: grover.CredentialService.Create:output_type -> grover.CreateCredentialResponse
+	14, // 23: grover.CredentialService.Get:output_type -> grover.GetCredentialResponse
+	16, // 24: grover.CredentialService.List:output_type -> grover.ListCredentialsResponse
+	18, // 25: grover.CredentialService.Delete:output_type -> grover.DeleteCredentialResponse
+	20, // [20:26] is the sub-list for method output_type
+	14, // [14:20] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_grover_proto_init() }
@@ -1301,15 +1223,7 @@ func file_grover_proto_init() {
 	if File_grover_proto != nil {
 		return
 	}
-	file_grover_proto_msgTypes[1].OneofWrappers = []any{
-		(*ListFilesRequest_CredentialName)(nil),
-		(*ListFilesRequest_CredentialUUID)(nil),
-	}
-	file_grover_proto_msgTypes[3].OneofWrappers = []any{
-		(*RemoveFileRequest_CredentialName)(nil),
-		(*RemoveFileRequest_CredentialUUID)(nil),
-	}
-	file_grover_proto_msgTypes[5].OneofWrappers = []any{
+	file_grover_proto_msgTypes[0].OneofWrappers = []any{
 		(*CredentialRef_CredentialUuid)(nil),
 		(*CredentialRef_CredentialName)(nil),
 	}

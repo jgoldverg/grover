@@ -13,6 +13,8 @@ import (
 type AppConfig struct {
 	CredentialsFile string `mapstructure:"credentials_file"`
 	ServerURL       string `mapstructure:"server_url"`
+	CACertFile      string `mapstructure:"ca_cert_file"`
+	Route           string `mapstructure:"route"`
 }
 
 type ServerConfig struct {
@@ -34,6 +36,8 @@ func LoadAppConfig(configPath string) (*AppConfig, error) {
 
 	v.SetDefault("credentials_file", filepath.Join(home, ".grover", "credentials_store.toml"))
 	v.SetDefault("server_url", "")
+	v.SetDefault("ca_cert_file", filepath.Join(filepath.Join(home, ".grover", "certs", "public", "server.crt")))
+	v.SetDefault("route", "auto")
 
 	var cfg AppConfig
 	if err := readInto(v, &cfg); err != nil {

@@ -3,16 +3,16 @@ package http
 import (
 	"net/http"
 
-	"github.com/jgoldverg/grover/backend/fs"
+	"github.com/jgoldverg/grover/backend/filesystem"
 )
 
 type HttpReader struct {
 	clientPool  *HttpClientPool
 	httpClient  *http.Client
-	fileMetdata *fs.FileInfo
+	fileMetdata *filesystem.FileInfo
 }
 
-func NewHttpReader(clientPool *HttpClientPool, fileMetdata *fs.FileInfo) *HttpReader {
+func NewHttpReader(clientPool *HttpClientPool, fileMetdata *filesystem.FileInfo) *HttpReader {
 	return &HttpReader{
 		clientPool:  clientPool,
 		fileMetdata: fileMetdata,
@@ -34,7 +34,7 @@ func (hr *HttpReader) Close() error {
 	return nil
 }
 
-func (hr *HttpReader) Read() (*fs.Chunk, error) {
+func (hr *HttpReader) Read() (*filesystem.Chunk, error) {
 
 	return nil, nil
 }

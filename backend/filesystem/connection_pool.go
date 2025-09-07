@@ -1,4 +1,4 @@
-package fs
+package filesystem
 
 // ConnectionPool manages a pool of storage connections
 type ConnectionPool interface {

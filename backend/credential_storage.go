@@ -271,6 +271,9 @@ func (s *TomlCredentialStorage) ListCredentials() ([]Credential, error) {
 }
 
 func (s *TomlCredentialStorage) ListCredentialsByType(typ string) ([]Credential, error) {
+	if typ == "" {
+		return s.ListCredentials()
+	}
 	var creds []Credential
 	for _, entry := range s.Credentials {
 		if entry.Type == typ {

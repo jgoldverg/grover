@@ -7,6 +7,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jgoldverg/grover/backend"
+	"github.com/jgoldverg/grover/cli/output"
+	"github.com/jgoldverg/grover/client"
+	"github.com/jgoldverg/grover/server/log"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -67,34 +70,14 @@ func CredentialCommand() *cobra.Command {
 	// Add persistent flags
 	cmd.PersistentFlags().StringVarP(&commonOpts.URL, "--server-url", "u", "", "Backend URL")
 	cmd.PersistentFlags().StringVarP(&commonOpts.CredentialName, "name", "n", "", "Credential name")
+	cmd.PersistentFlags().String("via", "", "Where to execute: auto|client|server")
+	cmd.PersistentFlags().Lookup("via").NoOptDefVal = "auto" // optional
 
 	// Store subcommand constructors (not instances)
-	subcommands := []func(*AddCredentialOpts) *cobra.Command{
-		func(opts *AddCredentialOpts) *cobra.Command {
-			return AddBasicCredentialCommand(opts)
-		},
-		func(opts *AddCredentialOpts) *cobra.Command {
-			return AddSShCredentialCommand(opts)
-		},
-	}
-
-	basicCommands := []func() *cobra.Command{
-		func() *cobra.Command {
-			return ListCredentialCommand()
-		},
-		func() *cobra.Command {
-			return DeleteCredentialCommand()
-		},
-	}
-
-	// Initialize subcommands only when needed
-	for _, newCmd := range subcommands {
-		cmd.AddCommand(newCmd(&commonOpts))
-	}
-
-	for _, lsCmd := range basicCommands {
-		cmd.AddCommand(lsCmd())
-	}
+	cmd.AddCommand(ListCredentialCommand())
+	cmd.AddCommand(DeleteCredentialCommand())
+	cmd.AddCommand(AddBasicCredentialCommand(&commonOpts))
+	cmd.AddCommand(AddSShCredentialCommand(&commonOpts))
 	return cmd
 }
 
@@ -107,10 +90,6 @@ func AddBasicCredentialCommand(commonOpts *AddCredentialOpts) *cobra.Command {
 		Long:  "Add a basic credential for a remote server",
 		Short: "Add a basic credential for a remote server",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := GetAppConfig(cmd)
-			if cfg.ServerURL != "" {
-
-			}
 			if commonOpts.URL == "" {
 				return errors.New("must specify a URL to the server")
 			}
@@ -133,30 +112,30 @@ func AddBasicCredentialCommand(commonOpts *AddCredentialOpts) *cobra.Command {
 				URL:      commonOpts.URL,
 				UUID:     uuid.New(),
 			}
-
 			err := credential.Validate()
 			if err != nil {
 				return errors.New("Failed to validate basic-credential: " + err.Error())
 			}
-			appConfig := GetAppConfig(cmd)
-			storage, err := backend.NewTomlCredentialStorage(appConfig.CredentialsFile)
+
+			cfg := GetAppConfig(cmd)
+			route := cfg.Route
+			if f := cmd.Flags().Lookup("via"); f != nil && f.Changed {
+				route, _ = cmd.Flags().GetString("via")
+			}
+			policy := client.ParseRoutePolicy(route)
+			gc := client.NewGroverClient(*cfg)
+			err = gc.Initialize(cmd.Context(), policy)
 			if err != nil {
-				return fmt.Errorf("failed to create credential store: path we got %s: %w", appConfig.CredentialsFile, err)
+				return err
 			}
 
-			err = storage.AddCredential(credential)
-			if err != nil {
-				return errors.New("failed to add credential: " + err.Error())
-			}
-
-			return nil
+			return gc.CredService.AddCredential(cmd.Context(), credential)
 		},
 	}
 	cmd.Flags().StringVar(&commonOpts.URL, "url", "", "Backend URL")
 	cmd.Flags().StringVar(&commonOpts.CredentialName, "name", "", "Credential name")
 	_ = cmd.MarkFlagRequired("url")
 	_ = cmd.MarkFlagRequired("name")
-
 	cmd.Flags().StringVar(&basicOpts.Username, "username", "", "Basic auth username")
 	cmd.Flags().StringVar(&basicOpts.Password, "password", "", "Basic auth password")
 	return cmd
@@ -199,17 +178,19 @@ func AddSShCredentialCommand(commonOpts *AddCredentialOpts) *cobra.Command {
 			if err != nil {
 				return errors.New("Failed in validating SSH credential: " + err.Error())
 			}
-			appConfig := GetAppConfig(cmd)
-			storage, err := backend.NewTomlCredentialStorage(appConfig.CredentialsFile)
+			cfg := GetAppConfig(cmd)
+			route := cfg.Route
+			if f := cmd.Flags().Lookup("via"); f != nil && f.Changed {
+				route, _ = cmd.Flags().GetString("via")
+			}
+			policy := client.ParseRoutePolicy(route)
+			gc := client.NewGroverClient(*cfg)
+			err = gc.Initialize(cmd.Context(), policy)
 			if err != nil {
-				return fmt.Errorf("failed to create credential store: path we got %s: %w", appConfig.CredentialsFile, err)
+				return err
 			}
 
-			err = storage.AddCredential(credential)
-			if err != nil {
-				return errors.New("Failed to add credential: " + err.Error())
-			}
-			return nil
+			return gc.CredService.AddCredential(cmd.Context(), credential)
 		},
 	}
 
@@ -230,20 +211,27 @@ func ListCredentialCommand() *cobra.Command {
 		Long:    "List credentials stored in the credential storage",
 		Short:   "List credentials stored in the credential storage",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			appConfig := GetAppConfig(cmd)
-			storage, err := backend.NewTomlCredentialStorage(appConfig.CredentialsFile)
-			if err != nil {
-				return fmt.Errorf("failed to create credential store: path we got %s: %w", appConfig.CredentialsFile, err)
+			cfg := GetAppConfig(cmd)
+			route := cfg.Route
+			if f := cmd.Flags().Lookup("via"); f != nil && f.Changed {
+				route, _ = cmd.Flags().GetString("via")
 			}
+			policy := client.ParseRoutePolicy(route)
+			gc := client.NewGroverClient(*cfg)
+			err := gc.Initialize(cmd.Context(), policy)
+			if err != nil {
+				return err
+			}
+			log.Structured(&pterm.Info, "created and initialized grover client", nil)
 
-			credList, err := storage.ListCredentials()
+			creds, err := gc.CredService.ListCredentials(cmd.Context(), "")
 			if err != nil {
 				return errors.New("Failed to list the stored credentials: " + err.Error())
 			}
-			if len(credList) == 0 {
+			if len(creds) == 0 {
 				pterm.Print("No credentials added.")
 			}
-			VisualizeCredentialList(credList)
+			output.VisualizeCredentialList(creds)
 			return nil
 		},
 	}
@@ -287,26 +275,4 @@ func DeleteCredentialCommand() *cobra.Command {
 	cmd.Flags().StringVar(&deleteCredOpts.CredentialUUID, "uuid", "", "The uuid assigned to the credential")
 
 	return cmd
-
-}
-
-func VisualizeCredentialList(credList []backend.Credential) {
-	for _, cred := range credList {
-		pterm.Printfln("[%s]", cred.GetName())
-		pterm.Printfln("type = %s", cred.GetType())
-		pterm.Printfln("url = %s", cred.GetUrl())
-		pterm.Printfln("uuid = %s", cred.GetUUID())
-		switch c := cred.(type) {
-		case *backend.SSHCredential:
-			pterm.Printfln("username = %s", c.Username)
-			pterm.Printfln("private-key-path = %s", c.PrivateKeyPath)
-			pterm.Printfln("public-key-path = %s", c.PublicKeyPath)
-			pterm.Printfln("ssh-agent = %t", c.UseAgent)
-		case *backend.BasicAuthCredential:
-			pterm.Printfln("username = %s", c.Username)
-			pterm.Printfln("password = %s", c.Password)
-			pterm.Println() // Empty line between credentials
-		}
-		pterm.Println("")
-	}
 }
