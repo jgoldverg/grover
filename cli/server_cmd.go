@@ -62,7 +62,6 @@ func GroverPing() *cobra.Command {
 			})
 
 			policy := client.ParseRoutePolicy(route)
-
 			gc := client.NewGroverClient(*appConfig)
 			if err := gc.Initialize(ctx, policy); err != nil {
 				return err

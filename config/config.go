@@ -46,7 +46,7 @@ func LoadAppConfig(configPath string) (*AppConfig, error) {
 	v.SetDefault("heart_beat_error_count", 5)
 	v.SetDefault("heart_beat_timeout", 30)
 	v.SetDefault("heart_beat_rtts", 64)
-	v.SetDefault("client_uuid", uuid.New().String()) // <-- fixed key
+	v.SetDefault("client_uuid", uuid.New().String())
 
 	var cfg AppConfig
 	if err := v.Unmarshal(&cfg); err != nil {
@@ -163,7 +163,7 @@ func initViper(configPath, defaultDir, defaultName, defaultType, envPrefix strin
 	v := viper.New()
 	v.SetConfigType(defaultType)
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	v.SetEnvPrefix(envPrefix) // e.g. GROVER_APP, GROVER_SERVER
+	v.SetEnvPrefix(envPrefix)
 	v.AutomaticEnv()
 
 	if configPath != "" {
