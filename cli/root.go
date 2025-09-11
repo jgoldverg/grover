@@ -59,6 +59,7 @@ func NewRootCommand() *cobra.Command {
 	// Notice we pass no context or credentialStore here — subcommands get them from cmd.Context()
 	rootCmd.AddCommand(BackendCommand())
 	rootCmd.AddCommand(CredentialCommand())
+	rootCmd.AddCommand(GroverServerOps())
 
 	return rootCmd
 }

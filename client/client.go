@@ -16,9 +16,10 @@ import (
 type GroverClient struct {
 	CredService     *CredentialService
 	ResourceService *FileResourceService
-
-	conn *grpc.ClientConn
-	cfg  config.AppConfig
+	HeartBeatClient *HeartBeatService
+	ServerClient    *GroverServerCommands
+	conn            *grpc.ClientConn
+	cfg             config.AppConfig
 }
 
 func NewGroverClient(cfg config.AppConfig) *GroverClient { return &GroverClient{cfg: cfg} }
@@ -47,12 +48,12 @@ func (c *GroverClient) Initialize(ctx context.Context, policy RoutePolicy) error
 	if e != nil {
 		return e
 	}
-
 	c.CredService, e = NewCredentialService(&c.cfg, ci, policy)
 	if e != nil {
 		return e
 	}
-
+	c.HeartBeatClient = NewHeartBeatService(&c.cfg, c.conn)
+	c.ServerClient = NewGroverServerCommands(&c.cfg, c.conn)
 	return nil
 }
 

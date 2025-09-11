@@ -7,8 +7,8 @@ import (
 	"syscall"
 
 	"github.com/jgoldverg/grover/config"
+	"github.com/jgoldverg/grover/log"
 	gs "github.com/jgoldverg/grover/server"
-	"github.com/jgoldverg/grover/server/log"
 	"github.com/pterm/pterm"
 )
 
@@ -23,7 +23,10 @@ func main() {
 	// Start server
 	cfg, err := config.LoadServerConfig("")
 	if err != nil {
-
+		log.Structured(&pterm.Error, "failed to load server config", log.Fields{
+			log.FieldError: err.Error(),
+		})
+		return
 	}
 	server := gs.NewGroverServer(cfg)
 	go func() {

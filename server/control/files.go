@@ -1,4 +1,4 @@
-package server
+package control
 
 import (
 	"context"
@@ -7,8 +7,8 @@ import (
 	"github.com/jgoldverg/grover/backend"
 	fs "github.com/jgoldverg/grover/backend/filesystem"
 	"github.com/jgoldverg/grover/config"
+	"github.com/jgoldverg/grover/log"
 	"github.com/jgoldverg/grover/pb"
-	"github.com/jgoldverg/grover/server/log"
 	"github.com/jgoldverg/grover/utils"
 	"github.com/pterm/pterm"
 	"google.golang.org/grpc/codes"

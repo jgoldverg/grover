@@ -12,9 +12,13 @@ type FieldKey string
 const (
 	FieldError            FieldKey = "error"
 	FieldMsg              FieldKey = "message"
+	FieldRtt              FieldKey = "rtt"
+	FieldServer           FieldKey = "server"
 	FieldPort             FieldKey = "port"
 	ServerCertificatePath FieldKey = "certificate_path"
 	ServerKeyPath         FieldKey = "key_path"
+	CredentialPath        FieldKey = "credential_path"
+	ConfigPath            FieldKey = "config_path"
 )
 
 type Fields map[FieldKey]interface{}

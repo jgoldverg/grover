@@ -9,7 +9,7 @@ import (
 	"github.com/jgoldverg/grover/backend"
 	"github.com/jgoldverg/grover/cli/output"
 	"github.com/jgoldverg/grover/client"
-	"github.com/jgoldverg/grover/server/log"
+	"github.com/jgoldverg/grover/log"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )

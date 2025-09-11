@@ -11,8 +11,9 @@ import (
 	"time"
 
 	"github.com/jgoldverg/grover/config"
+	"github.com/jgoldverg/grover/log"
 	"github.com/jgoldverg/grover/pb"
-	"github.com/jgoldverg/grover/server/log"
+	"github.com/jgoldverg/grover/server/control"
 	"github.com/pterm/pterm"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -36,11 +37,14 @@ func NewGroverServer(serverConfig *config.ServerConfig) *GroverServer {
 	}
 	server := grpc.NewServer(grpc.Creds(certs))
 	reflection.Register(server)
-	fs, _ := NewFileService(serverConfig)
-	cs := NewCredentialOps(serverConfig)
-
+	fs, _ := control.NewFileService(serverConfig)
+	cs := control.NewCredentialOps(serverConfig)
+	hs := control.NewHeartBeatService(serverConfig)
+	ss := control.NewGroverUdpServer(serverConfig)
+	pb.RegisterHeartBeatServer(server, hs)
 	pb.RegisterFileServiceServer(server, fs)
 	pb.RegisterCredentialServiceServer(server, cs)
+	pb.RegisterGroverServerServer(server, ss)
 
 	return &GroverServer{
 		config:       serverConfig,
@@ -59,10 +63,8 @@ func (gs *GroverServer) StartServer(ctx context.Context) error {
 
 	go func() {
 		log.Structured(&pterm.Info, "starting grover server", log.Fields{
-			log.FieldMsg:              "server started",
-			log.FieldPort:             addr,
-			log.ServerCertificatePath: gs.config.ServerCertificatePath,
-			log.ServerKeyPath:         gs.config.ServerKeyPath,
+			log.FieldMsg:  "server started",
+			log.FieldPort: addr,
 		})
 
 		if err := gs.grpcServer.Serve(gs.listener); err != nil && !errors.Is(err, grpc.ErrServerStopped) {

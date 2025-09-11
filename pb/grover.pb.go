@@ -9,6 +9,7 @@ package pb
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -70,6 +71,58 @@ func (EndpointType) EnumDescriptor() ([]byte, []int) {
 	return file_grover_proto_rawDescGZIP(), []int{0}
 }
 
+type HeartbeatStatus int32
+
+const (
+	HeartbeatStatus_HEARTBEAT_STATUS_UNSPECIFIED HeartbeatStatus = 0
+	HeartbeatStatus_OK                           HeartbeatStatus = 1 // healthy
+	HeartbeatStatus_DEGRADED                     HeartbeatStatus = 2 // overloaded/partial outage
+	HeartbeatStatus_DRAINING                     HeartbeatStatus = 3 // preparing to shut down, avoid new flows
+)
+
+// Enum value maps for HeartbeatStatus.
+var (
+	HeartbeatStatus_name = map[int32]string{
+		0: "HEARTBEAT_STATUS_UNSPECIFIED",
+		1: "OK",
+		2: "DEGRADED",
+		3: "DRAINING",
+	}
+	HeartbeatStatus_value = map[string]int32{
+		"HEARTBEAT_STATUS_UNSPECIFIED": 0,
+		"OK":                           1,
+		"DEGRADED":                     2,
+		"DRAINING":                     3,
+	}
+)
+
+func (x HeartbeatStatus) Enum() *HeartbeatStatus {
+	p := new(HeartbeatStatus)
+	*p = x
+	return p
+}
+
+func (x HeartbeatStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (HeartbeatStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_grover_proto_enumTypes[1].Descriptor()
+}
+
+func (HeartbeatStatus) Type() protoreflect.EnumType {
+	return &file_grover_proto_enumTypes[1]
+}
+
+func (x HeartbeatStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use HeartbeatStatus.Descriptor instead.
+func (HeartbeatStatus) EnumDescriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{1}
+}
+
 type CredentialType int32
 
 const (
@@ -103,11 +156,11 @@ func (x CredentialType) String() string {
 }
 
 func (CredentialType) Descriptor() protoreflect.EnumDescriptor {
-	return file_grover_proto_enumTypes[1].Descriptor()
+	return file_grover_proto_enumTypes[2].Descriptor()
 }
 
 func (CredentialType) Type() protoreflect.EnumType {
-	return &file_grover_proto_enumTypes[1]
+	return &file_grover_proto_enumTypes[2]
 }
 
 func (x CredentialType) Number() protoreflect.EnumNumber {
@@ -116,10 +169,9 @@ func (x CredentialType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use CredentialType.Descriptor instead.
 func (CredentialType) EnumDescriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{1}
+	return file_grover_proto_rawDescGZIP(), []int{2}
 }
 
-// Unified selector for referring to a credential.
 type CredentialRef struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Ref:
@@ -202,6 +254,150 @@ func (*CredentialRef_CredentialUuid) isCredentialRef_Ref() {}
 
 func (*CredentialRef_CredentialName) isCredentialRef_Ref() {}
 
+type PulseRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ClientId      string                 `protobuf:"bytes,1,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"` // stable UUID for this control-plane client
+	Seq           uint64                 `protobuf:"varint,2,opt,name=seq,proto3" json:"seq,omitempty"`                          // monotonically increasing counter
+	SentAt        *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=sent_at,json=sentAt,proto3" json:"sent_at,omitempty"`       // client send timestamp
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PulseRequest) Reset() {
+	*x = PulseRequest{}
+	mi := &file_grover_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PulseRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PulseRequest) ProtoMessage() {}
+
+func (x *PulseRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PulseRequest.ProtoReflect.Descriptor instead.
+func (*PulseRequest) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *PulseRequest) GetClientId() string {
+	if x != nil {
+		return x.ClientId
+	}
+	return ""
+}
+
+func (x *PulseRequest) GetSeq() uint64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
+
+func (x *PulseRequest) GetSentAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.SentAt
+	}
+	return nil
+}
+
+type PulseResponse struct {
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	Seq                   uint64                 `protobuf:"varint,1,opt,name=seq,proto3" json:"seq,omitempty"`                                                                    // echoed from request for correlation
+	ServerId              string                 `protobuf:"bytes,2,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`                                           // server instance UUID
+	RecvAt                *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=recv_at,json=recvAt,proto3" json:"recv_at,omitempty"`                                                 // server receive time
+	SentAt                *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=sent_at,json=sentAt,proto3" json:"sent_at,omitempty"`                                                 // server send time
+	Status                HeartbeatStatus        `protobuf:"varint,5,opt,name=status,proto3,enum=grover.HeartbeatStatus" json:"status,omitempty"`                                  // server health hint
+	RecommendedIntervalMs int64                  `protobuf:"varint,6,opt,name=recommended_interval_ms,json=recommendedIntervalMs,proto3" json:"recommended_interval_ms,omitempty"` // e.g., 20000 (20s)
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *PulseResponse) Reset() {
+	*x = PulseResponse{}
+	mi := &file_grover_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PulseResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PulseResponse) ProtoMessage() {}
+
+func (x *PulseResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PulseResponse.ProtoReflect.Descriptor instead.
+func (*PulseResponse) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *PulseResponse) GetSeq() uint64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
+
+func (x *PulseResponse) GetServerId() string {
+	if x != nil {
+		return x.ServerId
+	}
+	return ""
+}
+
+func (x *PulseResponse) GetRecvAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.RecvAt
+	}
+	return nil
+}
+
+func (x *PulseResponse) GetSentAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.SentAt
+	}
+	return nil
+}
+
+func (x *PulseResponse) GetStatus() HeartbeatStatus {
+	if x != nil {
+		return x.Status
+	}
+	return HeartbeatStatus_HEARTBEAT_STATUS_UNSPECIFIED
+}
+
+func (x *PulseResponse) GetRecommendedIntervalMs() int64 {
+	if x != nil {
+		return x.RecommendedIntervalMs
+	}
+	return 0
+}
+
 type FileInfo struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
@@ -213,7 +409,7 @@ type FileInfo struct {
 
 func (x *FileInfo) Reset() {
 	*x = FileInfo{}
-	mi := &file_grover_proto_msgTypes[1]
+	mi := &file_grover_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -225,7 +421,7 @@ func (x *FileInfo) String() string {
 func (*FileInfo) ProtoMessage() {}
 
 func (x *FileInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[1]
+	mi := &file_grover_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -238,7 +434,7 @@ func (x *FileInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileInfo.ProtoReflect.Descriptor instead.
 func (*FileInfo) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{1}
+	return file_grover_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *FileInfo) GetPath() string {
@@ -273,7 +469,7 @@ type ListFilesRequest struct {
 
 func (x *ListFilesRequest) Reset() {
 	*x = ListFilesRequest{}
-	mi := &file_grover_proto_msgTypes[2]
+	mi := &file_grover_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -285,7 +481,7 @@ func (x *ListFilesRequest) String() string {
 func (*ListFilesRequest) ProtoMessage() {}
 
 func (x *ListFilesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[2]
+	mi := &file_grover_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -298,7 +494,7 @@ func (x *ListFilesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFilesRequest.ProtoReflect.Descriptor instead.
 func (*ListFilesRequest) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{2}
+	return file_grover_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ListFilesRequest) GetType() EndpointType {
@@ -331,7 +527,7 @@ type ListFilesResponse struct {
 
 func (x *ListFilesResponse) Reset() {
 	*x = ListFilesResponse{}
-	mi := &file_grover_proto_msgTypes[3]
+	mi := &file_grover_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -343,7 +539,7 @@ func (x *ListFilesResponse) String() string {
 func (*ListFilesResponse) ProtoMessage() {}
 
 func (x *ListFilesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[3]
+	mi := &file_grover_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -356,7 +552,7 @@ func (x *ListFilesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFilesResponse.ProtoReflect.Descriptor instead.
 func (*ListFilesResponse) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{3}
+	return file_grover_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *ListFilesResponse) GetFiles() []*FileInfo {
@@ -377,7 +573,7 @@ type RemoveFileRequest struct {
 
 func (x *RemoveFileRequest) Reset() {
 	*x = RemoveFileRequest{}
-	mi := &file_grover_proto_msgTypes[4]
+	mi := &file_grover_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -389,7 +585,7 @@ func (x *RemoveFileRequest) String() string {
 func (*RemoveFileRequest) ProtoMessage() {}
 
 func (x *RemoveFileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[4]
+	mi := &file_grover_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -402,7 +598,7 @@ func (x *RemoveFileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveFileRequest.ProtoReflect.Descriptor instead.
 func (*RemoveFileRequest) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{4}
+	return file_grover_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *RemoveFileRequest) GetType() EndpointType {
@@ -435,7 +631,7 @@ type RemoveFileResponse struct {
 
 func (x *RemoveFileResponse) Reset() {
 	*x = RemoveFileResponse{}
-	mi := &file_grover_proto_msgTypes[5]
+	mi := &file_grover_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -447,7 +643,7 @@ func (x *RemoveFileResponse) String() string {
 func (*RemoveFileResponse) ProtoMessage() {}
 
 func (x *RemoveFileResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[5]
+	mi := &file_grover_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -460,7 +656,7 @@ func (x *RemoveFileResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveFileResponse.ProtoReflect.Descriptor instead.
 func (*RemoveFileResponse) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{5}
+	return file_grover_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *RemoveFileResponse) GetSuccess() bool {
@@ -487,7 +683,7 @@ type Credential struct {
 
 func (x *Credential) Reset() {
 	*x = Credential{}
-	mi := &file_grover_proto_msgTypes[6]
+	mi := &file_grover_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -499,7 +695,7 @@ func (x *Credential) String() string {
 func (*Credential) ProtoMessage() {}
 
 func (x *Credential) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[6]
+	mi := &file_grover_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -512,7 +708,7 @@ func (x *Credential) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Credential.ProtoReflect.Descriptor instead.
 func (*Credential) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{6}
+	return file_grover_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Credential) GetCredentialUuid() string {
@@ -588,7 +784,7 @@ type BasicDetails struct {
 
 func (x *BasicDetails) Reset() {
 	*x = BasicDetails{}
-	mi := &file_grover_proto_msgTypes[7]
+	mi := &file_grover_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -600,7 +796,7 @@ func (x *BasicDetails) String() string {
 func (*BasicDetails) ProtoMessage() {}
 
 func (x *BasicDetails) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[7]
+	mi := &file_grover_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -613,7 +809,7 @@ func (x *BasicDetails) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BasicDetails.ProtoReflect.Descriptor instead.
 func (*BasicDetails) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{7}
+	return file_grover_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *BasicDetails) GetUsername() string {
@@ -651,7 +847,7 @@ type SshDetails struct {
 
 func (x *SshDetails) Reset() {
 	*x = SshDetails{}
-	mi := &file_grover_proto_msgTypes[8]
+	mi := &file_grover_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -663,7 +859,7 @@ func (x *SshDetails) String() string {
 func (*SshDetails) ProtoMessage() {}
 
 func (x *SshDetails) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[8]
+	mi := &file_grover_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -676,7 +872,7 @@ func (x *SshDetails) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SshDetails.ProtoReflect.Descriptor instead.
 func (*SshDetails) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{8}
+	return file_grover_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *SshDetails) GetUsername() string {
@@ -730,7 +926,7 @@ type CreateCredentialRequest struct {
 
 func (x *CreateCredentialRequest) Reset() {
 	*x = CreateCredentialRequest{}
-	mi := &file_grover_proto_msgTypes[9]
+	mi := &file_grover_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -742,7 +938,7 @@ func (x *CreateCredentialRequest) String() string {
 func (*CreateCredentialRequest) ProtoMessage() {}
 
 func (x *CreateCredentialRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[9]
+	mi := &file_grover_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -755,7 +951,7 @@ func (x *CreateCredentialRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateCredentialRequest.ProtoReflect.Descriptor instead.
 func (*CreateCredentialRequest) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{9}
+	return file_grover_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *CreateCredentialRequest) GetCredential() *Credential {
@@ -773,7 +969,7 @@ type CreateCredentialResponse struct {
 
 func (x *CreateCredentialResponse) Reset() {
 	*x = CreateCredentialResponse{}
-	mi := &file_grover_proto_msgTypes[10]
+	mi := &file_grover_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -785,7 +981,7 @@ func (x *CreateCredentialResponse) String() string {
 func (*CreateCredentialResponse) ProtoMessage() {}
 
 func (x *CreateCredentialResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[10]
+	mi := &file_grover_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -798,7 +994,7 @@ func (x *CreateCredentialResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateCredentialResponse.ProtoReflect.Descriptor instead.
 func (*CreateCredentialResponse) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{10}
+	return file_grover_proto_rawDescGZIP(), []int{12}
 }
 
 type GetCredentialRequest struct {
@@ -810,7 +1006,7 @@ type GetCredentialRequest struct {
 
 func (x *GetCredentialRequest) Reset() {
 	*x = GetCredentialRequest{}
-	mi := &file_grover_proto_msgTypes[11]
+	mi := &file_grover_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -822,7 +1018,7 @@ func (x *GetCredentialRequest) String() string {
 func (*GetCredentialRequest) ProtoMessage() {}
 
 func (x *GetCredentialRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[11]
+	mi := &file_grover_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -835,7 +1031,7 @@ func (x *GetCredentialRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCredentialRequest.ProtoReflect.Descriptor instead.
 func (*GetCredentialRequest) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{11}
+	return file_grover_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *GetCredentialRequest) GetRef() *CredentialRef {
@@ -854,7 +1050,7 @@ type GetCredentialResponse struct {
 
 func (x *GetCredentialResponse) Reset() {
 	*x = GetCredentialResponse{}
-	mi := &file_grover_proto_msgTypes[12]
+	mi := &file_grover_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -866,7 +1062,7 @@ func (x *GetCredentialResponse) String() string {
 func (*GetCredentialResponse) ProtoMessage() {}
 
 func (x *GetCredentialResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[12]
+	mi := &file_grover_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -879,7 +1075,7 @@ func (x *GetCredentialResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCredentialResponse.ProtoReflect.Descriptor instead.
 func (*GetCredentialResponse) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{12}
+	return file_grover_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *GetCredentialResponse) GetCredential() *Credential {
@@ -898,7 +1094,7 @@ type ListCredentialsRequest struct {
 
 func (x *ListCredentialsRequest) Reset() {
 	*x = ListCredentialsRequest{}
-	mi := &file_grover_proto_msgTypes[13]
+	mi := &file_grover_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -910,7 +1106,7 @@ func (x *ListCredentialsRequest) String() string {
 func (*ListCredentialsRequest) ProtoMessage() {}
 
 func (x *ListCredentialsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[13]
+	mi := &file_grover_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -923,7 +1119,7 @@ func (x *ListCredentialsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListCredentialsRequest.ProtoReflect.Descriptor instead.
 func (*ListCredentialsRequest) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{13}
+	return file_grover_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ListCredentialsRequest) GetType() CredentialType {
@@ -943,7 +1139,7 @@ type ListCredentialsResponse struct {
 
 func (x *ListCredentialsResponse) Reset() {
 	*x = ListCredentialsResponse{}
-	mi := &file_grover_proto_msgTypes[14]
+	mi := &file_grover_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -955,7 +1151,7 @@ func (x *ListCredentialsResponse) String() string {
 func (*ListCredentialsResponse) ProtoMessage() {}
 
 func (x *ListCredentialsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[14]
+	mi := &file_grover_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -968,7 +1164,7 @@ func (x *ListCredentialsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListCredentialsResponse.ProtoReflect.Descriptor instead.
 func (*ListCredentialsResponse) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{14}
+	return file_grover_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ListCredentialsResponse) GetCredentials() []*Credential {
@@ -994,7 +1190,7 @@ type DeleteCredentialRequest struct {
 
 func (x *DeleteCredentialRequest) Reset() {
 	*x = DeleteCredentialRequest{}
-	mi := &file_grover_proto_msgTypes[15]
+	mi := &file_grover_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1006,7 +1202,7 @@ func (x *DeleteCredentialRequest) String() string {
 func (*DeleteCredentialRequest) ProtoMessage() {}
 
 func (x *DeleteCredentialRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[15]
+	mi := &file_grover_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1019,7 +1215,7 @@ func (x *DeleteCredentialRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteCredentialRequest.ProtoReflect.Descriptor instead.
 func (*DeleteCredentialRequest) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{15}
+	return file_grover_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *DeleteCredentialRequest) GetRef() *CredentialRef {
@@ -1037,7 +1233,7 @@ type DeleteCredentialResponse struct {
 
 func (x *DeleteCredentialResponse) Reset() {
 	*x = DeleteCredentialResponse{}
-	mi := &file_grover_proto_msgTypes[16]
+	mi := &file_grover_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1049,7 +1245,7 @@ func (x *DeleteCredentialResponse) String() string {
 func (*DeleteCredentialResponse) ProtoMessage() {}
 
 func (x *DeleteCredentialResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[16]
+	mi := &file_grover_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1062,18 +1258,29 @@ func (x *DeleteCredentialResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteCredentialResponse.ProtoReflect.Descriptor instead.
 func (*DeleteCredentialResponse) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{16}
+	return file_grover_proto_rawDescGZIP(), []int{18}
 }
 
 var File_grover_proto protoreflect.FileDescriptor
 
 const file_grover_proto_rawDesc = "" +
 	"\n" +
-	"\fgrover.proto\x12\x06grover\"l\n" +
+	"\fgrover.proto\x12\x06grover\x1a\x1fgoogle/protobuf/timestamp.proto\"l\n" +
 	"\rCredentialRef\x12)\n" +
 	"\x0fcredential_uuid\x18\x01 \x01(\tH\x00R\x0ecredentialUuid\x12)\n" +
 	"\x0fcredential_name\x18\x02 \x01(\tH\x00R\x0ecredentialNameB\x05\n" +
-	"\x03ref\"B\n" +
+	"\x03ref\"r\n" +
+	"\fPulseRequest\x12\x1b\n" +
+	"\tclient_id\x18\x01 \x01(\tR\bclientId\x12\x10\n" +
+	"\x03seq\x18\x02 \x01(\x04R\x03seq\x123\n" +
+	"\asent_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\x06sentAt\"\x91\x02\n" +
+	"\rPulseResponse\x12\x10\n" +
+	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12\x1b\n" +
+	"\tserver_id\x18\x02 \x01(\tR\bserverId\x123\n" +
+	"\arecv_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\x06recvAt\x123\n" +
+	"\asent_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x06sentAt\x12/\n" +
+	"\x06status\x18\x05 \x01(\x0e2\x17.grover.HeartbeatStatusR\x06status\x126\n" +
+	"\x17recommended_interval_ms\x18\x06 \x01(\x03R\x15recommendedIntervalMs\"B\n" +
 	"\bFileInfo\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12\x12\n" +
@@ -1135,11 +1342,18 @@ const file_grover_proto_rawDesc = "" +
 	"\fEndpointType\x12\x1d\n" +
 	"\x19ENDPOINT_TYPE_UNSPECIFIED\x10\x00\x12\b\n" +
 	"\x04HTTP\x10\x01\x12\f\n" +
-	"\bLOCAL_FS\x10\x02*e\n" +
+	"\bLOCAL_FS\x10\x02*W\n" +
+	"\x0fHeartbeatStatus\x12 \n" +
+	"\x1cHEARTBEAT_STATUS_UNSPECIFIED\x10\x00\x12\x06\n" +
+	"\x02OK\x10\x01\x12\f\n" +
+	"\bDEGRADED\x10\x02\x12\f\n" +
+	"\bDRAINING\x10\x03*e\n" +
 	"\x0eCredentialType\x12\x1f\n" +
 	"\x1bCREDENTIAL_TYPE_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13SSH_CREDENTIAL_TYPE\x10\x01\x12\x19\n" +
-	"\x15BASIC_CREDENTIAL_TYPE\x10\x022\x8b\x01\n" +
+	"\x15BASIC_CREDENTIAL_TYPE\x10\x022A\n" +
+	"\tHeartBeat\x124\n" +
+	"\x05Pulse\x12\x14.grover.PulseRequest\x1a\x15.grover.PulseResponse2\x8b\x01\n" +
 	"\vFileService\x12;\n" +
 	"\x04List\x12\x18.grover.ListFilesRequest\x1a\x19.grover.ListFilesResponse\x12?\n" +
 	"\x06Remove\x12\x19.grover.RemoveFileRequest\x1a\x1a.grover.RemoveFileResponse2\xba\x02\n" +
@@ -1161,61 +1375,71 @@ func file_grover_proto_rawDescGZIP() []byte {
 	return file_grover_proto_rawDescData
 }
 
-var file_grover_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_grover_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_grover_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
+var file_grover_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_grover_proto_goTypes = []any{
 	(EndpointType)(0),                // 0: grover.EndpointType
-	(CredentialType)(0),              // 1: grover.CredentialType
-	(*CredentialRef)(nil),            // 2: grover.CredentialRef
-	(*FileInfo)(nil),                 // 3: grover.FileInfo
-	(*ListFilesRequest)(nil),         // 4: grover.ListFilesRequest
-	(*ListFilesResponse)(nil),        // 5: grover.ListFilesResponse
-	(*RemoveFileRequest)(nil),        // 6: grover.RemoveFileRequest
-	(*RemoveFileResponse)(nil),       // 7: grover.RemoveFileResponse
-	(*Credential)(nil),               // 8: grover.Credential
-	(*BasicDetails)(nil),             // 9: grover.BasicDetails
-	(*SshDetails)(nil),               // 10: grover.SshDetails
-	(*CreateCredentialRequest)(nil),  // 11: grover.CreateCredentialRequest
-	(*CreateCredentialResponse)(nil), // 12: grover.CreateCredentialResponse
-	(*GetCredentialRequest)(nil),     // 13: grover.GetCredentialRequest
-	(*GetCredentialResponse)(nil),    // 14: grover.GetCredentialResponse
-	(*ListCredentialsRequest)(nil),   // 15: grover.ListCredentialsRequest
-	(*ListCredentialsResponse)(nil),  // 16: grover.ListCredentialsResponse
-	(*DeleteCredentialRequest)(nil),  // 17: grover.DeleteCredentialRequest
-	(*DeleteCredentialResponse)(nil), // 18: grover.DeleteCredentialResponse
+	(HeartbeatStatus)(0),             // 1: grover.HeartbeatStatus
+	(CredentialType)(0),              // 2: grover.CredentialType
+	(*CredentialRef)(nil),            // 3: grover.CredentialRef
+	(*PulseRequest)(nil),             // 4: grover.PulseRequest
+	(*PulseResponse)(nil),            // 5: grover.PulseResponse
+	(*FileInfo)(nil),                 // 6: grover.FileInfo
+	(*ListFilesRequest)(nil),         // 7: grover.ListFilesRequest
+	(*ListFilesResponse)(nil),        // 8: grover.ListFilesResponse
+	(*RemoveFileRequest)(nil),        // 9: grover.RemoveFileRequest
+	(*RemoveFileResponse)(nil),       // 10: grover.RemoveFileResponse
+	(*Credential)(nil),               // 11: grover.Credential
+	(*BasicDetails)(nil),             // 12: grover.BasicDetails
+	(*SshDetails)(nil),               // 13: grover.SshDetails
+	(*CreateCredentialRequest)(nil),  // 14: grover.CreateCredentialRequest
+	(*CreateCredentialResponse)(nil), // 15: grover.CreateCredentialResponse
+	(*GetCredentialRequest)(nil),     // 16: grover.GetCredentialRequest
+	(*GetCredentialResponse)(nil),    // 17: grover.GetCredentialResponse
+	(*ListCredentialsRequest)(nil),   // 18: grover.ListCredentialsRequest
+	(*ListCredentialsResponse)(nil),  // 19: grover.ListCredentialsResponse
+	(*DeleteCredentialRequest)(nil),  // 20: grover.DeleteCredentialRequest
+	(*DeleteCredentialResponse)(nil), // 21: grover.DeleteCredentialResponse
+	(*timestamppb.Timestamp)(nil),    // 22: google.protobuf.Timestamp
 }
 var file_grover_proto_depIdxs = []int32{
-	0,  // 0: grover.ListFilesRequest.type:type_name -> grover.EndpointType
-	2,  // 1: grover.ListFilesRequest.credential_ref:type_name -> grover.CredentialRef
-	3,  // 2: grover.ListFilesResponse.files:type_name -> grover.FileInfo
-	0,  // 3: grover.RemoveFileRequest.type:type_name -> grover.EndpointType
-	2,  // 4: grover.RemoveFileRequest.credential_ref:type_name -> grover.CredentialRef
-	1,  // 5: grover.Credential.type:type_name -> grover.CredentialType
-	9,  // 6: grover.Credential.basic:type_name -> grover.BasicDetails
-	10, // 7: grover.Credential.ssh:type_name -> grover.SshDetails
-	8,  // 8: grover.CreateCredentialRequest.credential:type_name -> grover.Credential
-	2,  // 9: grover.GetCredentialRequest.ref:type_name -> grover.CredentialRef
-	8,  // 10: grover.GetCredentialResponse.credential:type_name -> grover.Credential
-	1,  // 11: grover.ListCredentialsRequest.type:type_name -> grover.CredentialType
-	8,  // 12: grover.ListCredentialsResponse.credentials:type_name -> grover.Credential
-	2,  // 13: grover.DeleteCredentialRequest.ref:type_name -> grover.CredentialRef
-	4,  // 14: grover.FileService.List:input_type -> grover.ListFilesRequest
-	6,  // 15: grover.FileService.Remove:input_type -> grover.RemoveFileRequest
-	11, // 16: grover.CredentialService.Create:input_type -> grover.CreateCredentialRequest
-	13, // 17: grover.CredentialService.Get:input_type -> grover.GetCredentialRequest
-	15, // 18: grover.CredentialService.List:input_type -> grover.ListCredentialsRequest
-	17, // 19: grover.CredentialService.Delete:input_type -> grover.DeleteCredentialRequest
-	5,  // 20: grover.FileService.List:output_type -> grover.ListFilesResponse
-	7,  // 21: grover.FileService.Remove:output_type -> grover.RemoveFileResponse
-	12, // 22: grover.CredentialService.Create:output_type -> grover.CreateCredentialResponse
-	14, // 23: grover.CredentialService.Get:output_type -> grover.GetCredentialResponse
-	16, // 24: grover.CredentialService.List:output_type -> grover.ListCredentialsResponse
-	18, // 25: grover.CredentialService.Delete:output_type -> grover.DeleteCredentialResponse
-	20, // [20:26] is the sub-list for method output_type
-	14, // [14:20] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	22, // 0: grover.PulseRequest.sent_at:type_name -> google.protobuf.Timestamp
+	22, // 1: grover.PulseResponse.recv_at:type_name -> google.protobuf.Timestamp
+	22, // 2: grover.PulseResponse.sent_at:type_name -> google.protobuf.Timestamp
+	1,  // 3: grover.PulseResponse.status:type_name -> grover.HeartbeatStatus
+	0,  // 4: grover.ListFilesRequest.type:type_name -> grover.EndpointType
+	3,  // 5: grover.ListFilesRequest.credential_ref:type_name -> grover.CredentialRef
+	6,  // 6: grover.ListFilesResponse.files:type_name -> grover.FileInfo
+	0,  // 7: grover.RemoveFileRequest.type:type_name -> grover.EndpointType
+	3,  // 8: grover.RemoveFileRequest.credential_ref:type_name -> grover.CredentialRef
+	2,  // 9: grover.Credential.type:type_name -> grover.CredentialType
+	12, // 10: grover.Credential.basic:type_name -> grover.BasicDetails
+	13, // 11: grover.Credential.ssh:type_name -> grover.SshDetails
+	11, // 12: grover.CreateCredentialRequest.credential:type_name -> grover.Credential
+	3,  // 13: grover.GetCredentialRequest.ref:type_name -> grover.CredentialRef
+	11, // 14: grover.GetCredentialResponse.credential:type_name -> grover.Credential
+	2,  // 15: grover.ListCredentialsRequest.type:type_name -> grover.CredentialType
+	11, // 16: grover.ListCredentialsResponse.credentials:type_name -> grover.Credential
+	3,  // 17: grover.DeleteCredentialRequest.ref:type_name -> grover.CredentialRef
+	4,  // 18: grover.HeartBeat.Pulse:input_type -> grover.PulseRequest
+	7,  // 19: grover.FileService.List:input_type -> grover.ListFilesRequest
+	9,  // 20: grover.FileService.Remove:input_type -> grover.RemoveFileRequest
+	14, // 21: grover.CredentialService.Create:input_type -> grover.CreateCredentialRequest
+	16, // 22: grover.CredentialService.Get:input_type -> grover.GetCredentialRequest
+	18, // 23: grover.CredentialService.List:input_type -> grover.ListCredentialsRequest
+	20, // 24: grover.CredentialService.Delete:input_type -> grover.DeleteCredentialRequest
+	5,  // 25: grover.HeartBeat.Pulse:output_type -> grover.PulseResponse
+	8,  // 26: grover.FileService.List:output_type -> grover.ListFilesResponse
+	10, // 27: grover.FileService.Remove:output_type -> grover.RemoveFileResponse
+	15, // 28: grover.CredentialService.Create:output_type -> grover.CreateCredentialResponse
+	17, // 29: grover.CredentialService.Get:output_type -> grover.GetCredentialResponse
+	19, // 30: grover.CredentialService.List:output_type -> grover.ListCredentialsResponse
+	21, // 31: grover.CredentialService.Delete:output_type -> grover.DeleteCredentialResponse
+	25, // [25:32] is the sub-list for method output_type
+	18, // [18:25] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_grover_proto_init() }
@@ -1227,7 +1451,7 @@ func file_grover_proto_init() {
 		(*CredentialRef_CredentialUuid)(nil),
 		(*CredentialRef_CredentialName)(nil),
 	}
-	file_grover_proto_msgTypes[6].OneofWrappers = []any{
+	file_grover_proto_msgTypes[8].OneofWrappers = []any{
 		(*Credential_Basic)(nil),
 		(*Credential_Ssh)(nil),
 	}
@@ -1236,10 +1460,10 @@ func file_grover_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_grover_proto_rawDesc), len(file_grover_proto_rawDesc)),
-			NumEnums:      2,
-			NumMessages:   17,
+			NumEnums:      3,
+			NumMessages:   19,
 			NumExtensions: 0,
-			NumServices:   2,
+			NumServices:   3,
 		},
 		GoTypes:           file_grover_proto_goTypes,
 		DependencyIndexes: file_grover_proto_depIdxs,

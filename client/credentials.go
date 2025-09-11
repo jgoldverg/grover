@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 
+	"github.com/google/uuid"
 	"github.com/jgoldverg/grover/backend"
 	"github.com/jgoldverg/grover/config"
 	"github.com/jgoldverg/grover/pb"
@@ -37,7 +38,6 @@ func NewCredentialService(cfg *config.AppConfig, conn grpc.ClientConnInterface, 
 }
 
 func (c *CredentialService) AddCredential(ctx context.Context, cred backend.Credential) error {
-
 	if ShouldUseRemote(c.policy, c.hasRemote) {
 		credPb := &pb.Credential{
 			CredentialUuid: "",
@@ -95,5 +95,31 @@ func (c *CredentialService) ListCredentials(ctx context.Context, credType string
 		return utils.PbCredentialToBackendCredential(resp.GetCredentials()), nil
 	} else {
 		return c.storage.ListCredentialsByType(credType)
+	}
+}
+
+func (c *CredentialService) DeleteCredential(ctx context.Context, credUuid uuid.UUID, credName string) error {
+	if ShouldUseRemote(c.policy, c.hasRemote) {
+		req := pb.DeleteCredentialRequest{}
+		if credUuid != uuid.Nil {
+			credRef := pb.CredentialRef{
+				Ref: &pb.CredentialRef_CredentialUuid{CredentialUuid: credUuid.String()},
+			}
+			req.Ref = &credRef
+		}
+		if credName != "" {
+			credRef := pb.CredentialRef{
+				Ref: &pb.CredentialRef_CredentialName{CredentialName: credName},
+			}
+			req.Ref = &credRef
+		}
+		_, err := c.api.Delete(ctx, &req)
+		return err
+	} else {
+		if credUuid != uuid.Nil {
+			return c.storage.DeleteCredential(credUuid)
+		} else {
+			return c.storage.DeleteCredentialByName(credName)
+		}
 	}
 }

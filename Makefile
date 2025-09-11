@@ -11,9 +11,9 @@ BIN_DIR := bin
 SERVER_BIN := $(BIN_DIR)/groverd
 CLIENT_BIN := $(BIN_DIR)/grover
 
-.PHONY: all proto build-server build-client clean test
+.PHONY: all proto server client clean test
 
-all: proto build-server build-client
+all: proto server client
 
 proto:
 	@echo "Generating protobuf code..."
@@ -26,13 +26,13 @@ proto:
 		$(PROTO_FILES)
 	@echo "Protobuf generation complete."
 
-build-server:
+server:
 	@mkdir -p $(BIN_DIR)
 	@echo "Building server binary..."
 	go build -o $(SERVER_BIN) ./$(SERVER_DIR)
 	@echo "Built server: $(SERVER_BIN)"
 
-build-client:
+client:
 	@mkdir -p $(BIN_DIR)
 	@echo "Building client binary..."
 	go build -o $(CLIENT_BIN) ./$(CLIENT_DIR)
