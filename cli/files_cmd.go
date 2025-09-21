@@ -6,8 +6,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jgoldverg/grover/backend"
 	"github.com/jgoldverg/grover/cli/output"
-	"github.com/jgoldverg/grover/client"
-	"github.com/jgoldverg/grover/log"
+	"github.com/jgoldverg/grover/internal"
+	"github.com/jgoldverg/grover/pkg/groverclient"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -60,7 +60,7 @@ func deleteResource() *cobra.Command {
 			}
 
 			if opts.Path == "" {
-				log.Structured(&pterm.Error, "must specify a path to delete from", nil)
+				internal.Error("must specify a path to delete from", nil)
 			}
 			pterm.DefaultSection.Println("Deleting files on backend")
 			pterm.DefaultBasicText.Println("  Endpoint Type:", endpointType)
@@ -82,8 +82,8 @@ func deleteResource() *cobra.Command {
 				}
 			}
 
-			policy := client.ParseRoutePolicy(route)
-			gc := client.NewGroverClient(*appConfig)
+			policy := groverclient.ParseRoutePolicy(route)
+			gc := groverclient.NewGroverClient(*appConfig)
 			if err := gc.Initialize(cmd.Context(), policy); err != nil {
 				return err
 			}
@@ -91,12 +91,13 @@ func deleteResource() *cobra.Command {
 
 			success, err := gc.ResourceService.Rm(cmd.Context(), endpointType, opts.Path, opts.CredentialName, credUuid)
 			if success != true {
-				log.Structured(&pterm.Error, fmt.Sprintf("failed to delete path %s", opts.Path), log.Fields{
-					log.FieldMsg:   fmt.Sprintf("failed to delete path: %s", opts.Path),
-					log.FieldError: err.Error(),
+				internal.Error("failed to delete path", internal.Fields{
+					internal.FieldMsg:         fmt.Sprintf("failed to delete path: %s", opts.Path),
+					internal.FieldError:       err.Error(),
+					internal.FieldKey("path"): opts.Path,
 				})
 			}
-			pterm.DefaultBasicText.Println("Successfully deleted files %s with value %t", opts.Path, err)
+			pterm.DefaultBasicText.Printf("\n Successfully deleted files %s with value %t", opts.Path, err)
 			return nil
 		},
 	}
@@ -133,9 +134,9 @@ func listResources() *cobra.Command {
 			if f := cmd.Flags().Lookup("via"); f != nil && f.Changed {
 				route, _ = cmd.Flags().GetString("via")
 			}
-			policy := client.ParseRoutePolicy(route)
+			policy := groverclient.ParseRoutePolicy(route)
 
-			gc := client.NewGroverClient(*appConfig)
+			gc := groverclient.NewGroverClient(*appConfig)
 			if err := gc.Initialize(cmd.Context(), policy); err != nil {
 				return err
 			}

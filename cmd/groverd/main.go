@@ -6,10 +6,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/jgoldverg/grover/config"
-	"github.com/jgoldverg/grover/log"
-	gs "github.com/jgoldverg/grover/server"
-	"github.com/pterm/pterm"
+	"github.com/jgoldverg/grover/internal"
+	gs "github.com/jgoldverg/grover/pkg/groverserver"
 )
 
 func main() {
@@ -21,18 +19,23 @@ func main() {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 	// Start server
-	cfg, err := config.LoadServerConfig("")
+	cfg, err := internal.LoadServerConfig("")
 	if err != nil {
-		log.Structured(&pterm.Error, "failed to load server config", log.Fields{
-			log.FieldError: err.Error(),
+		internal.Error("failed to load server config", internal.Fields{
+			internal.FieldError: err.Error(),
 		})
 		return
 	}
-	server := gs.NewGroverServer(cfg)
+	if err := internal.ConfigureLogger(cfg.LogLevel); err != nil {
+		internal.Warn("invalid log level in server config, defaulting to info", internal.Fields{
+			internal.FieldError: err.Error(),
+		})
+	}
+	server := gs.NewGroverServer(ctx, cfg)
 	go func() {
 		if err := server.StartServer(ctx); err != nil {
-			log.Structured(&pterm.Error, "Server error %v", log.Fields{
-				"error": err,
+			internal.Error("grover server exited with error", internal.Fields{
+				internal.FieldError: err.Error(),
 			})
 			cancel()
 		}
@@ -41,12 +44,12 @@ func main() {
 	// Wait for shutdown signal
 	select {
 	case <-ctx.Done():
-		log.Structured(&pterm.Info, "Context cancelled - shutting down", nil)
+		internal.Info("context cancelled - shutting down", nil)
 	case sig := <-sigChan:
-		log.Structured(&pterm.Info, "Received %s - shutting down", log.Fields{
+		internal.Info("received shutdown signal", internal.Fields{
 			"signal": sig.String(),
 		})
 		cancel()
 	}
-	log.Structured(&pterm.Info, "Grover-server shutdown complete", nil)
+	internal.Info("grover-server shutdown complete", nil)
 }

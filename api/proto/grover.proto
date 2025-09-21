@@ -1,0 +1,132 @@
+syntax = "proto3";
+
+package grover.v1;
+option go_package = "github.com/jgoldverg/grover/pkg/groverpb/groverv1;groverv1";
+
+import "google/protobuf/timestamp.proto";
+
+enum EndpointType {
+  ENDPOINT_TYPE_UNSPECIFIED = 0;  // default value, must be 0
+  HTTP = 1;
+  LOCAL_FS = 2;
+}
+
+message CredentialRef {
+  oneof ref {
+    string credential_uuid = 1;
+    string credential_name = 2;
+  }
+}
+
+service HeartBeat {
+  // Unary heartbeat. (If you later want streaming, switch to bidi stream.)
+  rpc Pulse (PulseRequest) returns (PulseResponse);
+}
+
+enum HeartbeatStatus {
+  HEARTBEAT_STATUS_UNSPECIFIED = 0;
+  OK = 1;  // healthy
+  DEGRADED = 2;  // overloaded/partial outage
+  DRAINING = 3;  // preparing to shut down, avoid new flows
+}
+
+message PulseRequest {
+  string client_id = 1;                       // stable UUID for this control-plane client
+  uint64 seq = 2;                       // monotonically increasing counter
+  google.protobuf.Timestamp sent_at = 3;      // client send timestamp
+}
+
+message PulseResponse {
+  uint64 seq = 1;                       // echoed from request for correlation
+  string server_id = 2;                       // server instance UUID
+  google.protobuf.Timestamp recv_at = 3;      // server receive time
+  google.protobuf.Timestamp sent_at = 4;      // server send time
+  HeartbeatStatus status = 5;                 // server health hint
+  int64 recommended_interval_ms = 6;         // e.g., 20000 (20s)
+}
+
+service FileService {
+  rpc List   (ListFilesRequest)   returns (ListFilesResponse);
+  rpc Remove (RemoveFileRequest)  returns (RemoveFileResponse);
+}
+
+message FileInfo {
+  string path = 1;
+  string id = 2;
+  uint64 size = 3;
+}
+
+message ListFilesRequest {
+  EndpointType type = 1;
+  string       path = 2;
+  CredentialRef credential_ref = 3; // optional for localfs; required for some remote backends
+}
+
+message ListFilesResponse {
+  repeated FileInfo files = 1;
+}
+
+message RemoveFileRequest {
+  EndpointType type = 1;
+  string       path = 2;
+  CredentialRef credential_ref = 3; // may be required depending on backend
+}
+
+message RemoveFileResponse {
+  bool success = 1;
+}
+
+service CredentialService {
+  rpc Create (CreateCredentialRequest)  returns (CreateCredentialResponse);
+  rpc Get    (GetCredentialRequest)     returns (GetCredentialResponse);
+  rpc List   (ListCredentialsRequest)   returns (ListCredentialsResponse);
+  rpc Delete (DeleteCredentialRequest)  returns (DeleteCredentialResponse);
+}
+
+enum CredentialType {
+  CREDENTIAL_TYPE_UNSPECIFIED = 0;
+  SSH_CREDENTIAL_TYPE = 1;
+  BASIC_CREDENTIAL_TYPE = 2;
+}
+
+// Full credential (includes secrets by design).
+message Credential {
+  string         credential_uuid = 1;
+  string         credential_name = 2;
+  CredentialType type = 3;
+
+  oneof details {
+    BasicDetails basic = 10; // for BASIC
+    SshDetails   ssh = 11; // for SSH
+  }
+}
+
+message BasicDetails {
+  string username = 1;
+  string password = 2; // secret
+  string url = 3;
+}
+
+message SshDetails {
+  string username = 1;
+  string host = 2;
+  int32  port = 3;
+  string public_key = 4;
+  string private_key = 5; // secret
+  bool   use_agent = 6;
+}
+
+message CreateCredentialRequest  {Credential   credential = 1;}
+message CreateCredentialResponse {}
+
+message GetCredentialRequest     {CredentialRef ref = 1;}
+message GetCredentialResponse    {Credential   credential = 1;}
+
+message ListCredentialsRequest   {CredentialType type = 1;}
+message ListCredentialsResponse  {
+  repeated Credential credentials = 1;
+  string             next_page_token = 2;
+}
+
+message DeleteCredentialRequest  {CredentialRef ref = 1;}
+message DeleteCredentialResponse {}

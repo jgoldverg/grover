@@ -1,0 +1,82 @@
+package groverclient
+
+import (
+	"context"
+	"errors"
+
+	"github.com/jgoldverg/grover/internal"
+	pb "github.com/jgoldverg/grover/pkg/groverpb/groverudpv1"
+	"google.golang.org/grpc"
+)
+
+type GroverServerCommands struct {
+	cfg *internal.AppConfig
+	gs  pb.GroverServerClient
+	pb.UnimplementedGroverServerServer
+}
+
+func NewGroverServerCommands(cfg *internal.AppConfig, conn *grpc.ClientConn) *GroverServerCommands {
+	return &GroverServerCommands{
+		cfg: cfg,
+		gs:  pb.NewGroverServerClient(conn),
+	}
+}
+
+func (g *GroverServerCommands) CreatePorts(portCount uint32) ([]uint32, error) {
+	req := pb.CreateUdpPortsRequest{PortCount: portCount}
+	resp, err := g.gs.CreateUdpPorts(context.Background(), &req)
+	if err != nil {
+		return nil, err
+	}
+	return resp.GetPorts(), nil
+}
+
+func (g *GroverServerCommands) ListPorts() ([]uint32, error) {
+	req := pb.ListPortRequest{}
+	resp, err := g.gs.ListPorts(context.Background(), &req)
+	return resp.GetPort(), err
+}
+
+func (g *GroverServerCommands) StartServer(ctx context.Context) (uint32, error) {
+	req := pb.StartServerRequest{
+		UdpPort:        0,
+		WorkersPerFile: 0,
+		MaxTransfers:   0,
+	}
+	resp, err := g.gs.StartServer(ctx, &req)
+	if err != nil {
+		return 0, err
+	}
+
+	if resp.GetOk() {
+		return resp.GetPort(), nil
+	}
+	return 0, errors.New("start server failed: " + resp.GetMessage())
+}
+
+func (g *GroverServerCommands) StopServer(ctx context.Context) (string, error) {
+	req := pb.StopServerRequest{}
+
+	resp, err := g.gs.StopServer(ctx, &req)
+	if err != nil {
+		return "", err
+	}
+
+	if !resp.GetOk() {
+		return "", errors.New("stop server failed: " + resp.GetMessage())
+	} else {
+		return resp.GetMessage(), nil
+	}
+}
+
+func (g *GroverServerCommands) DeletePorts(ctx context.Context, ports []uint32) (bool, error) {
+	req := pb.DeleteUdpPortsRequest{
+		PortNum: ports,
+	}
+	resp, err := g.gs.DeleteUdpPorts(ctx, &req)
+
+	if err != nil {
+		return false, err
+	}
+	return resp.Ok, nil
+}

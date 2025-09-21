@@ -1,0 +1,263 @@
+package internal
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/google/uuid"
+	"github.com/spf13/viper"
+	"google.golang.org/grpc/credentials"
+)
+
+type AppConfig struct {
+	CredentialsFile     string `mapstructure:"credentials_file"`
+	ServerURL           string `mapstructure:"server_url"`
+	CACertFile          string `mapstructure:"ca_cert_file"`
+	Route               string `mapstructure:"route"`
+	HeartBeatInterval   int    `mapstructure:"heart_beat_interval"`
+	HeartBeatErrorCount int    `mapstructure:"heart_beat_error_count"`
+	HeartBeatTimeout    int    `mapstructure:"heart_beat_timeout"`
+	HeartBeatRtts       int    `mapstructure:"heart_beat_rtts"`
+	ClientUuid          string `mapstructure:"client_uuid"`
+	LogLevel            string `mapstructure:"log_level"`
+}
+
+func LoadAppConfig(configPath string) (*AppConfig, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+
+	v, err := initViper(configPath, filepath.Join(home, ".grover"), "cli_config", "toml", "GROVER_CLI_CONFIG")
+	if err != nil {
+		return nil, err
+	}
+
+	// Defaults
+	v.SetDefault("credentials_file", filepath.Join(home, ".grover", "credentials_store.toml"))
+	v.SetDefault("server_url", "localhost:22444")
+	v.SetDefault("ca_cert_file", filepath.Join(home, ".grover", "certs", "public", "server.crt"))
+	v.SetDefault("route", "auto")
+	v.SetDefault("heart_beat_interval", 10)
+	v.SetDefault("heart_beat_error_count", 5)
+	v.SetDefault("heart_beat_timeout", 30)
+	v.SetDefault("heart_beat_rtts", 64)
+	v.SetDefault("client_uuid", uuid.New().String())
+	v.SetDefault("log_level", "info")
+
+	var cfg AppConfig
+	if err := v.Unmarshal(&cfg); err != nil {
+		return nil, fmt.Errorf("unmarshal config: %w", err)
+	}
+
+	// expand paths
+	cfg.CredentialsFile = expandPath(cfg.CredentialsFile)
+	cfg.CACertFile = expandPath(cfg.CACertFile)
+
+	// Create-on-first-run ONLY:
+	// If Viper didn't read any file, pick a path and write it if missing.
+	if v.ConfigFileUsed() == "" {
+		writePath := configPath
+		if writePath == "" {
+			writePath = filepath.Join(home, ".grover", "cli_config.toml")
+		}
+		if _, statErr := os.Stat(writePath); errors.Is(statErr, os.ErrNotExist) {
+			if _, err := cfg.Save(writePath); err != nil {
+				return nil, fmt.Errorf("persist default app config: %w", err)
+			}
+		}
+		Info("client config written", Fields{
+			ConfigPath: writePath,
+		})
+	}
+
+	// Create-on-first-run ONLY (no config file was read)
+	if v.ConfigFileUsed() == "" {
+		writePath := configPath
+		if writePath == "" {
+			writePath = filepath.Join(home, ".grover", "server_config.toml")
+		}
+		if _, statErr := os.Stat(writePath); errors.Is(statErr, os.ErrNotExist) {
+			if _, err := cfg.Save(writePath); err != nil {
+				return nil, fmt.Errorf("persist default server config: %w", err)
+			}
+		}
+		Info("server config written", Fields{
+			ConfigPath: writePath,
+		})
+	}
+
+	return &cfg, nil
+}
+
+type ServerConfig struct {
+	Port                  int    `mapstructure:"port"`
+	ServerCertificatePath string `mapstructure:"server_certificate_path"`
+	ServerKeyPath         string `mapstructure:"server_key_path"`
+	CredentialsFile       string `mapstructure:"credentials_file"`
+	HeartBeatInterval     int    `mapstructure:"heart_beat_interval"`
+	ServerId              string `mapstructure:"server_id"`
+	LogLevel              string `mapstructure:"log_level"`
+}
+
+func LoadServerConfig(configPath string) (*ServerConfig, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, errors.New("failed to load users home directory: " + err.Error())
+	}
+	v, err := initViper(configPath, filepath.Join(home, ".grover"), "server_config", "toml", "GROVER_SERVER")
+	if err != nil {
+		return nil, errors.New("failed to load server config: " + err.Error())
+	}
+
+	v.SetDefault("port", 22444)
+	v.SetDefault("server_certificate_path", filepath.Join(home, ".grover", "certs", "public", "server.crt"))
+	v.SetDefault("server_key_path", filepath.Join(home, ".grover", "certs", "private", "server.key"))
+	v.SetDefault("credentials_file", filepath.Join(home, ".grover", "credentials_store.toml"))
+	v.SetDefault("heart_beat_interval", 5000)
+	v.SetDefault("server_id", uuid.New().String())
+	v.SetDefault("log_level", "info")
+
+	var cfg ServerConfig
+	if err := v.Unmarshal(&cfg); err != nil {
+		return nil, fmt.Errorf("unmarshal config: %w", err)
+	}
+
+	cfg.ServerCertificatePath = expandPath(cfg.ServerCertificatePath)
+	cfg.ServerKeyPath = expandPath(cfg.ServerKeyPath)
+	cfg.CredentialsFile = expandPath(cfg.CredentialsFile)
+
+	Info("TLS cert paths", Fields{
+		ServerCertificatePath: cfg.ServerCertificatePath,
+		ServerKeyPath:         cfg.ServerKeyPath,
+		CredentialPath:        cfg.CredentialsFile,
+	})
+
+	// Create-on-first-run ONLY (no config file was read)
+	if v.ConfigFileUsed() == "" {
+		writePath := configPath
+		if writePath == "" {
+			writePath = filepath.Join(home, ".grover", "server_config.toml")
+		}
+		if _, statErr := os.Stat(writePath); errors.Is(statErr, os.ErrNotExist) {
+			if _, err := cfg.Save(writePath); err != nil {
+				return nil, fmt.Errorf("persist default server config: %w", err)
+			}
+		}
+		Info("server config written", Fields{
+			ConfigPath: writePath,
+		})
+	}
+
+	return &cfg, nil
+}
+
+func (cfg *ServerConfig) LoadTLSCredentials() (credentials.TransportCredentials, error) {
+	cert := expandPath(cfg.ServerCertificatePath)
+	key := expandPath(cfg.ServerKeyPath)
+	return credentials.NewServerTLSFromFile(cert, key)
+}
+
+func initViper(configPath, defaultDir, defaultName, defaultType, envPrefix string) (*viper.Viper, error) {
+	v := viper.New()
+	v.SetConfigType(defaultType)
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.SetEnvPrefix(envPrefix)
+	v.AutomaticEnv()
+
+	if configPath != "" {
+		v.SetConfigFile(configPath)
+	} else {
+		v.AddConfigPath(defaultDir)
+		v.AddConfigPath(".")
+		v.SetConfigName(defaultName)
+	}
+
+	if err := v.ReadInConfig(); err != nil {
+		_, notFound := err.(viper.ConfigFileNotFoundError)
+		if !notFound {
+			Error("config file not found", Fields{
+				ConfigPath: configPath,
+			})
+			return nil, fmt.Errorf("read config: %w", err)
+		}
+	}
+	return v, nil
+}
+
+func (cfg *AppConfig) Save(path string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	if path == "" {
+		path = filepath.Join(home, ".grover", "app.toml")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+
+	v := viper.New()
+	v.SetConfigType("toml")
+	v.Set("credentials_file", cfg.CredentialsFile)
+	v.Set("server_url", cfg.ServerURL)
+	v.Set("ca_cert_file", cfg.CACertFile)
+	v.Set("route", cfg.Route)
+	v.Set("heart_beat_interval", cfg.HeartBeatInterval)
+	v.Set("heart_beat_error_count", cfg.HeartBeatErrorCount)
+	v.Set("heart_beat_timeout", cfg.HeartBeatTimeout)
+	v.Set("heart_beat_rtts", cfg.HeartBeatRtts)
+	v.Set("client_uuid", cfg.ClientUuid)
+	v.Set("log_level", cfg.LogLevel)
+
+	if err := v.WriteConfigAs(path); err != nil {
+		return "", fmt.Errorf("write app config: %w", err)
+	}
+	_ = os.Chmod(path, 0o600)
+	return path, nil
+}
+
+func (cfg *ServerConfig) Save(path string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	if path == "" {
+		path = filepath.Join(home, ".grover", "server_config.toml")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+
+	v := viper.New()
+	v.SetConfigType("toml")
+	v.Set("port", cfg.Port)
+	v.Set("server_certificate_path", cfg.ServerCertificatePath)
+	v.Set("server_key_path", cfg.ServerKeyPath)
+	v.Set("credentials_file", cfg.CredentialsFile)
+	v.Set("heart_beat_interval", cfg.HeartBeatInterval)
+	v.Set("server_id", cfg.ServerId)
+	v.Set("log_level", cfg.LogLevel)
+
+	if err := v.WriteConfigAs(path); err != nil {
+		return "", fmt.Errorf("write server config: %w", err)
+	}
+	_ = os.Chmod(path, 0o600)
+	return path, nil
+}
+
+func expandPath(p string) string {
+	if p == "" {
+		return p
+	}
+	p = os.ExpandEnv(p)
+	if strings.HasPrefix(p, "~") {
+		if home, err := os.UserHomeDir(); err == nil {
+			p = filepath.Join(home, strings.TrimPrefix(p, "~"))
+		}
+	}
+	return p
+}

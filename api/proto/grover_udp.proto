@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package groverudp.v1;
+option go_package = "github.com/jgoldverg/grover/pkg/groverpb/groverudpv1;groverudpv1";
+
+service GroverServer {
+  rpc StartServer (StartServerRequest) returns (StartServerResponse);
+  rpc StopServer  (StopServerRequest)  returns (StopServerResponse);
+  rpc ListPorts (ListPortRequest) returns (ListPortResponse);
+  rpc DeleteUdpPorts (DeleteUdpPortsRequest) returns (DeleteUdpPortsResponse);
+  rpc CreateUdpPorts (CreateUdpPortsRequest) returns (CreateUdpPortsResponse);
+}
+
+message CreateUdpPortsRequest {
+  uint32 port_count = 1;
+}
+
+message CreateUdpPortsResponse {
+  repeated uint32 ports = 1;
+}
+
+message DeleteUdpPortsRequest {
+  repeated uint32 port_num = 1;
+}
+
+message DeleteUdpPortsResponse {
+  bool ok = 1;
+}
+
+message ListPortRequest {}
+
+message ListPortResponse {
+  repeated uint32 port = 1;
+}
+
+message StartServerRequest {
+  uint32 udp_port = 1;
+  uint32 workers_per_file = 2;
+  uint32 max_transfers = 3;
+}
+
+message StartServerResponse {
+  bool   ok = 1;
+  uint32 port = 2;
+  string message = 3;
+}
+
+message StopServerRequest {}
+message StopServerResponse {
+  bool   ok = 1;
+  string message = 2;
+}

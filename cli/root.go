@@ -6,8 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/jgoldverg/grover/config"
-	"github.com/pterm/pterm"
+	"github.com/jgoldverg/grover/internal"
 	"github.com/spf13/cobra"
 )
 
@@ -25,7 +24,7 @@ func NewRootCommand() *cobra.Command {
 		Long:  `grover is a CLI tool that can perform scatter and gather operations while supporting high levels of parallelism. Best of all we do network monitoring and reporting as well!`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// Load app config
-			cfg, err := config.LoadAppConfig(appConfigPath)
+			cfg, err := internal.LoadAppConfig(appConfigPath)
 			if err != nil {
 				return fmt.Errorf("failed to load app config: %w", err)
 			}
@@ -34,8 +33,15 @@ func NewRootCommand() *cobra.Command {
 			if serverURLFlag != "" {
 				cfg.ServerURL = serverURLFlag
 			}
+			if err := internal.ConfigureLogger(cfg.LogLevel); err != nil {
+				internal.Warn("invalid log level in app config, defaulting to info", internal.Fields{
+					internal.FieldError: err.Error(),
+				})
+			}
 
-			pterm.Println("Using credentials file:", cfg.CredentialsFile)
+			internal.Info("using credentials file", internal.Fields{
+				internal.CredentialPath: cfg.CredentialsFile,
+			})
 
 			// Ensure credentials file directory exists
 			dir := filepath.Dir(cfg.CredentialsFile)
@@ -65,9 +71,9 @@ func NewRootCommand() *cobra.Command {
 }
 
 // Helper function for subcommands to get appData
-func GetAppConfig(cmd *cobra.Command) *config.AppConfig {
+func GetAppConfig(cmd *cobra.Command) *internal.AppConfig {
 	if v := cmd.Context().Value(appCtxKey); v != nil {
-		if data, ok := v.(*config.AppConfig); ok {
+		if data, ok := v.(*internal.AppConfig); ok {
 			return data
 		}
 	}

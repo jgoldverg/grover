@@ -8,9 +8,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jgoldverg/grover/backend"
 	"github.com/jgoldverg/grover/cli/output"
-	"github.com/jgoldverg/grover/client"
-	"github.com/jgoldverg/grover/log"
-	"github.com/pterm/pterm"
+	"github.com/jgoldverg/grover/internal"
+	"github.com/jgoldverg/grover/pkg/groverclient"
 	"github.com/spf13/cobra"
 )
 
@@ -99,10 +98,14 @@ func AddBasicCredentialCommand(commonOpts *AddCredentialOpts) *cobra.Command {
 			if basicOpts.Username == "" {
 				currentUser, err := user.Current()
 				if err != nil {
-					pterm.Error.Printfln("Failed to get current user")
+					internal.Error("failed to get current user", internal.Fields{
+						internal.FieldError: err.Error(),
+					})
 					return err
 				}
-				pterm.Printfln("Using current user for username: %s", currentUser.Username)
+				internal.Info("using current user for username", internal.Fields{
+					internal.FieldKey("username"): currentUser.Username,
+				})
 				basicOpts.Username = currentUser.Username
 			}
 			credential := &backend.BasicAuthCredential{
@@ -122,8 +125,8 @@ func AddBasicCredentialCommand(commonOpts *AddCredentialOpts) *cobra.Command {
 			if f := cmd.Flags().Lookup("via"); f != nil && f.Changed {
 				route, _ = cmd.Flags().GetString("via")
 			}
-			policy := client.ParseRoutePolicy(route)
-			gc := client.NewGroverClient(*cfg)
+			policy := groverclient.ParseRoutePolicy(route)
+			gc := groverclient.NewGroverClient(*cfg)
 			err = gc.Initialize(cmd.Context(), policy)
 			if err != nil {
 				return err
@@ -158,10 +161,14 @@ func AddSShCredentialCommand(commonOpts *AddCredentialOpts) *cobra.Command {
 			if sshOpts.Username == "" {
 				currentUser, err := user.Current()
 				if err != nil {
-					pterm.Error.Println("Failed to get current user")
+					internal.Error("failed to get current user", internal.Fields{
+						internal.FieldError: err.Error(),
+					})
 					return err
 				}
-				pterm.Printfln("Using current user for username: %s", currentUser.Username)
+				internal.Info("using current user for username", internal.Fields{
+					internal.FieldKey("username"): currentUser.Username,
+				})
 				sshOpts.Username = currentUser.Username
 			}
 			credential := &backend.SSHCredential{
@@ -183,8 +190,8 @@ func AddSShCredentialCommand(commonOpts *AddCredentialOpts) *cobra.Command {
 			if f := cmd.Flags().Lookup("via"); f != nil && f.Changed {
 				route, _ = cmd.Flags().GetString("via")
 			}
-			policy := client.ParseRoutePolicy(route)
-			gc := client.NewGroverClient(*cfg)
+			policy := groverclient.ParseRoutePolicy(route)
+			gc := groverclient.NewGroverClient(*cfg)
 			err = gc.Initialize(cmd.Context(), policy)
 			if err != nil {
 				return err
@@ -216,20 +223,20 @@ func ListCredentialCommand() *cobra.Command {
 			if f := cmd.Flags().Lookup("via"); f != nil && f.Changed {
 				route, _ = cmd.Flags().GetString("via")
 			}
-			policy := client.ParseRoutePolicy(route)
-			gc := client.NewGroverClient(*cfg)
+			policy := groverclient.ParseRoutePolicy(route)
+			gc := groverclient.NewGroverClient(*cfg)
 			err := gc.Initialize(cmd.Context(), policy)
 			if err != nil {
 				return err
 			}
-			log.Structured(&pterm.Info, "created and initialized grover client", nil)
+			internal.Info("created and initialized grover client", nil)
 
 			creds, err := gc.CredService.ListCredentials(cmd.Context(), "")
 			if err != nil {
 				return errors.New("Failed to list the stored credentials: " + err.Error())
 			}
 			if len(creds) == 0 {
-				pterm.Print("No credentials added.")
+				internal.Info("no credentials added", nil)
 			}
 			output.VisualizeCredentialList(creds)
 			return nil

@@ -196,7 +196,6 @@ func (s *TomlCredentialStorage) saveToFile() error {
 	if err != nil {
 		return errors.New("failed to save credential storage: " + err.Error())
 	}
-	fmt.Printf("\nWe have saved the credential storage: %s\n", s.filePath)
 	return nil
 }
 

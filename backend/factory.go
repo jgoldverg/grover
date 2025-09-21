@@ -5,7 +5,7 @@ import (
 
 	"github.com/jgoldverg/grover/backend/filesystem"
 	"github.com/jgoldverg/grover/backend/localfs"
-	"github.com/jgoldverg/grover/pb"
+	pb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
 )
 
 type BackendType string
