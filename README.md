@@ -39,6 +39,15 @@ Management commands:
 ### backend
 This is where we have protocol implementations that the client's(cli for ex) and server will use to conduct the operations. It completely encapsulates all protocol based code, we really only have the concet of readers and writers and operating on chunks of data, we can include support for stream operations as well.
 
+#### Checkpoint persistence for transfers
+
+To keep the readers and writers fully parallel we track progress in memory and trickle it to disk in the background:
+- Use a sharded map-of-maps: `file -> worker/thread -> chunk progress` so hot files do not serialize on one lock. Each entry keeps last read/written chunk, byte counters, status, and a seq number.
+- Every update just bumps the in-memory structure; a background flusher waits for ~10 updates (or a time threshold) per file, then writes a snapshot to disk. Snapshots go to a temp file and get atomically `rename`d so crashes never leave partial JSON/binary artifacts.
+- While a file is active we keep its state in memory; once the transfer finishes we force one last synchronous flush, drop the in-memory entry, and archive a compact `file.done` record. A tiny append-only index answers "is this file done?" without reloading snapshots.
+- If redo cost needs to be near-zero, pair the periodic snapshot with a lightweight delta journal that appends each update; on recovery we load the latest snapshot and replay the tail of the journal to reconstruct exact state.
+- Startup just scans active snapshots + journal to rebuild the map. Instrument the flush queue so we can add backpressure or spin up more flush workers if disk persistence ever lags behind the hot path.
+
 ### server
 This is far more complicated and writing is confusing hence I need to iron this out more.
 There are a few servers in reality: information channel to the server is for all operations like(transfer, ls, rm,,, etc) we want this over grpc as its by far the simplest thing to use. I am thinking that we actually implement the grpc server and a custom protocol server as well.

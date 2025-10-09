@@ -10,7 +10,7 @@ import (
 	"github.com/jgoldverg/grover/pkg/groverserver/dataplane"
 )
 
-const DefaultMtuPort = 59001 // pick anything you like; must be reachable
+const DefaultMtuPort = 59001
 
 type GroverUdpServer struct {
 	pb.UnimplementedGroverServerServer
@@ -186,4 +186,12 @@ func (s *GroverUdpServer) StopMtuPort(ctx context.Context) error {
 	}
 	internal.Info("mtu listener stopped", nil)
 	return nil
+}
+
+func (s *GroverUdpServer) LaunchFileTransfer(ctx context.Context, req *pb.FileTransferRequest) (*pb.FileTransferResponse, error) {
+	return &pb.FileTransferResponse{
+		TransferId: "bs",
+		Accepted:   false,
+		Message:    "bs",
+	}, nil
 }

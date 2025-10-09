@@ -1,4 +1,4 @@
-package internal
+package protoutil
 
 import (
 	"errors"
@@ -90,13 +90,13 @@ func TestResolveCredentialByUUIDAndName(t *testing.T) {
 	}
 
 	uuidRef := &pb.CredentialRef{Ref: &pb.CredentialRef_CredentialUuid{CredentialUuid: id.String()}}
-	resolved, err := ResolveCredential(storage, uuidRef)
+	resolved, err := ResolveCredentialProto(storage, uuidRef)
 	if err != nil || resolved != cred {
 		t.Fatalf("expected uuid lookup to succeed, err=%v", err)
 	}
 
 	nameRef := &pb.CredentialRef{Ref: &pb.CredentialRef_CredentialName{CredentialName: "cred"}}
-	resolved, err = ResolveCredential(storage, nameRef)
+	resolved, err = ResolveCredentialProto(storage, nameRef)
 	if err != nil || resolved != cred {
 		t.Fatalf("expected name lookup to succeed, err=%v", err)
 	}

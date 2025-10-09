@@ -7,6 +7,7 @@ import (
 	"github.com/jgoldverg/grover/backend"
 	"github.com/jgoldverg/grover/internal"
 	pb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
+	"github.com/jgoldverg/grover/pkg/protoutil"
 	"google.golang.org/grpc"
 )
 
@@ -91,7 +92,7 @@ func (c *CredentialService) ListCredentials(ctx context.Context, credType string
 		if err != nil {
 			return nil, err
 		}
-		return internal.PbCredentialToBackendCredential(resp.GetCredentials()), nil
+		return protoutil.PbCredentialToBackendCredential(resp.GetCredentials()), nil
 	} else {
 		return c.storage.ListCredentialsByType(credType)
 	}

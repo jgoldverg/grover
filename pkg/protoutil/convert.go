@@ -1,4 +1,4 @@
-package internal
+package protoutil
 
 import (
 	"strings"
@@ -92,7 +92,7 @@ func BackendTypeToPbType(t backend.BackendType) pb.EndpointType {
 	}
 }
 
-func ResolveCredential(storage backend.CredentialStorage, ref *pb.CredentialRef) (backend.Credential, error) {
+func ResolveCredentialProto(storage backend.CredentialStorage, ref *pb.CredentialRef) (backend.Credential, error) {
 	if ref == nil || ref.Ref == nil {
 		return nil, nil
 	}

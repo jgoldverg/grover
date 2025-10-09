@@ -1,25 +1,26 @@
-package http
+package ghttp
 
 import (
 	"net/http"
 
+	"github.com/jgoldverg/grover/backend/chunker"
 	"github.com/jgoldverg/grover/backend/filesystem"
 )
 
-type HttpReader struct {
+type HttpIo struct {
 	clientPool  *HttpClientPool
 	httpClient  *http.Client
 	fileMetdata *filesystem.FileInfo
 }
 
-func NewHttpReader(clientPool *HttpClientPool, fileMetdata *filesystem.FileInfo) *HttpReader {
-	return &HttpReader{
+func NewHttpIo(clientPool *HttpClientPool, fileMetdata *filesystem.FileInfo) *HttpIo {
+	return &HttpIo{
 		clientPool:  clientPool,
 		fileMetdata: fileMetdata,
 	}
 }
 
-func (hr *HttpReader) Open() error {
+func (hr *HttpIo) Open() error {
 	client, err := hr.clientPool.Get(hr.fileMetdata.ID)
 	if err != nil {
 		return err
@@ -28,13 +29,17 @@ func (hr *HttpReader) Open() error {
 	return nil
 }
 
-func (hr *HttpReader) Close() error {
+func (hr *HttpIo) Close() error {
 	hr.clientPool.Put(hr.httpClient)
 	hr.httpClient = nil
 	return nil
 }
 
-func (hr *HttpReader) Read() (*filesystem.Chunk, error) {
+func (hr *HttpIo) Read() (chunker.Chunk, error) {
 
 	return nil, nil
+}
+
+func (hr *HttpIo) Write([]chunker.Chunk) error {
+	return nil
 }

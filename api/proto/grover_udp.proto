@@ -9,7 +9,62 @@ service GroverServer {
   rpc ListPorts (ListPortRequest) returns (ListPortResponse);
   rpc DeleteUdpPorts (DeleteUdpPortsRequest) returns (DeleteUdpPortsResponse);
   rpc CreateUdpPorts (CreateUdpPortsRequest) returns (CreateUdpPortsResponse);
+  rpc LaunchFileTransfer (FileTransferRequest) returns (FileTransferResponse);
 }
+
+enum OverwritePolicy {
+  OVERWRITE_UNSPECIFIED = 0;
+  OVERWRITE_ALWAYS = 1;
+  OVERWRITE_IF_NEWER = 2;
+  OVERWRITE_NEVER = 3;
+  OVERWRITE_IF_DIFFERENT = 4;
+}
+
+message FsEntry {
+  string path = 1;
+}
+
+enum ChecksumType {
+  CHECKSUM_NONE = 0;
+  CHECKSUM_MD5 = 1;
+  CHECKSUM_SHA256 = 2;
+  CHECKSUM_XXH3 = 3;
+}
+
+// Transfer tuning knobs
+message FileTransferParams {
+  uint32 concurrency = 1;
+  uint32 parallelism = 2;
+  uint32 pipelining = 3;
+  uint64 chunk_size = 4;
+  uint32 rate_limit_mbps = 5;
+
+  OverwritePolicy overwrite = 6;
+  ChecksumType checksum_type = 7;
+  bool verify_checksum = 8;
+
+  uint32 max_retries = 9;
+  uint32 retry_backoff_ms = 10;
+}
+
+// Request
+message FileTransferRequest {
+  string source_cred_id = 1;
+  string dest_cred_id = 2;
+  repeated FsEntry fs_entry = 3;
+  string destination_path = 4;
+  FileTransferParams params = 5;
+  string idempotency_key = 6;
+}
+
+// Response
+message FileTransferResponse {
+  string transfer_id = 1; // server-generated ID
+  bool accepted = 2;
+  string message = 3;
+}
+
+
 
 message CreateUdpPortsRequest {
   uint32 port_count = 1;

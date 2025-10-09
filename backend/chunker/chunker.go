@@ -2,18 +2,26 @@ package chunker
 
 import "github.com/jgoldverg/grover/backend/filesystem"
 
+type Chunk interface {
+	FileID() string
+	Offset() uint64
+	Length() uint64
+	LastPart() bool
+	Data() []byte
+}
+
 type FileChunk struct {
 	fileId   string
 	offset   uint64
 	length   uint64
 	lastpart bool
-	data     [][]byte
+	data     []byte
 }
 
 type Chunker struct {
 	fileParts chan FileChunk
 	fileInfo  *filesystem.FileInfo
-	chunkSize uint64
+	ChunkSize uint64
 }
 
 func (fc *FileChunk) FileID() string {
@@ -32,11 +40,21 @@ func (fc *FileChunk) LastPart() bool {
 	return fc.lastpart
 }
 
-func (fc *FileChunk) Data() [][]byte {
+func (fc *FileChunk) Data() []byte {
 	return fc.data
 }
 
-func (ckr *Chunker) NewChunker(fileInfo *filesystem.FileInfo, chunkSize uint64) *Chunker {
+func NewFileChunk(fileId string, offset uint64, length uint64, lastpart bool, data []byte) *FileChunk {
+	return &FileChunk{
+		fileId:   fileId,
+		offset:   offset,
+		length:   length,
+		lastpart: lastpart,
+		data:     data,
+	}
+}
+
+func NewChunker(fileInfo *filesystem.FileInfo, chunkSize uint64) *Chunker {
 	totalChunkCount := (fileInfo.Size + chunkSize - 1) / chunkSize
 
 	return &Chunker{
@@ -48,7 +66,7 @@ func (ckr *Chunker) NewChunker(fileInfo *filesystem.FileInfo, chunkSize uint64) 
 // MakeChunks generates chunks for the entire file and sends them to the channel
 func (ckr *Chunker) MakeChunks() {
 	fileSize := ckr.fileInfo.Size
-	chunkSize := ckr.chunkSize
+	chunkSize := ckr.ChunkSize
 	fileId := ckr.fileInfo.ID
 
 	var offset uint64 = 0

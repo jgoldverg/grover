@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/google/uuid"
 	"github.com/jgoldverg/grover/internal"
 	pb "github.com/jgoldverg/grover/pkg/groverpb/groverudpv1"
 	"google.golang.org/grpc"
@@ -14,6 +15,8 @@ type GroverServerCommands struct {
 	gs  pb.GroverServerClient
 	pb.UnimplementedGroverServerServer
 }
+
+var ErrFileTransferNotImplemented = errors.New("file transfer client not implemented yet")
 
 func NewGroverServerCommands(cfg *internal.AppConfig, conn *grpc.ClientConn) *GroverServerCommands {
 	return &GroverServerCommands{
@@ -79,4 +82,13 @@ func (g *GroverServerCommands) DeletePorts(ctx context.Context, ports []uint32) 
 		return false, err
 	}
 	return resp.Ok, nil
+}
+
+func (g *GroverServerCommands) LaunchFileTransfer(ctx context.Context, req *pb.FileTransferRequest) (*pb.FileTransferResponse, error) {
+	return nil, ErrFileTransferNotImplemented
+}
+
+func (g *GroverServerCommands) prepareForTransfer(req *pb.FileTransferRequest) {
+	req.IdempotencyKey = uuid.New().String()
+
 }

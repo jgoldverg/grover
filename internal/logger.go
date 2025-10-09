@@ -24,43 +24,45 @@ const (
 	ConfigPath            FieldKey = "config_path"
 )
 
-type Fields map[FieldKey]interface{}
+type Fields map[FieldKey]any
 
-type Level int
+type Level = pterm.LogLevel
 
 const (
-	LevelDebug Level = iota
-	LevelInfo
-	LevelWarn
-	LevelError
+	LevelTrace Level = pterm.LogLevelTrace
+	LevelDebug Level = pterm.LogLevelDebug
+	LevelInfo  Level = pterm.LogLevelInfo
+	LevelWarn  Level = pterm.LogLevelWarn
+	LevelError Level = pterm.LogLevelError
+	LevelFatal Level = pterm.LogLevelFatal
 )
 
 var (
 	levelNames = map[string]Level{
+		"trace":   LevelTrace,
 		"debug":   LevelDebug,
 		"info":    LevelInfo,
 		"warn":    LevelWarn,
 		"warning": LevelWarn,
 		"error":   LevelError,
+		"fatal":   LevelFatal,
 	}
 
-	levelPrinters = map[Level]*pterm.PrefixPrinter{
-		LevelDebug: pterm.Debug.WithPrefix(pterm.Prefix{Text: "DEBUG", Style: pterm.NewStyle(pterm.FgLightBlue)}).
-			WithMessageStyle(pterm.NewStyle(pterm.FgLightBlue)),
-		LevelInfo: pterm.Info.WithPrefix(pterm.Prefix{Text: "INFO", Style: pterm.NewStyle(pterm.FgGreen)}).
-			WithMessageStyle(pterm.NewStyle(pterm.FgLightWhite)),
-		LevelWarn: pterm.Warning.WithPrefix(pterm.Prefix{Text: "WARN", Style: pterm.NewStyle(pterm.FgLightYellow)}).
-			WithMessageStyle(pterm.NewStyle(pterm.FgLightYellow)),
-		LevelError: pterm.Error.WithPrefix(pterm.Prefix{Text: "ERROR", Style: pterm.NewStyle(pterm.FgLightRed)}).
-			WithMessageStyle(pterm.NewStyle(pterm.FgLightRed)),
-	}
+	loggerMu = sync.RWMutex{}
 
-	logLevelMu   sync.RWMutex
+	baseLogger = func() *pterm.Logger {
+		template := pterm.DefaultLogger.WithTime(true).
+			WithTimeFormat(time.RFC3339).
+			WithMaxWidth(120).
+			WithCaller(false)
+		return template.AppendKeyStyles(map[string]pterm.Style{
+			string(FieldError): *pterm.NewStyle(pterm.FgRed, pterm.Bold),
+		})
+	}()
+
 	currentLevel = LevelInfo
 )
 
-// ConfigureLogger sets the global log level based on the provided string.
-// An invalid value falls back to info and returns an error so callers can warn.
 func ConfigureLogger(level string) error {
 	level = strings.TrimSpace(strings.ToLower(level))
 	if level == "" {
@@ -77,75 +79,68 @@ func ConfigureLogger(level string) error {
 }
 
 func SetLogLevel(level Level) {
-	logLevelMu.Lock()
-	defer logLevelMu.Unlock()
+	loggerMu.Lock()
+	defer loggerMu.Unlock()
 	currentLevel = level
+	baseLogger.Level = pterm.LogLevel(level)
 }
 
-func getLogLevel() Level {
-	logLevelMu.RLock()
-	defer logLevelMu.RUnlock()
+func getLevel() Level {
+	loggerMu.RLock()
+	defer loggerMu.RUnlock()
 	return currentLevel
 }
 
 func shouldLog(level Level) bool {
-	return level >= getLogLevel()
+	return level >= getLevel()
 }
 
 func log(level Level, msg string, fields Fields) {
 	if !shouldLog(level) {
 		return
 	}
-	if fields == nil {
-		fields = Fields{}
-	}
-	printer, ok := levelPrinters[level]
-	if !ok {
-		printer = levelPrinters[LevelInfo]
-	}
-	timestamp := time.Now().Format(time.RFC3339)
-	fieldStr := formatFields(fields)
-	if fieldStr != "" {
-		printer.Printfln("[%s] %s %s", timestamp, msg, fieldStr)
-	} else {
-		printer.Printfln("[%s] %s", timestamp, msg)
+
+	loggerMu.RLock()
+	logger := baseLogger.WithLevel(pterm.LogLevel(currentLevel))
+	loggerMu.RUnlock()
+
+	args := makeLoggerArgs(fields)
+
+	switch level {
+	case LevelTrace:
+		logger.Trace(msg, args)
+	case LevelDebug:
+		logger.Debug(msg, args)
+	case LevelWarn:
+		logger.Warn(msg, args)
+	case LevelError:
+		logger.Error(msg, args)
+	case LevelFatal:
+		logger.Fatal(msg, args)
+	default:
+		logger.Info(msg, args)
 	}
 }
 
-func formatFields(fields Fields) string {
+func makeLoggerArgs(fields Fields) []pterm.LoggerArgument {
 	if len(fields) == 0 {
-		return ""
+		return nil
 	}
+
 	keys := make([]string, 0, len(fields))
 	for k := range fields {
 		keys = append(keys, string(k))
 	}
 	sort.Strings(keys)
-	parts := make([]string, 0, len(keys))
-	for _, k := range keys {
-		parts = append(parts, fmt.Sprintf("%s=%v", k, fields[FieldKey(k)]))
+
+	args := make([]pterm.LoggerArgument, 0, len(keys))
+	for _, key := range keys {
+		args = append(args, pterm.LoggerArgument{Key: key, Value: fields[FieldKey(key)]})
 	}
-	return strings.Join(parts, " ")
+	return args
 }
 
 func Debug(msg string, fields Fields) { log(LevelDebug, msg, fields) }
 func Info(msg string, fields Fields)  { log(LevelInfo, msg, fields) }
 func Warn(msg string, fields Fields)  { log(LevelWarn, msg, fields) }
 func Error(msg string, fields Fields) { log(LevelError, msg, fields) }
-
-// Structured is kept for backward compatibility with existing call sites that still
-// pass explicit pterm printers. New code should use Debug/Info/Warn/Error directly.
-func Structured(printer *pterm.PrefixPrinter, msg string, fields Fields) {
-	level := LevelInfo
-	switch printer {
-	case &pterm.Debug:
-		level = LevelDebug
-	case &pterm.Error, &pterm.Fatal:
-		level = LevelError
-	case &pterm.Warning:
-		level = LevelWarn
-	default:
-		level = LevelInfo
-	}
-	log(level, msg, fields)
-}

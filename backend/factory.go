@@ -3,41 +3,11 @@ package backend
 import (
 	"fmt"
 
+	"github.com/jgoldverg/grover/backend/chunker"
 	"github.com/jgoldverg/grover/backend/filesystem"
+	"github.com/jgoldverg/grover/backend/ghttp"
 	"github.com/jgoldverg/grover/backend/localfs"
-	pb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
 )
-
-type BackendType string
-
-const (
-	LOCALFSBackend BackendType = "localfs"
-	HTTPBackend    BackendType = "http"
-	GROVERBackend  BackendType = "grover"
-	UnknownBackend BackendType = "unknown"
-)
-
-var backends = map[BackendType]struct{}{
-	LOCALFSBackend: {},
-	HTTPBackend:    {},
-	GROVERBackend:  {},
-}
-
-func PbTypeToBackendType(pbBackendType pb.EndpointType) BackendType {
-	switch pbBackendType {
-	case pb.EndpointType_LOCAL_FS:
-		return LOCALFSBackend
-	case pb.EndpointType_HTTP:
-		return HTTPBackend
-	default:
-		return UnknownBackend
-	}
-}
-
-func IsBackendTypeValid(bt BackendType) bool {
-	_, ok := backends[bt]
-	return ok
-}
 
 func OpsFactory(t BackendType, cred Credential) (filesystem.FileOps, error) {
 	switch t {
@@ -57,4 +27,54 @@ func RmFactory(kind BackendType, cred Credential) filesystem.FileOps {
 		return localfs.NewFileSystemOperations()
 	}
 	return nil
+}
+
+func ReaderFactory(kind BackendType, cred Credential, ch *chunker.Chunker, file *filesystem.FileInfo) (Reader, error) {
+	switch kind {
+	case LOCALFSBackend:
+		if ch == nil || file == nil {
+			return nil, fmt.Errorf("chunker and file required for localfs reader")
+		}
+		return localfs.NewFileSystemIo(ch, file), nil
+	case HTTPBackend:
+		if file == nil {
+			return nil, fmt.Errorf("file metadata required for http reader")
+		}
+		basicCred, ok := cred.(ghttp.BasicCredential)
+		if !ok {
+			return nil, fmt.Errorf("credential type %T does not support http reader", cred)
+		}
+		pool, err := ghttp.NewHttpClientPool(1, basicCred)
+		if err != nil {
+			return nil, err
+		}
+		return ghttp.NewHttpIo(pool, file), nil
+	default:
+		return nil, fmt.Errorf("reader factory not implemented for backend type: %s", kind)
+	}
+}
+
+func WriterFactory(kind BackendType, cred Credential, ch *chunker.Chunker, file *filesystem.FileInfo) (Writer, error) {
+	switch kind {
+	case LOCALFSBackend:
+		if ch == nil || file == nil {
+			return nil, fmt.Errorf("chunker and file required for localfs reader")
+		}
+		return localfs.NewFileSystemIo(ch, file), nil
+	case HTTPBackend:
+		if file == nil {
+			return nil, fmt.Errorf("file metadata required for http reader")
+		}
+		basicCred, ok := cred.(ghttp.BasicCredential)
+		if !ok {
+			return nil, fmt.Errorf("credential type %T does not support http reader", cred)
+		}
+		pool, err := ghttp.NewHttpClientPool(1, basicCred)
+		if err != nil {
+			return nil, err
+		}
+		return ghttp.NewHttpIo(pool, file), nil
+	default:
+		return nil, fmt.Errorf("reader factory not implemented for backend type: %s", kind)
+	}
 }

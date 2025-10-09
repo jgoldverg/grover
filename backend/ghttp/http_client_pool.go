@@ -1,13 +1,19 @@
-package http
+package ghttp
 
 import (
 	"errors"
 	"fmt"
 	"net/http"
 	"sync"
-
-	"github.com/jgoldverg/grover/backend"
 )
+
+// BasicCredential captures the credential operations required by the HTTP client pool.
+type BasicCredential interface {
+	Validate() error
+	GetUrl() string
+	GetUserName() string
+	GetPassword() string
+}
 
 var (
 	ErrZeroCapacity       = errors.New("client pool has capacity of 0")
@@ -24,16 +30,15 @@ type HttpClientPool struct {
 	indexToFile map[int]string // Reverse mapping of client indices to file IDs
 	cond        *sync.Cond     // Condition variable for waiting
 	capacity    int            // Maximum pool size
-	cred        backend.BasicAuthCredential
+	cred        BasicCredential
 	online      bool // Pool status flag
 }
 
-func NewHttpClientPool(size int, credential backend.Credential) (*HttpClientPool, error) {
-	basicCredential, ok := credential.(*backend.BasicAuthCredential)
-	if !ok {
-		return nil, fmt.Errorf("unsupported credential type: %T", credential)
+func NewHttpClientPool(size int, credential BasicCredential) (*HttpClientPool, error) {
+	if credential == nil {
+		return nil, fmt.Errorf("credential is required")
 	}
-	if err := basicCredential.Validate(); err != nil {
+	if err := credential.Validate(); err != nil {
 		return nil, fmt.Errorf("credential validation failed: %w", err)
 	}
 
@@ -44,7 +49,7 @@ func NewHttpClientPool(size int, credential backend.Credential) (*HttpClientPool
 		fileToIndex: make(map[string]int),
 		indexToFile: make(map[int]string),
 		capacity:    size,
-		cred:        *basicCredential,
+		cred:        credential,
 		online:      false,
 	}
 	hcp.cond = sync.NewCond(&hcp.mu)
