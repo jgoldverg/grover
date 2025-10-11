@@ -43,10 +43,12 @@ func NewGroverServer(ctx context.Context, serverConfig *internal.ServerConfig) *
 	cs := control.NewCredentialOps(serverConfig)
 	hs := control.NewHeartBeatService(serverConfig)
 	ss := NewGroverUdpServer(lm, nil)
+	ts := control.NewTransferService(serverConfig)
 	groverPb.RegisterHeartBeatServer(server, hs)
 	groverPb.RegisterFileServiceServer(server, fs)
 	groverPb.RegisterCredentialServiceServer(server, cs)
 	groverPbUdp.RegisterGroverServerServer(server, ss)
+	groverPbUdp.RegisterTransferServiceServer(server, ts)
 
 	return &GroverServer{
 		config:       serverConfig,

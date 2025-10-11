@@ -2,7 +2,6 @@ package backend
 
 import (
 	"github.com/jgoldverg/grover/backend/chunker"
-	"github.com/jgoldverg/grover/backend/filesystem"
 	pb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
 )
 
@@ -21,6 +20,7 @@ const (
 	NONE = iota
 	MD5
 	SHA256SUM
+	XXH3
 )
 
 type OverwritePolicy int
@@ -54,25 +54,42 @@ var backends = map[BackendType]struct{}{
 	GROVERBackend:  {},
 }
 
-type TransferRequest struct {
-	SourceCredId   string
-	DestCredId     string
-	fileEntries    []*filesystem.FileInfo
-	transferParams *TransferParams
-	IdempotencyKey string
+type Endpoint struct {
+	Raw            string
+	Scheme         string
+	Path           string
+	CredentialHint string
+	CredentialID   string
+}
+
+type TransferEdge struct {
+	SourceIndex int
+	DestIndex   int
+	SourcePath  string
+	DestPath    string
+	Options     map[string]string
 }
 
 type TransferParams struct {
-	Concurrency    uint
-	Parallelism    uint
-	Pipelining     uint
-	ChunkSize      uint
+	Concurrency    uint32
+	Parallelism    uint32
+	Pipelining     uint32
+	ChunkSize      uint64
 	RateLimitMbps  uint32
-	owPolicy       OverwritePolicy
-	checkSumType   CheckSumType
-	verifyChecksum bool
-	MaxRetires     uint
-	RetryBackOffMs uint
+	Overwrite      OverwritePolicy
+	Checksum       CheckSumType
+	VerifyChecksum bool
+	MaxRetries     uint32
+	RetryBackoffMs uint32
+}
+
+type TransferRequest struct {
+	Sources        []Endpoint
+	Destinations   []Endpoint
+	Edges          []TransferEdge
+	Params         TransferParams
+	IdempotencyKey string
+	DeleteSource   bool
 }
 
 func PbTypeToBackendType(pbBackendType pb.EndpointType) BackendType {

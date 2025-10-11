@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jgoldverg/grover/backend"
 	"github.com/jgoldverg/grover/internal"
 	"github.com/jgoldverg/grover/pkg/groverclient"
-	udppb "github.com/jgoldverg/grover/pkg/groverpb/groverudpv1"
 	"github.com/spf13/cobra"
 )
 
@@ -56,42 +56,99 @@ func TransferCommand() *cobra.Command {
 	}
 	cmd.PersistentFlags().String("via", "", "Where to execute: auto|client|server")
 	cmd.PersistentFlags().Lookup("via").NoOptDefVal = "auto" // optional
-	cmd.AddCommand(newDownloadCommand(), newUploadCommand())
+	cmd.AddCommand(newCopyCommand())
 	return cmd
 }
 
-func newDownloadCommand() *cobra.Command {
-	opts := defaultTransferOptions()
+type CopyCommandOpts struct {
+	TransferCommandOpts
+	FromSpecs []string
+	ToSpecs   []string
+	MapSpecs  []string
+	PlanFile  string
+}
+
+func defaultCopyOptions() CopyCommandOpts {
+	return CopyCommandOpts{TransferCommandOpts: defaultTransferOptions()}
+}
+
+func newCopyCommand() *cobra.Command {
+	opts := defaultCopyOptions()
 	cmd := &cobra.Command{
-		Use:   "download [source paths...]",
-		Short: "Download remote files to a local destination",
-		Long:  "Download remote files or directories and place them at the provided destination path on the target host.",
-		Args:  cobra.MinimumNArgs(1),
+		Use:   "cp",
+		Short: "Copy files between endpoints",
+		Long:  "Define source and destination endpoints (via --from/--to) and optionally mapping rules to orchestrate scatter/gather transfers.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			runtimeOpts := opts
-			runtimeOpts.FileEntries = append([]string(nil), args...)
-			return launchTransfer(cmd, "download", &runtimeOpts)
+			return runCopyCommand(cmd, &runtimeOpts)
 		},
 	}
-	bindTransferFlags(cmd, &opts)
+	bindTransferFlags(cmd, &opts.TransferCommandOpts)
+	cmd.Flags().StringArrayVar(&opts.FromSpecs, "from", opts.FromSpecs, "Source endpoint(s). Format: [label=]URI")
+	cmd.Flags().StringArrayVar(&opts.ToSpecs, "to", opts.ToSpecs, "Destination endpoint(s). Format: [label=]URI")
+	cmd.Flags().StringArrayVar(&opts.MapSpecs, "map", opts.MapSpecs, "Mapping rule in positional form: 'source dest [option=value ...]' (quote if spaces present)")
+	cmd.Flags().StringVar(&opts.PlanFile, "plan", opts.PlanFile, "Optional plan file (YAML/JSON) describing complex mappings")
 	return cmd
 }
 
-func newUploadCommand() *cobra.Command {
-	opts := defaultTransferOptions()
-	cmd := &cobra.Command{
-		Use:   "upload [source paths...]",
-		Short: "Upload local files to a remote destination",
-		Long:  "Upload local files or directories to the provided destination path on the target host.",
-		Args:  cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			runtimeOpts := opts
-			runtimeOpts.FileEntries = append([]string(nil), args...)
-			return launchTransfer(cmd, "upload", &runtimeOpts)
-		},
+func runCopyCommand(cmd *cobra.Command, opts *CopyCommandOpts) error {
+	fromInputs, err := inputsFromRawSpecs(opts.FromSpecs)
+	if err != nil {
+		return err
 	}
-	bindTransferFlags(cmd, &opts)
-	return cmd
+	toInputs, err := inputsFromRawSpecs(opts.ToSpecs)
+	if err != nil {
+		return err
+	}
+	mapSpecs := append([]string(nil), opts.MapSpecs...)
+
+	if opts.PlanFile != "" {
+		doc, err := loadTransferPlanDocument(opts.PlanFile)
+		if err != nil {
+			return err
+		}
+		planFrom, planTo, planMaps, err := doc.toInputs()
+		if err != nil {
+			return err
+		}
+		fromInputs = append(planFrom, fromInputs...)
+		toInputs = append(planTo, toInputs...)
+		mapSpecs = append(planMaps, mapSpecs...)
+		if doc.Params != nil {
+			applyPlanParams(&opts.TransferParams, doc.Params)
+		}
+		if doc.IdempotencyKey != "" {
+			opts.IdempotencyKey = doc.IdempotencyKey
+		}
+		if doc.Via != "" {
+			_ = cmd.Flags().Set("via", doc.Via)
+		}
+	}
+
+	if len(fromInputs) == 0 {
+		return errors.New("at least one --from endpoint must be provided")
+	}
+	if len(toInputs) == 0 {
+		return errors.New("at least one --to endpoint must be provided")
+	}
+
+	plan, err := newTransferPlan(&opts.TransferCommandOpts, fromInputs, toInputs, mapSpecs)
+	if err != nil {
+		return err
+	}
+	printTransferPlan(cmd, plan)
+	return launchTransferRequest(cmd, "copy", &opts.TransferCommandOpts, plan.Request)
+}
+
+func printTransferPlan(cmd *cobra.Command, plan *transferPlan) {
+	cmd.Println("transfer plan:")
+	if plan.usedDefaultEdges() {
+		cmd.Println("  (no explicit maps provided; defaulting to all sources -> all destinations)")
+	}
+	for _, line := range plan.summaryLines() {
+		cmd.Printf("  %s\n", line)
+	}
+	cmd.Printf("  total edges: %d\n", len(plan.Request.Edges))
 }
 
 func bindTransferFlags(cmd *cobra.Command, opts *TransferCommandOpts) {
@@ -110,9 +167,9 @@ func bindTransferFlags(cmd *cobra.Command, opts *TransferCommandOpts) {
 	cmd.Flags().StringVar(&opts.TransferParams.Checksum, "checksum", opts.TransferParams.Checksum, "Checksum strategy: none|md5|sha256|xxh3")
 }
 
-func launchTransfer(cmd *cobra.Command, direction string, opts *TransferCommandOpts) error {
-	if len(opts.FileEntries) == 0 {
-		return errors.New("at least one source path must be provided")
+func launchTransferRequest(cmd *cobra.Command, direction string, opts *TransferCommandOpts, req *backend.TransferRequest) error {
+	if len(req.Edges) == 0 {
+		return errors.New("transfer request must contain at least one edge")
 	}
 	appCfg := GetAppConfig(cmd)
 	if appCfg == nil {
@@ -125,21 +182,18 @@ func launchTransfer(cmd *cobra.Command, direction string, opts *TransferCommandO
 	}
 	defer gc.Close()
 
-	req, err := buildTransferRequest(opts)
-	if err != nil {
-		return err
-	}
-
 	internal.Info("launching file transfer", internal.Fields{
 		"direction":   direction,
 		"source_cred": opts.SourceCredID,
 		"dest_cred":   opts.DestCredID,
-		"dest_path":   opts.DestPath,
-		"entry_count": len(opts.FileEntries),
+		"edge_count":  edgeOrEntryCount(req),
 		"idempotency": opts.IdempotencyKey,
 	})
 
-	resp, err := gc.ServerClient.LaunchFileTransfer(cmd.Context(), req)
+	if gc.TransferClient == nil {
+		return errors.New("transfer client not initialized")
+	}
+	resp, err := gc.TransferClient.LaunchTransfer(cmd.Context(), req)
 	if err != nil {
 		return err
 	}
@@ -149,82 +203,67 @@ func launchTransfer(cmd *cobra.Command, direction string, opts *TransferCommandO
 		if msg == "" {
 			msg = "transfer was not accepted by the server"
 		}
-		return fmt.Errorf(msg)
+		return errors.New(msg)
 	}
 
 	cmd.Printf("transfer %s accepted with id %s\n", direction, resp.GetTransferId())
 	return nil
 }
 
-func buildTransferRequest(opts *TransferCommandOpts) (*udppb.FileTransferRequest, error) {
-	params, err := opts.TransferParams.toProto()
-	if err != nil {
-		return nil, err
-	}
-	entries := make([]*udppb.FsEntry, len(opts.FileEntries))
-	for i, path := range opts.FileEntries {
-		entries[i] = &udppb.FsEntry{Path: path}
-	}
-	return &udppb.FileTransferRequest{
-		SourceCredId:    opts.SourceCredID,
-		DestCredId:      opts.DestCredID,
-		FsEntry:         entries,
-		DestinationPath: opts.DestPath,
-		Params:          params,
-		IdempotencyKey:  opts.IdempotencyKey,
-	}, nil
+func edgeOrEntryCount(req *backend.TransferRequest) int {
+	return len(req.Edges)
 }
 
-func (p *FileTransferParamsOpts) toProto() (*udppb.FileTransferParams, error) {
+func (p *FileTransferParamsOpts) toBackend() (backend.TransferParams, error) {
 	overwrite, err := parseOverwritePolicy(p.Overwrite)
 	if err != nil {
-		return nil, err
+		return backend.TransferParams{}, err
 	}
 	checksum, err := parseChecksumType(p.Checksum)
 	if err != nil {
-		return nil, err
+		return backend.TransferParams{}, err
 	}
-	return &udppb.FileTransferParams{
+	return backend.TransferParams{
 		Concurrency:    uint32(p.Concurrency),
 		Parallelism:    uint32(p.Parallelism),
 		Pipelining:     uint32(p.Pipelining),
 		ChunkSize:      p.ChunkSize,
 		RateLimitMbps:  uint32(p.RateLimitMbps),
 		Overwrite:      overwrite,
-		ChecksumType:   checksum,
+		Checksum:       checksum,
 		VerifyChecksum: p.VerifyChecksum,
 		MaxRetries:     uint32(p.MaxRetries),
 		RetryBackoffMs: uint32(p.RetryBackoffMs),
 	}, nil
 }
 
-func parseOverwritePolicy(raw string) (udppb.OverwritePolicy, error) {
+func parseOverwritePolicy(raw string) (backend.OverwritePolicy, error) {
 	switch strings.ToLower(strings.ReplaceAll(strings.TrimSpace(raw), "_", "-")) {
 	case "", "unspecified", "default":
-		return udppb.OverwritePolicy_OVERWRITE_UNSPECIFIED, nil
+		return backend.UNSPECIFIED, nil
 	case "always":
-		return udppb.OverwritePolicy_OVERWRITE_ALWAYS, nil
+		return backend.ALWAYS, nil
 	case "if-newer", "newer":
-		return udppb.OverwritePolicy_OVERWRITE_IF_NEWER, nil
+		return backend.IF_NEWER, nil
 	case "never":
-		return udppb.OverwritePolicy_OVERWRITE_NEVER, nil
+		return backend.NEVER, nil
 	case "if-different", "different":
-		return udppb.OverwritePolicy_OVERWRITE_IF_DIFFERENT, nil
+		return backend.IF_DIFFERENT, nil
 	default:
 		return 0, fmt.Errorf("unknown overwrite policy %q", raw)
 	}
 }
 
-func parseChecksumType(raw string) (udppb.ChecksumType, error) {
+func parseChecksumType(raw string) (backend.CheckSumType, error) {
 	switch strings.ToLower(strings.ReplaceAll(strings.TrimSpace(raw), "_", "")) {
 	case "", "none":
-		return udppb.ChecksumType_CHECKSUM_NONE, nil
+		return backend.NONE, nil
 	case "md5":
-		return udppb.ChecksumType_CHECKSUM_MD5, nil
+		return backend.MD5, nil
 	case "sha256", "sha-256":
-		return udppb.ChecksumType_CHECKSUM_SHA256, nil
+		return backend.SHA256SUM, nil
 	case "xxh3", "xxhash3":
-		return udppb.ChecksumType_CHECKSUM_XXH3, nil
+		return backend.XXH3, nil
 	default:
 		return 0, fmt.Errorf("unknown checksum type %q", raw)
 	}

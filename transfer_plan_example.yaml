@@ -1,0 +1,43 @@
+version: 1
+via: server
+idempotency_key: sample-plan-001
+params:
+  concurrency: 6
+  parallelism: 4
+  pipelining: 3
+  chunk_size: 8388608
+  rate_limit_mbps: 200
+  verify_checksum: true
+  max_retries: 5
+  retry_backoff_ms: 750
+  overwrite: if-different
+  checksum: sha256
+endpoints:
+  from:
+    - name: local
+      uri: file:///Users/you/Documents/sample.txt
+      credential_id: local-files
+    - name: logs
+      uri: file:///Users/you/logs/**/*.log
+      credential_id: local-logs
+  to:
+    - name: macmini
+      uri: grover://macmini.taile5a74.ts.net:59001/var/tmp/uploads/
+      credential_id: macmini-upload
+    - name: archive
+      uri: grover://macmini.taile5a74.ts.net:59001/var/archive/
+      credential_id: macmini-archive
+maps:
+  - from: local
+    to: macmini
+    dest_path: uploads/sample.txt
+    options:
+      overwrite: always
+      checksum: sha256
+  - from: logs
+    to: [macmini, archive]
+    source_path: "**/*.log"
+    dest_path: logs/
+    options:
+      compress: gzip
+      overwrite: if-different

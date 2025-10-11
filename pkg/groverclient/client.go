@@ -27,6 +27,7 @@ type GroverClient struct {
 	ResourceService *FileResourceService
 	HeartBeatClient *HeartBeatService
 	ServerClient    *GroverServerCommands
+	TransferClient  *TransferService
 	conn            *grpc.ClientConn
 	cfg             internal.AppConfig
 }
@@ -63,6 +64,10 @@ func (c *GroverClient) Initialize(ctx context.Context, policy RoutePolicy) error
 	}
 	c.HeartBeatClient = NewHeartBeatService(&c.cfg, c.conn)
 	c.ServerClient = NewGroverServerCommands(&c.cfg, c.conn)
+	c.TransferClient, e = NewClientTransferService(&c.cfg, ci, policy)
+	if e != nil {
+		return e
+	}
 	return nil
 }
 

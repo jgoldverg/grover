@@ -289,22 +289,226 @@ func (x *FileTransferParams) GetRetryBackoffMs() uint32 {
 	return 0
 }
 
+type Endpoint struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Raw            string                 `protobuf:"bytes,1,opt,name=raw,proto3" json:"raw,omitempty"`
+	Scheme         string                 `protobuf:"bytes,2,opt,name=scheme,proto3" json:"scheme,omitempty"`
+	Path           string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
+	CredentialHint string                 `protobuf:"bytes,4,opt,name=credential_hint,json=credentialHint,proto3" json:"credential_hint,omitempty"`
+	CredentialId   string                 `protobuf:"bytes,5,opt,name=credential_id,json=credentialId,proto3" json:"credential_id,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *Endpoint) Reset() {
+	*x = Endpoint{}
+	mi := &file_grover_udp_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Endpoint) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Endpoint) ProtoMessage() {}
+
+func (x *Endpoint) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_udp_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Endpoint.ProtoReflect.Descriptor instead.
+func (*Endpoint) Descriptor() ([]byte, []int) {
+	return file_grover_udp_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *Endpoint) GetRaw() string {
+	if x != nil {
+		return x.Raw
+	}
+	return ""
+}
+
+func (x *Endpoint) GetScheme() string {
+	if x != nil {
+		return x.Scheme
+	}
+	return ""
+}
+
+func (x *Endpoint) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *Endpoint) GetCredentialHint() string {
+	if x != nil {
+		return x.CredentialHint
+	}
+	return ""
+}
+
+func (x *Endpoint) GetCredentialId() string {
+	if x != nil {
+		return x.CredentialId
+	}
+	return ""
+}
+
+type TransferEdgeOption struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	Value         string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TransferEdgeOption) Reset() {
+	*x = TransferEdgeOption{}
+	mi := &file_grover_udp_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransferEdgeOption) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransferEdgeOption) ProtoMessage() {}
+
+func (x *TransferEdgeOption) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_udp_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TransferEdgeOption.ProtoReflect.Descriptor instead.
+func (*TransferEdgeOption) Descriptor() ([]byte, []int) {
+	return file_grover_udp_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *TransferEdgeOption) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *TransferEdgeOption) GetValue() string {
+	if x != nil {
+		return x.Value
+	}
+	return ""
+}
+
+type TransferEdge struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SourceIndex   uint32                 `protobuf:"varint,1,opt,name=source_index,json=sourceIndex,proto3" json:"source_index,omitempty"`
+	DestIndex     uint32                 `protobuf:"varint,2,opt,name=dest_index,json=destIndex,proto3" json:"dest_index,omitempty"`
+	SourcePath    string                 `protobuf:"bytes,3,opt,name=source_path,json=sourcePath,proto3" json:"source_path,omitempty"`
+	DestPath      string                 `protobuf:"bytes,4,opt,name=dest_path,json=destPath,proto3" json:"dest_path,omitempty"`
+	Options       []*TransferEdgeOption  `protobuf:"bytes,5,rep,name=options,proto3" json:"options,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TransferEdge) Reset() {
+	*x = TransferEdge{}
+	mi := &file_grover_udp_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransferEdge) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransferEdge) ProtoMessage() {}
+
+func (x *TransferEdge) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_udp_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TransferEdge.ProtoReflect.Descriptor instead.
+func (*TransferEdge) Descriptor() ([]byte, []int) {
+	return file_grover_udp_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *TransferEdge) GetSourceIndex() uint32 {
+	if x != nil {
+		return x.SourceIndex
+	}
+	return 0
+}
+
+func (x *TransferEdge) GetDestIndex() uint32 {
+	if x != nil {
+		return x.DestIndex
+	}
+	return 0
+}
+
+func (x *TransferEdge) GetSourcePath() string {
+	if x != nil {
+		return x.SourcePath
+	}
+	return ""
+}
+
+func (x *TransferEdge) GetDestPath() string {
+	if x != nil {
+		return x.DestPath
+	}
+	return ""
+}
+
+func (x *TransferEdge) GetOptions() []*TransferEdgeOption {
+	if x != nil {
+		return x.Options
+	}
+	return nil
+}
+
 // Request
 type FileTransferRequest struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	SourceCredId    string                 `protobuf:"bytes,1,opt,name=source_cred_id,json=sourceCredId,proto3" json:"source_cred_id,omitempty"`
-	DestCredId      string                 `protobuf:"bytes,2,opt,name=dest_cred_id,json=destCredId,proto3" json:"dest_cred_id,omitempty"`
-	FsEntry         []*FsEntry             `protobuf:"bytes,3,rep,name=fs_entry,json=fsEntry,proto3" json:"fs_entry,omitempty"`
-	DestinationPath string                 `protobuf:"bytes,4,opt,name=destination_path,json=destinationPath,proto3" json:"destination_path,omitempty"`
-	Params          *FileTransferParams    `protobuf:"bytes,5,opt,name=params,proto3" json:"params,omitempty"`
-	IdempotencyKey  string                 `protobuf:"bytes,6,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Sources        []*Endpoint            `protobuf:"bytes,1,rep,name=sources,proto3" json:"sources,omitempty"`
+	Destinations   []*Endpoint            `protobuf:"bytes,2,rep,name=destinations,proto3" json:"destinations,omitempty"`
+	Edges          []*TransferEdge        `protobuf:"bytes,3,rep,name=edges,proto3" json:"edges,omitempty"`
+	Params         *FileTransferParams    `protobuf:"bytes,4,opt,name=params,proto3" json:"params,omitempty"`
+	IdempotencyKey string                 `protobuf:"bytes,5,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	DeleteSource   bool                   `protobuf:"varint,6,opt,name=delete_source,json=deleteSource,proto3" json:"delete_source,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *FileTransferRequest) Reset() {
 	*x = FileTransferRequest{}
-	mi := &file_grover_udp_proto_msgTypes[2]
+	mi := &file_grover_udp_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -316,7 +520,7 @@ func (x *FileTransferRequest) String() string {
 func (*FileTransferRequest) ProtoMessage() {}
 
 func (x *FileTransferRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_udp_proto_msgTypes[2]
+	mi := &file_grover_udp_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -329,35 +533,28 @@ func (x *FileTransferRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileTransferRequest.ProtoReflect.Descriptor instead.
 func (*FileTransferRequest) Descriptor() ([]byte, []int) {
-	return file_grover_udp_proto_rawDescGZIP(), []int{2}
+	return file_grover_udp_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *FileTransferRequest) GetSourceCredId() string {
+func (x *FileTransferRequest) GetSources() []*Endpoint {
 	if x != nil {
-		return x.SourceCredId
-	}
-	return ""
-}
-
-func (x *FileTransferRequest) GetDestCredId() string {
-	if x != nil {
-		return x.DestCredId
-	}
-	return ""
-}
-
-func (x *FileTransferRequest) GetFsEntry() []*FsEntry {
-	if x != nil {
-		return x.FsEntry
+		return x.Sources
 	}
 	return nil
 }
 
-func (x *FileTransferRequest) GetDestinationPath() string {
+func (x *FileTransferRequest) GetDestinations() []*Endpoint {
 	if x != nil {
-		return x.DestinationPath
+		return x.Destinations
 	}
-	return ""
+	return nil
+}
+
+func (x *FileTransferRequest) GetEdges() []*TransferEdge {
+	if x != nil {
+		return x.Edges
+	}
+	return nil
 }
 
 func (x *FileTransferRequest) GetParams() *FileTransferParams {
@@ -374,6 +571,13 @@ func (x *FileTransferRequest) GetIdempotencyKey() string {
 	return ""
 }
 
+func (x *FileTransferRequest) GetDeleteSource() bool {
+	if x != nil {
+		return x.DeleteSource
+	}
+	return false
+}
+
 // Response
 type FileTransferResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -386,7 +590,7 @@ type FileTransferResponse struct {
 
 func (x *FileTransferResponse) Reset() {
 	*x = FileTransferResponse{}
-	mi := &file_grover_udp_proto_msgTypes[3]
+	mi := &file_grover_udp_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -398,7 +602,7 @@ func (x *FileTransferResponse) String() string {
 func (*FileTransferResponse) ProtoMessage() {}
 
 func (x *FileTransferResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_udp_proto_msgTypes[3]
+	mi := &file_grover_udp_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -411,7 +615,7 @@ func (x *FileTransferResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileTransferResponse.ProtoReflect.Descriptor instead.
 func (*FileTransferResponse) Descriptor() ([]byte, []int) {
-	return file_grover_udp_proto_rawDescGZIP(), []int{3}
+	return file_grover_udp_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *FileTransferResponse) GetTransferId() string {
@@ -444,7 +648,7 @@ type CreateUdpPortsRequest struct {
 
 func (x *CreateUdpPortsRequest) Reset() {
 	*x = CreateUdpPortsRequest{}
-	mi := &file_grover_udp_proto_msgTypes[4]
+	mi := &file_grover_udp_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -456,7 +660,7 @@ func (x *CreateUdpPortsRequest) String() string {
 func (*CreateUdpPortsRequest) ProtoMessage() {}
 
 func (x *CreateUdpPortsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_udp_proto_msgTypes[4]
+	mi := &file_grover_udp_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -469,7 +673,7 @@ func (x *CreateUdpPortsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateUdpPortsRequest.ProtoReflect.Descriptor instead.
 func (*CreateUdpPortsRequest) Descriptor() ([]byte, []int) {
-	return file_grover_udp_proto_rawDescGZIP(), []int{4}
+	return file_grover_udp_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *CreateUdpPortsRequest) GetPortCount() uint32 {
@@ -488,7 +692,7 @@ type CreateUdpPortsResponse struct {
 
 func (x *CreateUdpPortsResponse) Reset() {
 	*x = CreateUdpPortsResponse{}
-	mi := &file_grover_udp_proto_msgTypes[5]
+	mi := &file_grover_udp_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -500,7 +704,7 @@ func (x *CreateUdpPortsResponse) String() string {
 func (*CreateUdpPortsResponse) ProtoMessage() {}
 
 func (x *CreateUdpPortsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_udp_proto_msgTypes[5]
+	mi := &file_grover_udp_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -513,7 +717,7 @@ func (x *CreateUdpPortsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateUdpPortsResponse.ProtoReflect.Descriptor instead.
 func (*CreateUdpPortsResponse) Descriptor() ([]byte, []int) {
-	return file_grover_udp_proto_rawDescGZIP(), []int{5}
+	return file_grover_udp_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *CreateUdpPortsResponse) GetPorts() []uint32 {
@@ -532,7 +736,7 @@ type DeleteUdpPortsRequest struct {
 
 func (x *DeleteUdpPortsRequest) Reset() {
 	*x = DeleteUdpPortsRequest{}
-	mi := &file_grover_udp_proto_msgTypes[6]
+	mi := &file_grover_udp_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -544,7 +748,7 @@ func (x *DeleteUdpPortsRequest) String() string {
 func (*DeleteUdpPortsRequest) ProtoMessage() {}
 
 func (x *DeleteUdpPortsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_udp_proto_msgTypes[6]
+	mi := &file_grover_udp_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -557,7 +761,7 @@ func (x *DeleteUdpPortsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteUdpPortsRequest.ProtoReflect.Descriptor instead.
 func (*DeleteUdpPortsRequest) Descriptor() ([]byte, []int) {
-	return file_grover_udp_proto_rawDescGZIP(), []int{6}
+	return file_grover_udp_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *DeleteUdpPortsRequest) GetPortNum() []uint32 {
@@ -576,7 +780,7 @@ type DeleteUdpPortsResponse struct {
 
 func (x *DeleteUdpPortsResponse) Reset() {
 	*x = DeleteUdpPortsResponse{}
-	mi := &file_grover_udp_proto_msgTypes[7]
+	mi := &file_grover_udp_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -588,7 +792,7 @@ func (x *DeleteUdpPortsResponse) String() string {
 func (*DeleteUdpPortsResponse) ProtoMessage() {}
 
 func (x *DeleteUdpPortsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_udp_proto_msgTypes[7]
+	mi := &file_grover_udp_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -601,7 +805,7 @@ func (x *DeleteUdpPortsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteUdpPortsResponse.ProtoReflect.Descriptor instead.
 func (*DeleteUdpPortsResponse) Descriptor() ([]byte, []int) {
-	return file_grover_udp_proto_rawDescGZIP(), []int{7}
+	return file_grover_udp_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *DeleteUdpPortsResponse) GetOk() bool {
@@ -619,7 +823,7 @@ type ListPortRequest struct {
 
 func (x *ListPortRequest) Reset() {
 	*x = ListPortRequest{}
-	mi := &file_grover_udp_proto_msgTypes[8]
+	mi := &file_grover_udp_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -631,7 +835,7 @@ func (x *ListPortRequest) String() string {
 func (*ListPortRequest) ProtoMessage() {}
 
 func (x *ListPortRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_udp_proto_msgTypes[8]
+	mi := &file_grover_udp_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -644,7 +848,7 @@ func (x *ListPortRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPortRequest.ProtoReflect.Descriptor instead.
 func (*ListPortRequest) Descriptor() ([]byte, []int) {
-	return file_grover_udp_proto_rawDescGZIP(), []int{8}
+	return file_grover_udp_proto_rawDescGZIP(), []int{11}
 }
 
 type ListPortResponse struct {
@@ -656,7 +860,7 @@ type ListPortResponse struct {
 
 func (x *ListPortResponse) Reset() {
 	*x = ListPortResponse{}
-	mi := &file_grover_udp_proto_msgTypes[9]
+	mi := &file_grover_udp_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -668,7 +872,7 @@ func (x *ListPortResponse) String() string {
 func (*ListPortResponse) ProtoMessage() {}
 
 func (x *ListPortResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_udp_proto_msgTypes[9]
+	mi := &file_grover_udp_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -681,7 +885,7 @@ func (x *ListPortResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPortResponse.ProtoReflect.Descriptor instead.
 func (*ListPortResponse) Descriptor() ([]byte, []int) {
-	return file_grover_udp_proto_rawDescGZIP(), []int{9}
+	return file_grover_udp_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ListPortResponse) GetPort() []uint32 {
@@ -702,7 +906,7 @@ type StartServerRequest struct {
 
 func (x *StartServerRequest) Reset() {
 	*x = StartServerRequest{}
-	mi := &file_grover_udp_proto_msgTypes[10]
+	mi := &file_grover_udp_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -714,7 +918,7 @@ func (x *StartServerRequest) String() string {
 func (*StartServerRequest) ProtoMessage() {}
 
 func (x *StartServerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_udp_proto_msgTypes[10]
+	mi := &file_grover_udp_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -727,7 +931,7 @@ func (x *StartServerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartServerRequest.ProtoReflect.Descriptor instead.
 func (*StartServerRequest) Descriptor() ([]byte, []int) {
-	return file_grover_udp_proto_rawDescGZIP(), []int{10}
+	return file_grover_udp_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *StartServerRequest) GetUdpPort() uint32 {
@@ -762,7 +966,7 @@ type StartServerResponse struct {
 
 func (x *StartServerResponse) Reset() {
 	*x = StartServerResponse{}
-	mi := &file_grover_udp_proto_msgTypes[11]
+	mi := &file_grover_udp_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -774,7 +978,7 @@ func (x *StartServerResponse) String() string {
 func (*StartServerResponse) ProtoMessage() {}
 
 func (x *StartServerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_udp_proto_msgTypes[11]
+	mi := &file_grover_udp_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -787,7 +991,7 @@ func (x *StartServerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartServerResponse.ProtoReflect.Descriptor instead.
 func (*StartServerResponse) Descriptor() ([]byte, []int) {
-	return file_grover_udp_proto_rawDescGZIP(), []int{11}
+	return file_grover_udp_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *StartServerResponse) GetOk() bool {
@@ -819,7 +1023,7 @@ type StopServerRequest struct {
 
 func (x *StopServerRequest) Reset() {
 	*x = StopServerRequest{}
-	mi := &file_grover_udp_proto_msgTypes[12]
+	mi := &file_grover_udp_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -831,7 +1035,7 @@ func (x *StopServerRequest) String() string {
 func (*StopServerRequest) ProtoMessage() {}
 
 func (x *StopServerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_udp_proto_msgTypes[12]
+	mi := &file_grover_udp_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -844,7 +1048,7 @@ func (x *StopServerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopServerRequest.ProtoReflect.Descriptor instead.
 func (*StopServerRequest) Descriptor() ([]byte, []int) {
-	return file_grover_udp_proto_rawDescGZIP(), []int{12}
+	return file_grover_udp_proto_rawDescGZIP(), []int{15}
 }
 
 type StopServerResponse struct {
@@ -857,7 +1061,7 @@ type StopServerResponse struct {
 
 func (x *StopServerResponse) Reset() {
 	*x = StopServerResponse{}
-	mi := &file_grover_udp_proto_msgTypes[13]
+	mi := &file_grover_udp_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -869,7 +1073,7 @@ func (x *StopServerResponse) String() string {
 func (*StopServerResponse) ProtoMessage() {}
 
 func (x *StopServerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_udp_proto_msgTypes[13]
+	mi := &file_grover_udp_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -882,7 +1086,7 @@ func (x *StopServerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopServerResponse.ProtoReflect.Descriptor instead.
 func (*StopServerResponse) Descriptor() ([]byte, []int) {
-	return file_grover_udp_proto_rawDescGZIP(), []int{13}
+	return file_grover_udp_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *StopServerResponse) GetOk() bool {
@@ -921,15 +1125,31 @@ const file_grover_udp_proto_rawDesc = "" +
 	"\vmax_retries\x18\t \x01(\rR\n" +
 	"maxRetries\x12(\n" +
 	"\x10retry_backoff_ms\x18\n" +
-	" \x01(\rR\x0eretryBackoffMs\"\x9d\x02\n" +
-	"\x13FileTransferRequest\x12$\n" +
-	"\x0esource_cred_id\x18\x01 \x01(\tR\fsourceCredId\x12 \n" +
-	"\fdest_cred_id\x18\x02 \x01(\tR\n" +
-	"destCredId\x120\n" +
-	"\bfs_entry\x18\x03 \x03(\v2\x15.groverudp.v1.FsEntryR\afsEntry\x12)\n" +
-	"\x10destination_path\x18\x04 \x01(\tR\x0fdestinationPath\x128\n" +
-	"\x06params\x18\x05 \x01(\v2 .groverudp.v1.FileTransferParamsR\x06params\x12'\n" +
-	"\x0fidempotency_key\x18\x06 \x01(\tR\x0eidempotencyKey\"m\n" +
+	" \x01(\rR\x0eretryBackoffMs\"\x96\x01\n" +
+	"\bEndpoint\x12\x10\n" +
+	"\x03raw\x18\x01 \x01(\tR\x03raw\x12\x16\n" +
+	"\x06scheme\x18\x02 \x01(\tR\x06scheme\x12\x12\n" +
+	"\x04path\x18\x03 \x01(\tR\x04path\x12'\n" +
+	"\x0fcredential_hint\x18\x04 \x01(\tR\x0ecredentialHint\x12#\n" +
+	"\rcredential_id\x18\x05 \x01(\tR\fcredentialId\"<\n" +
+	"\x12TransferEdgeOption\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value\"\xca\x01\n" +
+	"\fTransferEdge\x12!\n" +
+	"\fsource_index\x18\x01 \x01(\rR\vsourceIndex\x12\x1d\n" +
+	"\n" +
+	"dest_index\x18\x02 \x01(\rR\tdestIndex\x12\x1f\n" +
+	"\vsource_path\x18\x03 \x01(\tR\n" +
+	"sourcePath\x12\x1b\n" +
+	"\tdest_path\x18\x04 \x01(\tR\bdestPath\x12:\n" +
+	"\aoptions\x18\x05 \x03(\v2 .groverudp.v1.TransferEdgeOptionR\aoptions\"\xbd\x02\n" +
+	"\x13FileTransferRequest\x120\n" +
+	"\asources\x18\x01 \x03(\v2\x16.groverudp.v1.EndpointR\asources\x12:\n" +
+	"\fdestinations\x18\x02 \x03(\v2\x16.groverudp.v1.EndpointR\fdestinations\x120\n" +
+	"\x05edges\x18\x03 \x03(\v2\x1a.groverudp.v1.TransferEdgeR\x05edges\x128\n" +
+	"\x06params\x18\x04 \x01(\v2 .groverudp.v1.FileTransferParamsR\x06params\x12'\n" +
+	"\x0fidempotency_key\x18\x05 \x01(\tR\x0eidempotencyKey\x12#\n" +
+	"\rdelete_source\x18\x06 \x01(\bR\fdeleteSource\"m\n" +
 	"\x14FileTransferResponse\x12\x1f\n" +
 	"\vtransfer_id\x18\x01 \x01(\tR\n" +
 	"transferId\x12\x1a\n" +
@@ -969,14 +1189,15 @@ const file_grover_udp_proto_rawDesc = "" +
 	"\rCHECKSUM_NONE\x10\x00\x12\x10\n" +
 	"\fCHECKSUM_MD5\x10\x01\x12\x13\n" +
 	"\x0fCHECKSUM_SHA256\x10\x02\x12\x11\n" +
-	"\rCHECKSUM_XXH3\x10\x032\x96\x04\n" +
+	"\rCHECKSUM_XXH3\x10\x032\xb9\x03\n" +
 	"\fGroverServer\x12R\n" +
 	"\vStartServer\x12 .groverudp.v1.StartServerRequest\x1a!.groverudp.v1.StartServerResponse\x12O\n" +
 	"\n" +
 	"StopServer\x12\x1f.groverudp.v1.StopServerRequest\x1a .groverudp.v1.StopServerResponse\x12J\n" +
 	"\tListPorts\x12\x1d.groverudp.v1.ListPortRequest\x1a\x1e.groverudp.v1.ListPortResponse\x12[\n" +
 	"\x0eDeleteUdpPorts\x12#.groverudp.v1.DeleteUdpPortsRequest\x1a$.groverudp.v1.DeleteUdpPortsResponse\x12[\n" +
-	"\x0eCreateUdpPorts\x12#.groverudp.v1.CreateUdpPortsRequest\x1a$.groverudp.v1.CreateUdpPortsResponse\x12[\n" +
+	"\x0eCreateUdpPorts\x12#.groverudp.v1.CreateUdpPortsRequest\x1a$.groverudp.v1.CreateUdpPortsResponse2n\n" +
+	"\x0fTransferService\x12[\n" +
 	"\x12LaunchFileTransfer\x12!.groverudp.v1.FileTransferRequest\x1a\".groverudp.v1.FileTransferResponseBBZ@github.com/jgoldverg/grover/pkg/groverpb/groverudpv1;groverudpv1b\x06proto3"
 
 var (
@@ -992,47 +1213,53 @@ func file_grover_udp_proto_rawDescGZIP() []byte {
 }
 
 var file_grover_udp_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_grover_udp_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_grover_udp_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_grover_udp_proto_goTypes = []any{
 	(OverwritePolicy)(0),           // 0: groverudp.v1.OverwritePolicy
 	(ChecksumType)(0),              // 1: groverudp.v1.ChecksumType
 	(*FsEntry)(nil),                // 2: groverudp.v1.FsEntry
 	(*FileTransferParams)(nil),     // 3: groverudp.v1.FileTransferParams
-	(*FileTransferRequest)(nil),    // 4: groverudp.v1.FileTransferRequest
-	(*FileTransferResponse)(nil),   // 5: groverudp.v1.FileTransferResponse
-	(*CreateUdpPortsRequest)(nil),  // 6: groverudp.v1.CreateUdpPortsRequest
-	(*CreateUdpPortsResponse)(nil), // 7: groverudp.v1.CreateUdpPortsResponse
-	(*DeleteUdpPortsRequest)(nil),  // 8: groverudp.v1.DeleteUdpPortsRequest
-	(*DeleteUdpPortsResponse)(nil), // 9: groverudp.v1.DeleteUdpPortsResponse
-	(*ListPortRequest)(nil),        // 10: groverudp.v1.ListPortRequest
-	(*ListPortResponse)(nil),       // 11: groverudp.v1.ListPortResponse
-	(*StartServerRequest)(nil),     // 12: groverudp.v1.StartServerRequest
-	(*StartServerResponse)(nil),    // 13: groverudp.v1.StartServerResponse
-	(*StopServerRequest)(nil),      // 14: groverudp.v1.StopServerRequest
-	(*StopServerResponse)(nil),     // 15: groverudp.v1.StopServerResponse
+	(*Endpoint)(nil),               // 4: groverudp.v1.Endpoint
+	(*TransferEdgeOption)(nil),     // 5: groverudp.v1.TransferEdgeOption
+	(*TransferEdge)(nil),           // 6: groverudp.v1.TransferEdge
+	(*FileTransferRequest)(nil),    // 7: groverudp.v1.FileTransferRequest
+	(*FileTransferResponse)(nil),   // 8: groverudp.v1.FileTransferResponse
+	(*CreateUdpPortsRequest)(nil),  // 9: groverudp.v1.CreateUdpPortsRequest
+	(*CreateUdpPortsResponse)(nil), // 10: groverudp.v1.CreateUdpPortsResponse
+	(*DeleteUdpPortsRequest)(nil),  // 11: groverudp.v1.DeleteUdpPortsRequest
+	(*DeleteUdpPortsResponse)(nil), // 12: groverudp.v1.DeleteUdpPortsResponse
+	(*ListPortRequest)(nil),        // 13: groverudp.v1.ListPortRequest
+	(*ListPortResponse)(nil),       // 14: groverudp.v1.ListPortResponse
+	(*StartServerRequest)(nil),     // 15: groverudp.v1.StartServerRequest
+	(*StartServerResponse)(nil),    // 16: groverudp.v1.StartServerResponse
+	(*StopServerRequest)(nil),      // 17: groverudp.v1.StopServerRequest
+	(*StopServerResponse)(nil),     // 18: groverudp.v1.StopServerResponse
 }
 var file_grover_udp_proto_depIdxs = []int32{
 	0,  // 0: groverudp.v1.FileTransferParams.overwrite:type_name -> groverudp.v1.OverwritePolicy
 	1,  // 1: groverudp.v1.FileTransferParams.checksum_type:type_name -> groverudp.v1.ChecksumType
-	2,  // 2: groverudp.v1.FileTransferRequest.fs_entry:type_name -> groverudp.v1.FsEntry
-	3,  // 3: groverudp.v1.FileTransferRequest.params:type_name -> groverudp.v1.FileTransferParams
-	12, // 4: groverudp.v1.GroverServer.StartServer:input_type -> groverudp.v1.StartServerRequest
-	14, // 5: groverudp.v1.GroverServer.StopServer:input_type -> groverudp.v1.StopServerRequest
-	10, // 6: groverudp.v1.GroverServer.ListPorts:input_type -> groverudp.v1.ListPortRequest
-	8,  // 7: groverudp.v1.GroverServer.DeleteUdpPorts:input_type -> groverudp.v1.DeleteUdpPortsRequest
-	6,  // 8: groverudp.v1.GroverServer.CreateUdpPorts:input_type -> groverudp.v1.CreateUdpPortsRequest
-	4,  // 9: groverudp.v1.GroverServer.LaunchFileTransfer:input_type -> groverudp.v1.FileTransferRequest
-	13, // 10: groverudp.v1.GroverServer.StartServer:output_type -> groverudp.v1.StartServerResponse
-	15, // 11: groverudp.v1.GroverServer.StopServer:output_type -> groverudp.v1.StopServerResponse
-	11, // 12: groverudp.v1.GroverServer.ListPorts:output_type -> groverudp.v1.ListPortResponse
-	9,  // 13: groverudp.v1.GroverServer.DeleteUdpPorts:output_type -> groverudp.v1.DeleteUdpPortsResponse
-	7,  // 14: groverudp.v1.GroverServer.CreateUdpPorts:output_type -> groverudp.v1.CreateUdpPortsResponse
-	5,  // 15: groverudp.v1.GroverServer.LaunchFileTransfer:output_type -> groverudp.v1.FileTransferResponse
-	10, // [10:16] is the sub-list for method output_type
-	4,  // [4:10] is the sub-list for method input_type
-	4,  // [4:4] is the sub-list for extension type_name
-	4,  // [4:4] is the sub-list for extension extendee
-	0,  // [0:4] is the sub-list for field type_name
+	5,  // 2: groverudp.v1.TransferEdge.options:type_name -> groverudp.v1.TransferEdgeOption
+	4,  // 3: groverudp.v1.FileTransferRequest.sources:type_name -> groverudp.v1.Endpoint
+	4,  // 4: groverudp.v1.FileTransferRequest.destinations:type_name -> groverudp.v1.Endpoint
+	6,  // 5: groverudp.v1.FileTransferRequest.edges:type_name -> groverudp.v1.TransferEdge
+	3,  // 6: groverudp.v1.FileTransferRequest.params:type_name -> groverudp.v1.FileTransferParams
+	15, // 7: groverudp.v1.GroverServer.StartServer:input_type -> groverudp.v1.StartServerRequest
+	17, // 8: groverudp.v1.GroverServer.StopServer:input_type -> groverudp.v1.StopServerRequest
+	13, // 9: groverudp.v1.GroverServer.ListPorts:input_type -> groverudp.v1.ListPortRequest
+	11, // 10: groverudp.v1.GroverServer.DeleteUdpPorts:input_type -> groverudp.v1.DeleteUdpPortsRequest
+	9,  // 11: groverudp.v1.GroverServer.CreateUdpPorts:input_type -> groverudp.v1.CreateUdpPortsRequest
+	7,  // 12: groverudp.v1.TransferService.LaunchFileTransfer:input_type -> groverudp.v1.FileTransferRequest
+	16, // 13: groverudp.v1.GroverServer.StartServer:output_type -> groverudp.v1.StartServerResponse
+	18, // 14: groverudp.v1.GroverServer.StopServer:output_type -> groverudp.v1.StopServerResponse
+	14, // 15: groverudp.v1.GroverServer.ListPorts:output_type -> groverudp.v1.ListPortResponse
+	12, // 16: groverudp.v1.GroverServer.DeleteUdpPorts:output_type -> groverudp.v1.DeleteUdpPortsResponse
+	10, // 17: groverudp.v1.GroverServer.CreateUdpPorts:output_type -> groverudp.v1.CreateUdpPortsResponse
+	8,  // 18: groverudp.v1.TransferService.LaunchFileTransfer:output_type -> groverudp.v1.FileTransferResponse
+	13, // [13:19] is the sub-list for method output_type
+	7,  // [7:13] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_grover_udp_proto_init() }
@@ -1046,9 +1273,9 @@ func file_grover_udp_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_grover_udp_proto_rawDesc), len(file_grover_udp_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   14,
+			NumMessages:   17,
 			NumExtensions: 0,
-			NumServices:   1,
+			NumServices:   2,
 		},
 		GoTypes:           file_grover_udp_proto_goTypes,
 		DependencyIndexes: file_grover_udp_proto_depIdxs,

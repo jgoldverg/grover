@@ -9,7 +9,10 @@ service GroverServer {
   rpc ListPorts (ListPortRequest) returns (ListPortResponse);
   rpc DeleteUdpPorts (DeleteUdpPortsRequest) returns (DeleteUdpPortsResponse);
   rpc CreateUdpPorts (CreateUdpPortsRequest) returns (CreateUdpPortsResponse);
-  rpc LaunchFileTransfer (FileTransferRequest) returns (FileTransferResponse);
+}
+
+service TransferService {
+  rpc LaunchFileTransfer(FileTransferRequest) returns (FileTransferResponse);
 }
 
 enum OverwritePolicy {
@@ -47,14 +50,35 @@ message FileTransferParams {
   uint32 retry_backoff_ms = 10;
 }
 
+message Endpoint {
+  string raw = 1;
+  string scheme = 2;
+  string path = 3;
+  string credential_hint = 4;
+  string credential_id = 5;
+}
+
+message TransferEdgeOption {
+  string key = 1;
+  string value = 2;
+}
+
+message TransferEdge {
+  uint32 source_index = 1;
+  uint32 dest_index = 2;
+  string source_path = 3;
+  string dest_path = 4;
+  repeated TransferEdgeOption options = 5;
+}
+
 // Request
 message FileTransferRequest {
-  string source_cred_id = 1;
-  string dest_cred_id = 2;
-  repeated FsEntry fs_entry = 3;
-  string destination_path = 4;
-  FileTransferParams params = 5;
-  string idempotency_key = 6;
+  repeated Endpoint sources = 1;
+  repeated Endpoint destinations = 2;
+  repeated TransferEdge edges = 3;
+  FileTransferParams params = 4;
+  string idempotency_key = 5;
+  bool delete_source = 6;
 }
 
 // Response

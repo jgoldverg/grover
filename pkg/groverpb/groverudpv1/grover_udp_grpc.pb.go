@@ -19,12 +19,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	GroverServer_StartServer_FullMethodName        = "/groverudp.v1.GroverServer/StartServer"
-	GroverServer_StopServer_FullMethodName         = "/groverudp.v1.GroverServer/StopServer"
-	GroverServer_ListPorts_FullMethodName          = "/groverudp.v1.GroverServer/ListPorts"
-	GroverServer_DeleteUdpPorts_FullMethodName     = "/groverudp.v1.GroverServer/DeleteUdpPorts"
-	GroverServer_CreateUdpPorts_FullMethodName     = "/groverudp.v1.GroverServer/CreateUdpPorts"
-	GroverServer_LaunchFileTransfer_FullMethodName = "/groverudp.v1.GroverServer/LaunchFileTransfer"
+	GroverServer_StartServer_FullMethodName    = "/groverudp.v1.GroverServer/StartServer"
+	GroverServer_StopServer_FullMethodName     = "/groverudp.v1.GroverServer/StopServer"
+	GroverServer_ListPorts_FullMethodName      = "/groverudp.v1.GroverServer/ListPorts"
+	GroverServer_DeleteUdpPorts_FullMethodName = "/groverudp.v1.GroverServer/DeleteUdpPorts"
+	GroverServer_CreateUdpPorts_FullMethodName = "/groverudp.v1.GroverServer/CreateUdpPorts"
 )
 
 // GroverServerClient is the client API for GroverServer service.
@@ -36,7 +35,6 @@ type GroverServerClient interface {
 	ListPorts(ctx context.Context, in *ListPortRequest, opts ...grpc.CallOption) (*ListPortResponse, error)
 	DeleteUdpPorts(ctx context.Context, in *DeleteUdpPortsRequest, opts ...grpc.CallOption) (*DeleteUdpPortsResponse, error)
 	CreateUdpPorts(ctx context.Context, in *CreateUdpPortsRequest, opts ...grpc.CallOption) (*CreateUdpPortsResponse, error)
-	LaunchFileTransfer(ctx context.Context, in *FileTransferRequest, opts ...grpc.CallOption) (*FileTransferResponse, error)
 }
 
 type groverServerClient struct {
@@ -97,16 +95,6 @@ func (c *groverServerClient) CreateUdpPorts(ctx context.Context, in *CreateUdpPo
 	return out, nil
 }
 
-func (c *groverServerClient) LaunchFileTransfer(ctx context.Context, in *FileTransferRequest, opts ...grpc.CallOption) (*FileTransferResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(FileTransferResponse)
-	err := c.cc.Invoke(ctx, GroverServer_LaunchFileTransfer_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // GroverServerServer is the server API for GroverServer service.
 // All implementations must embed UnimplementedGroverServerServer
 // for forward compatibility.
@@ -116,7 +104,6 @@ type GroverServerServer interface {
 	ListPorts(context.Context, *ListPortRequest) (*ListPortResponse, error)
 	DeleteUdpPorts(context.Context, *DeleteUdpPortsRequest) (*DeleteUdpPortsResponse, error)
 	CreateUdpPorts(context.Context, *CreateUdpPortsRequest) (*CreateUdpPortsResponse, error)
-	LaunchFileTransfer(context.Context, *FileTransferRequest) (*FileTransferResponse, error)
 	mustEmbedUnimplementedGroverServerServer()
 }
 
@@ -141,9 +128,6 @@ func (UnimplementedGroverServerServer) DeleteUdpPorts(context.Context, *DeleteUd
 }
 func (UnimplementedGroverServerServer) CreateUdpPorts(context.Context, *CreateUdpPortsRequest) (*CreateUdpPortsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreateUdpPorts not implemented")
-}
-func (UnimplementedGroverServerServer) LaunchFileTransfer(context.Context, *FileTransferRequest) (*FileTransferResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method LaunchFileTransfer not implemented")
 }
 func (UnimplementedGroverServerServer) mustEmbedUnimplementedGroverServerServer() {}
 func (UnimplementedGroverServerServer) testEmbeddedByValue()                      {}
@@ -256,24 +240,6 @@ func _GroverServer_CreateUdpPorts_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
-func _GroverServer_LaunchFileTransfer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(FileTransferRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(GroverServerServer).LaunchFileTransfer(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: GroverServer_LaunchFileTransfer_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(GroverServerServer).LaunchFileTransfer(ctx, req.(*FileTransferRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // GroverServer_ServiceDesc is the grpc.ServiceDesc for GroverServer service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -301,9 +267,107 @@ var GroverServer_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "CreateUdpPorts",
 			Handler:    _GroverServer_CreateUdpPorts_Handler,
 		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "grover_udp.proto",
+}
+
+const (
+	TransferService_LaunchFileTransfer_FullMethodName = "/groverudp.v1.TransferService/LaunchFileTransfer"
+)
+
+// TransferServiceClient is the client API for TransferService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type TransferServiceClient interface {
+	LaunchFileTransfer(ctx context.Context, in *FileTransferRequest, opts ...grpc.CallOption) (*FileTransferResponse, error)
+}
+
+type transferServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewTransferServiceClient(cc grpc.ClientConnInterface) TransferServiceClient {
+	return &transferServiceClient{cc}
+}
+
+func (c *transferServiceClient) LaunchFileTransfer(ctx context.Context, in *FileTransferRequest, opts ...grpc.CallOption) (*FileTransferResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FileTransferResponse)
+	err := c.cc.Invoke(ctx, TransferService_LaunchFileTransfer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// TransferServiceServer is the server API for TransferService service.
+// All implementations must embed UnimplementedTransferServiceServer
+// for forward compatibility.
+type TransferServiceServer interface {
+	LaunchFileTransfer(context.Context, *FileTransferRequest) (*FileTransferResponse, error)
+	mustEmbedUnimplementedTransferServiceServer()
+}
+
+// UnimplementedTransferServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedTransferServiceServer struct{}
+
+func (UnimplementedTransferServiceServer) LaunchFileTransfer(context.Context, *FileTransferRequest) (*FileTransferResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method LaunchFileTransfer not implemented")
+}
+func (UnimplementedTransferServiceServer) mustEmbedUnimplementedTransferServiceServer() {}
+func (UnimplementedTransferServiceServer) testEmbeddedByValue()                         {}
+
+// UnsafeTransferServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to TransferServiceServer will
+// result in compilation errors.
+type UnsafeTransferServiceServer interface {
+	mustEmbedUnimplementedTransferServiceServer()
+}
+
+func RegisterTransferServiceServer(s grpc.ServiceRegistrar, srv TransferServiceServer) {
+	// If the following call pancis, it indicates UnimplementedTransferServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&TransferService_ServiceDesc, srv)
+}
+
+func _TransferService_LaunchFileTransfer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FileTransferRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TransferServiceServer).LaunchFileTransfer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TransferService_LaunchFileTransfer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TransferServiceServer).LaunchFileTransfer(ctx, req.(*FileTransferRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// TransferService_ServiceDesc is the grpc.ServiceDesc for TransferService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var TransferService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "groverudp.v1.TransferService",
+	HandlerType: (*TransferServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "LaunchFileTransfer",
-			Handler:    _GroverServer_LaunchFileTransfer_Handler,
+			Handler:    _TransferService_LaunchFileTransfer_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
