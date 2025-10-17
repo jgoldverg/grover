@@ -92,7 +92,7 @@ func (s *FileResourceService) List(ctx context.Context, bt backend.BackendType, 
 	if err != nil {
 		return nil, err
 	}
-	return ops.List(ctx, path)
+	return ops.List(ctx, path, false)
 }
 
 func (s *FileResourceService) resolveLocalCredential(name string, id uuid.UUID) (backend.Credential, error) {

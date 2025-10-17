@@ -53,7 +53,7 @@ message FileTransferParams {
 message Endpoint {
   string raw = 1;
   string scheme = 2;
-  string path = 3;
+  repeated string paths = 3;
   string credential_hint = 4;
   string credential_id = 5;
 }

@@ -14,21 +14,29 @@ import (
 )
 
 type TransferService struct {
-	cfg       *internal.AppConfig
-	remote    pb.TransferServiceClient
-	policy    RoutePolicy
-	hasRemote bool
+	cfg            *internal.AppConfig
+	remote         pb.TransferServiceClient
+	policy         RoutePolicy
+	hasRemote      bool
+	store          backend.CredentialStorage
+	jobPersistence backend.JobPersistence
 }
 
 func NewClientTransferService(cfg *internal.AppConfig, conn grpc.ClientConnInterface, policy RoutePolicy) (*TransferService, error) {
+	store, err := backend.NewTomlCredentialStorage(cfg.CredentialsFile)
+	if err != nil {
+		return nil, err
+	}
 	svc := &TransferService{
 		cfg:    cfg,
 		policy: policy,
+		store:  store,
 	}
 	if conn != nil {
 		svc.remote = pb.NewTransferServiceClient(conn)
 		svc.hasRemote = true
 	}
+
 	return svc, nil
 }
 
@@ -46,6 +54,11 @@ func (s *TransferService) LaunchTransfer(ctx context.Context, req *backend.Trans
 		}
 		return s.remote.LaunchFileTransfer(ctx, pbReq)
 	}
+
+	// TODO make the job persistence type a part of the config here instead of hard coding Noop
+	executor := backend.NewTransferExecutor(req, s.store, backend.NoopStore)
+	executor.PrepareTransfer()
+	executor.StartTransfer(ctx)
 	return nil, ErrFileTransferNotImplemented
 }
 
@@ -55,7 +68,7 @@ func backendTransferRequestToProto(req *backend.TransferRequest) (*pb.FileTransf
 		sources[i] = &pb.Endpoint{
 			Raw:            strings.TrimSpace(src.Raw),
 			Scheme:         strings.TrimSpace(src.Scheme),
-			Path:           strings.TrimSpace(src.Path),
+			Paths:          trimmedPaths(src.Paths),
 			CredentialHint: strings.TrimSpace(src.CredentialHint),
 			CredentialId:   strings.TrimSpace(src.CredentialID),
 		}
@@ -65,7 +78,7 @@ func backendTransferRequestToProto(req *backend.TransferRequest) (*pb.FileTransf
 		dests[i] = &pb.Endpoint{
 			Raw:            strings.TrimSpace(dst.Raw),
 			Scheme:         strings.TrimSpace(dst.Scheme),
-			Path:           strings.TrimSpace(dst.Path),
+			Paths:          trimmedPaths(dst.Paths),
 			CredentialHint: strings.TrimSpace(dst.CredentialHint),
 			CredentialId:   strings.TrimSpace(dst.CredentialID),
 		}
@@ -109,6 +122,21 @@ func backendTransferRequestToProto(req *backend.TransferRequest) (*pb.FileTransf
 		IdempotencyKey: strings.TrimSpace(req.IdempotencyKey),
 		DeleteSource:   req.DeleteSource,
 	}, nil
+}
+
+func trimmedPaths(paths []string) []string {
+	out := make([]string, 0, len(paths))
+	seen := make(map[string]struct{}, len(paths))
+	for _, p := range paths {
+		if trimmed := strings.TrimSpace(p); trimmed != "" {
+			if _, ok := seen[trimmed]; ok {
+				continue
+			}
+			seen[trimmed] = struct{}{}
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 func convertTransferParamsToProto(in backend.TransferParams) (*pb.FileTransferParams, error) {

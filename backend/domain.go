@@ -57,7 +57,7 @@ var backends = map[BackendType]struct{}{
 type Endpoint struct {
 	Raw            string
 	Scheme         string
-	Path           string
+	Paths          []string
 	CredentialHint string
 	CredentialID   string
 }
@@ -81,6 +81,7 @@ type TransferParams struct {
 	VerifyChecksum bool
 	MaxRetries     uint32
 	RetryBackoffMs uint32
+	BatchSize      uint32
 }
 
 type TransferRequest struct {

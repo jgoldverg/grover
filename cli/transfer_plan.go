@@ -49,10 +49,6 @@ func newTransferPlan(opts *TransferCommandOpts, fromInputs, toInputs []endpointI
 
 	backendSources := make([]backend.Endpoint, len(sources))
 	for i, spec := range sources {
-		path, err := derivePathFromURI(spec.URI)
-		if err != nil {
-			return nil, err
-		}
 		credHint := spec.CredentialHint
 		if credHint == "" {
 			credHint = strings.TrimSpace(opts.SourceCredID)
@@ -61,10 +57,14 @@ func newTransferPlan(opts *TransferCommandOpts, fromInputs, toInputs []endpointI
 		if credID == "" {
 			credID = strings.TrimSpace(opts.SourceCredID)
 		}
+		paths, err := derivePathsFromURI(spec.URI)
+		if err != nil {
+			return nil, err
+		}
 		backendSources[i] = backend.Endpoint{
 			Raw:            spec.URI,
 			Scheme:         schemeFromURI(spec.URI),
-			Path:           path,
+			Paths:          paths,
 			CredentialHint: credHint,
 			CredentialID:   credID,
 		}
@@ -72,10 +72,6 @@ func newTransferPlan(opts *TransferCommandOpts, fromInputs, toInputs []endpointI
 
 	backendDestinations := make([]backend.Endpoint, len(destinations))
 	for i, spec := range destinations {
-		path, err := derivePathFromURI(spec.URI)
-		if err != nil {
-			return nil, err
-		}
 		credHint := spec.CredentialHint
 		if credHint == "" {
 			credHint = strings.TrimSpace(opts.DestCredID)
@@ -84,10 +80,14 @@ func newTransferPlan(opts *TransferCommandOpts, fromInputs, toInputs []endpointI
 		if credID == "" {
 			credID = strings.TrimSpace(opts.DestCredID)
 		}
+		paths, err := derivePathsFromURI(spec.URI)
+		if err != nil {
+			return nil, err
+		}
 		backendDestinations[i] = backend.Endpoint{
 			Raw:            spec.URI,
 			Scheme:         schemeFromURI(spec.URI),
-			Path:           path,
+			Paths:          paths,
 			CredentialHint: credHint,
 			CredentialID:   credID,
 		}
@@ -396,7 +396,10 @@ func (p *transferPlan) sourcePath(edge backend.TransferEdge) (string, error) {
 	if edge.SourceIndex < 0 || edge.SourceIndex >= len(p.Request.Sources) {
 		return "", fmt.Errorf("source index %d out of range", edge.SourceIndex)
 	}
-	return p.Request.Sources[edge.SourceIndex].Path, nil
+	if path := firstNonEmptyPath(p.Request.Sources[edge.SourceIndex].Paths); path != "" {
+		return path, nil
+	}
+	return "", fmt.Errorf("source endpoint %d has no paths", edge.SourceIndex)
 }
 
 func (p *transferPlan) destPath(edge backend.TransferEdge) (string, error) {
@@ -406,22 +409,25 @@ func (p *transferPlan) destPath(edge backend.TransferEdge) (string, error) {
 	if edge.DestIndex < 0 || edge.DestIndex >= len(p.Request.Destinations) {
 		return "", fmt.Errorf("destination index %d out of range", edge.DestIndex)
 	}
-	return p.Request.Destinations[edge.DestIndex].Path, nil
+	if path := firstNonEmptyPath(p.Request.Destinations[edge.DestIndex].Paths); path != "" {
+		return path, nil
+	}
+	return "", fmt.Errorf("destination endpoint %d has no paths", edge.DestIndex)
 }
 
-func derivePathFromURI(raw string) (string, error) {
+func derivePathsFromURI(raw string) ([]string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return "", fmt.Errorf("cannot derive path from empty URI")
+		return nil, fmt.Errorf("cannot derive path from empty URI")
 	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme == "" {
-		return raw, nil
+		return []string{raw}, nil
 	}
 	if u.Path != "" {
-		return u.Path, nil
+		return []string{u.Path}, nil
 	}
-	return raw, nil
+	return []string{raw}, nil
 }
 
 func schemeFromURI(raw string) string {
@@ -469,7 +475,7 @@ func (p *transferPlan) describeEndpoint(idx int, override string, specs []endpoi
 	display := strings.TrimSpace(override)
 	if display == "" {
 		if idx >= 0 && idx < len(eps) {
-			candidate := strings.TrimSpace(eps[idx].Path)
+			candidate := firstNonEmptyPath(eps[idx].Paths)
 			if candidate != "" {
 				display = candidate
 			}
@@ -482,4 +488,13 @@ func (p *transferPlan) describeEndpoint(idx int, override string, specs []endpoi
 		return fmt.Sprintf("%s (%s)", epSpec.Label, display)
 	}
 	return display
+}
+
+func firstNonEmptyPath(paths []string) string {
+	for _, p := range paths {
+		if trimmed := strings.TrimSpace(p); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }

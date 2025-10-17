@@ -82,9 +82,55 @@ func NewFileSystemOperations() *FileSystemOperations {
 	return &FileSystemOperations{}
 }
 
-func (o *FileSystemOperations) List(ctx context.Context, root string) ([]groverFs.FileInfo, error) {
+func (o *FileSystemOperations) List(ctx context.Context, root string, recursive bool) ([]groverFs.FileInfo, error) {
 	files := make([]groverFs.FileInfo, 0, 128)
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+
+	fi, err := os.Lstat(root)
+	if err != nil {
+		return nil, err
+	}
+
+	// If root is a file, return just that file.
+	if !fi.IsDir() {
+		return []groverFs.FileInfo{
+			{
+				ID:      filepath.Base(root),
+				AbsPath: root,
+				Size:    uint64(fi.Size()),
+			},
+		}, nil
+	}
+
+	if !recursive {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range entries {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+			}
+			if e.IsDir() {
+				continue
+			}
+			info, err := e.Info()
+			if err != nil {
+				return nil, err
+			}
+			fp := filepath.Join(root, e.Name())
+			files = append(files, groverFs.FileInfo{
+				ID:      e.Name(),
+				AbsPath: fp,
+				Size:    uint64(info.Size()),
+			})
+		}
+		return files, nil
+	}
+
+	// Recursive: walk the whole tree.
+	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -93,6 +139,8 @@ func (o *FileSystemOperations) List(ctx context.Context, root string) ([]groverF
 			return ctx.Err()
 		default:
 		}
+
+		// We only collect files (not dirs). WalkDir already recurses.
 		if d.IsDir() {
 			return nil
 		}
@@ -102,11 +150,12 @@ func (o *FileSystemOperations) List(ctx context.Context, root string) ([]groverF
 		}
 		files = append(files, groverFs.FileInfo{
 			ID:      d.Name(),
-			AbsPath: path,
+			AbsPath: p,
 			Size:    uint64(info.Size()),
 		})
 		return nil
 	})
+
 	return files, err
 }
 

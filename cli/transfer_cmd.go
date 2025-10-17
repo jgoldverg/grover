@@ -19,6 +19,7 @@ const (
 	defaultRateLimitMbps = 0
 	defaultMaxRetries    = 3
 	defaultBackoffMs     = 500
+	defaultBatchSize     = 10
 	defaultOverwrite     = "if-different"
 	defaultChecksum      = "none"
 )
@@ -43,6 +44,7 @@ type FileTransferParamsOpts struct {
 	RetryBackoffMs uint
 	Overwrite      string
 	Checksum       string
+	BatchSize      uint
 }
 
 func TransferCommand() *cobra.Command {
@@ -165,6 +167,7 @@ func bindTransferFlags(cmd *cobra.Command, opts *TransferCommandOpts) {
 	cmd.Flags().UintVar(&opts.TransferParams.RetryBackoffMs, "retry-backoff-ms", opts.TransferParams.RetryBackoffMs, "Backoff between retries in milliseconds")
 	cmd.Flags().StringVar(&opts.TransferParams.Overwrite, "overwrite", opts.TransferParams.Overwrite, "Overwrite policy: always|if-newer|never|if-different|unspecified")
 	cmd.Flags().StringVar(&opts.TransferParams.Checksum, "checksum", opts.TransferParams.Checksum, "Checksum strategy: none|md5|sha256|xxh3")
+	cmd.Flags().UintVar(&opts.TransferParams.BatchSize, "batch-size", opts.TransferParams.BatchSize, "Batch size is the number of read operations to 1 write operation")
 }
 
 func launchTransferRequest(cmd *cobra.Command, direction string, opts *TransferCommandOpts, req *backend.TransferRequest) error {
@@ -234,6 +237,7 @@ func (p *FileTransferParamsOpts) toBackend() (backend.TransferParams, error) {
 		VerifyChecksum: p.VerifyChecksum,
 		MaxRetries:     uint32(p.MaxRetries),
 		RetryBackoffMs: uint32(p.RetryBackoffMs),
+		BatchSize:      uint32(p.BatchSize),
 	}, nil
 }
 
@@ -292,6 +296,7 @@ func defaultTransferOptions() TransferCommandOpts {
 			RetryBackoffMs: defaultBackoffMs,
 			Overwrite:      defaultOverwrite,
 			Checksum:       defaultChecksum,
+			BatchSize:      defaultBatchSize,
 		},
 	}
 }

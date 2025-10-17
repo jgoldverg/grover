@@ -293,7 +293,7 @@ type Endpoint struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Raw            string                 `protobuf:"bytes,1,opt,name=raw,proto3" json:"raw,omitempty"`
 	Scheme         string                 `protobuf:"bytes,2,opt,name=scheme,proto3" json:"scheme,omitempty"`
-	Path           string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
+	Paths          []string               `protobuf:"bytes,3,rep,name=paths,proto3" json:"paths,omitempty"`
 	CredentialHint string                 `protobuf:"bytes,4,opt,name=credential_hint,json=credentialHint,proto3" json:"credential_hint,omitempty"`
 	CredentialId   string                 `protobuf:"bytes,5,opt,name=credential_id,json=credentialId,proto3" json:"credential_id,omitempty"`
 	unknownFields  protoimpl.UnknownFields
@@ -344,11 +344,11 @@ func (x *Endpoint) GetScheme() string {
 	return ""
 }
 
-func (x *Endpoint) GetPath() string {
+func (x *Endpoint) GetPaths() []string {
 	if x != nil {
-		return x.Path
+		return x.Paths
 	}
-	return ""
+	return nil
 }
 
 func (x *Endpoint) GetCredentialHint() string {
@@ -1125,11 +1125,11 @@ const file_grover_udp_proto_rawDesc = "" +
 	"\vmax_retries\x18\t \x01(\rR\n" +
 	"maxRetries\x12(\n" +
 	"\x10retry_backoff_ms\x18\n" +
-	" \x01(\rR\x0eretryBackoffMs\"\x96\x01\n" +
+	" \x01(\rR\x0eretryBackoffMs\"\x98\x01\n" +
 	"\bEndpoint\x12\x10\n" +
 	"\x03raw\x18\x01 \x01(\tR\x03raw\x12\x16\n" +
-	"\x06scheme\x18\x02 \x01(\tR\x06scheme\x12\x12\n" +
-	"\x04path\x18\x03 \x01(\tR\x04path\x12'\n" +
+	"\x06scheme\x18\x02 \x01(\tR\x06scheme\x12\x14\n" +
+	"\x05paths\x18\x03 \x03(\tR\x05paths\x12'\n" +
 	"\x0fcredential_hint\x18\x04 \x01(\tR\x0ecredentialHint\x12#\n" +
 	"\rcredential_id\x18\x05 \x01(\tR\fcredentialId\"<\n" +
 	"\x12TransferEdgeOption\x12\x10\n" +

@@ -45,7 +45,7 @@ func NormalizeTransferRequest(req *pb.FileTransferRequest) (*backend.TransferReq
 		backendSources[i] = backend.Endpoint{
 			Raw:            strings.TrimSpace(ep.GetRaw()),
 			Scheme:         strings.TrimSpace(ep.GetScheme()),
-			Path:           strings.TrimSpace(ep.GetPath()),
+			Paths:          trimmedStrings(ep.GetPaths()),
 			CredentialHint: strings.TrimSpace(ep.GetCredentialHint()),
 			CredentialID:   strings.TrimSpace(ep.GetCredentialId()),
 		}
@@ -56,7 +56,7 @@ func NormalizeTransferRequest(req *pb.FileTransferRequest) (*backend.TransferReq
 		backendDestinations[i] = backend.Endpoint{
 			Raw:            strings.TrimSpace(ep.GetRaw()),
 			Scheme:         strings.TrimSpace(ep.GetScheme()),
-			Path:           strings.TrimSpace(ep.GetPath()),
+			Paths:          trimmedStrings(ep.GetPaths()),
 			CredentialHint: strings.TrimSpace(ep.GetCredentialHint()),
 			CredentialID:   strings.TrimSpace(ep.GetCredentialId()),
 		}
@@ -140,4 +140,19 @@ func convertChecksumType(in pb.ChecksumType) backend.CheckSumType {
 	default:
 		return backend.NONE
 	}
+}
+
+func trimmedStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, v := range values {
+		if trimmed := strings.TrimSpace(v); trimmed != "" {
+			if _, ok := seen[trimmed]; ok {
+				continue
+			}
+			seen[trimmed] = struct{}{}
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }

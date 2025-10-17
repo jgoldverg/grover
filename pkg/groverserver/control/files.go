@@ -42,7 +42,7 @@ func (s *FileService) List(ctx context.Context, in *pb.ListFilesRequest) (*pb.Li
 		return nil, status.Errorf(codes.Internal, "init backend ops: %v", err)
 	}
 
-	files, err := ops.List(ctx, in.GetPath())
+	files, err := ops.List(ctx, in.GetPath(), false)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list: %v", err)
 	}
