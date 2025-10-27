@@ -1,4 +1,4 @@
-package protoutil
+package util
 
 import (
 	"strings"
@@ -43,7 +43,7 @@ func PbCredentialToBackendCredential(in []*pb.Credential) []backend.Credential {
 				Name:       cred.GetCredentialName(),
 				Username:   d.Ssh.GetUsername(),
 				Host:       d.Ssh.GetHost(),
-				Port:       int(d.Ssh.GetPort()), // default handled by Validate()
+				Port:       int(d.Ssh.GetPort()),
 				PublicKey:  d.Ssh.GetPublicKey(),
 				PrivateKey: d.Ssh.GetPrivateKey(),
 				UseAgent:   d.Ssh.GetUseAgent(),
@@ -112,7 +112,7 @@ func ResolveCredentialProto(storage backend.CredentialStorage, ref *pb.Credentia
 	case *pb.CredentialRef_CredentialName:
 		name := strings.TrimSpace(r.CredentialName)
 		if name == "" {
-			return nil, nil // treat empty name as "no ref"
+			return nil, nil
 		}
 		cred, err := storage.GetCredentialByName(name)
 		if err != nil {

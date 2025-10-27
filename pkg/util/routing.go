@@ -1,8 +1,6 @@
-package groverclient
+package util
 
-import (
-	"strings"
-)
+import "strings"
 
 type RoutePolicy int
 

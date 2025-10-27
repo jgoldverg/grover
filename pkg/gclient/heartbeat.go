@@ -1,4 +1,4 @@
-package groverclient
+package gclient
 
 import (
 	"context"

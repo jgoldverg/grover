@@ -1,4 +1,4 @@
-// pkg/groverserver/udpwire/mtu_probe.go
+// pkg/gserver/udpwire/mtu_probe.go
 package udpwire
 
 import (

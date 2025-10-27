@@ -1,4 +1,4 @@
-package groverclient
+package gclient
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-type GroverServerCommands struct {
+type ServerService struct {
 	cfg *internal.AppConfig
 	gs  pb.GroverServerClient
 	pb.UnimplementedGroverServerServer
@@ -17,29 +17,29 @@ type GroverServerCommands struct {
 
 var ErrFileTransferNotImplemented = errors.New("file transfer client not implemented yet")
 
-func NewGroverServerCommands(cfg *internal.AppConfig, conn *grpc.ClientConn) *GroverServerCommands {
-	return &GroverServerCommands{
+func NewServerService(cfg *internal.AppConfig, conn *grpc.ClientConn) *ServerService {
+	return &ServerService{
 		cfg: cfg,
 		gs:  pb.NewGroverServerClient(conn),
 	}
 }
 
-func (g *GroverServerCommands) CreatePorts(portCount uint32) ([]uint32, error) {
+func (g *ServerService) CreatePorts(ctx context.Context, portCount uint32) ([]uint32, error) {
 	req := pb.CreateUdpPortsRequest{PortCount: portCount}
-	resp, err := g.gs.CreateUdpPorts(context.Background(), &req)
+	resp, err := g.gs.CreateUdpPorts(ctx, &req)
 	if err != nil {
 		return nil, err
 	}
 	return resp.GetPorts(), nil
 }
 
-func (g *GroverServerCommands) ListPorts() ([]uint32, error) {
+func (g *ServerService) ListPorts(ctx context.Context) ([]uint32, error) {
 	req := pb.ListPortRequest{}
-	resp, err := g.gs.ListPorts(context.Background(), &req)
+	resp, err := g.gs.ListPorts(ctx, &req)
 	return resp.GetPort(), err
 }
 
-func (g *GroverServerCommands) StartServer(ctx context.Context) (uint32, error) {
+func (g *ServerService) StartServer(ctx context.Context) (uint32, error) {
 	req := pb.StartServerRequest{
 		UdpPort:        0,
 		WorkersPerFile: 0,
@@ -56,7 +56,7 @@ func (g *GroverServerCommands) StartServer(ctx context.Context) (uint32, error) 
 	return 0, errors.New("start server failed: " + resp.GetMessage())
 }
 
-func (g *GroverServerCommands) StopServer(ctx context.Context) (string, error) {
+func (g *ServerService) StopServer(ctx context.Context) (string, error) {
 	req := pb.StopServerRequest{}
 
 	resp, err := g.gs.StopServer(ctx, &req)
@@ -71,7 +71,7 @@ func (g *GroverServerCommands) StopServer(ctx context.Context) (string, error) {
 	}
 }
 
-func (g *GroverServerCommands) DeletePorts(ctx context.Context, ports []uint32) (bool, error) {
+func (g *ServerService) DeletePorts(ctx context.Context, ports []uint32) (bool, error) {
 	req := pb.DeleteUdpPortsRequest{
 		PortNum: ports,
 	}

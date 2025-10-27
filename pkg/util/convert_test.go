@@ -1,4 +1,4 @@
-package protoutil
+package util
 
 import (
 	"errors"

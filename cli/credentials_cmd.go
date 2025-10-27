@@ -2,14 +2,14 @@ package cli
 
 import (
 	"errors"
-	"fmt"
 	"os/user"
 
 	"github.com/google/uuid"
 	"github.com/jgoldverg/grover/backend"
 	"github.com/jgoldverg/grover/cli/output"
 	"github.com/jgoldverg/grover/internal"
-	"github.com/jgoldverg/grover/pkg/groverclient"
+	"github.com/jgoldverg/grover/pkg/gclient"
+	"github.com/jgoldverg/grover/pkg/util"
 	"github.com/spf13/cobra"
 )
 
@@ -125,14 +125,15 @@ func AddBasicCredentialCommand(commonOpts *AddCredentialOpts) *cobra.Command {
 			if f := cmd.Flags().Lookup("via"); f != nil && f.Changed {
 				route, _ = cmd.Flags().GetString("via")
 			}
-			policy := groverclient.ParseRoutePolicy(route)
-			gc := groverclient.NewGroverClient(*cfg)
+			policy := util.ParseRoutePolicy(route)
+			gc := gclient.NewClient(*cfg)
 			err = gc.Initialize(cmd.Context(), policy)
 			if err != nil {
 				return err
 			}
+			defer gc.Close()
 
-			return gc.CredService.AddCredential(cmd.Context(), credential)
+			return gc.Credentials().AddCredential(cmd.Context(), credential)
 		},
 	}
 	cmd.Flags().StringVar(&commonOpts.URL, "url", "", "Backend URL")
@@ -190,14 +191,15 @@ func AddSShCredentialCommand(commonOpts *AddCredentialOpts) *cobra.Command {
 			if f := cmd.Flags().Lookup("via"); f != nil && f.Changed {
 				route, _ = cmd.Flags().GetString("via")
 			}
-			policy := groverclient.ParseRoutePolicy(route)
-			gc := groverclient.NewGroverClient(*cfg)
+			policy := util.ParseRoutePolicy(route)
+			gc := gclient.NewClient(*cfg)
 			err = gc.Initialize(cmd.Context(), policy)
 			if err != nil {
 				return err
 			}
+			defer gc.Close()
 
-			return gc.CredService.AddCredential(cmd.Context(), credential)
+			return gc.Credentials().AddCredential(cmd.Context(), credential)
 		},
 	}
 
@@ -223,15 +225,16 @@ func ListCredentialCommand() *cobra.Command {
 			if f := cmd.Flags().Lookup("via"); f != nil && f.Changed {
 				route, _ = cmd.Flags().GetString("via")
 			}
-			policy := groverclient.ParseRoutePolicy(route)
-			gc := groverclient.NewGroverClient(*cfg)
+			policy := util.ParseRoutePolicy(route)
+			gc := gclient.NewClient(*cfg)
 			err := gc.Initialize(cmd.Context(), policy)
 			if err != nil {
 				return err
 			}
+			defer gc.Close()
 			internal.Info("created and initialized grover client", nil)
 
-			creds, err := gc.CredService.ListCredentials(cmd.Context(), "")
+			creds, err := gc.Credentials().ListCredentials(cmd.Context(), "")
 			if err != nil {
 				return errors.New("Failed to list the stored credentials: " + err.Error())
 			}
@@ -254,27 +257,32 @@ func DeleteCredentialCommand() *cobra.Command {
 		Aliases: []string{"rm", "d"},
 		Long:    "Delete a credential from the configured credential store path",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			appConfig := GetAppConfig(cmd)
-			storage, err := backend.NewTomlCredentialStorage(appConfig.CredentialsFile)
-			if err != nil {
-				return fmt.Errorf("failed to create credential store path: we got %s: %w", appConfig.CredentialsFile, err)
-			}
 			if deleteCredOpts.CredentialName == "" && deleteCredOpts.CredentialUUID == "" {
 				return errors.New("must pass in either the credential name or the credential uuid")
 			}
 
-			if deleteCredOpts.CredentialName != "" {
-				return storage.DeleteCredentialByName(deleteCredOpts.CredentialName)
+			cfg := GetAppConfig(cmd)
+			route := cfg.Route
+			if f := cmd.Flags().Lookup("via"); f != nil && f.Changed {
+				route, _ = cmd.Flags().GetString("via")
 			}
+			policy := util.ParseRoutePolicy(route)
+			gc := gclient.NewClient(*cfg)
+			if err := gc.Initialize(cmd.Context(), policy); err != nil {
+				return err
+			}
+			defer gc.Close()
 
+			var credUUID uuid.UUID
 			if deleteCredOpts.CredentialUUID != "" {
-				credUuid, err := uuid.Parse(deleteCredOpts.CredentialUUID)
+				parsed, err := uuid.Parse(deleteCredOpts.CredentialUUID)
 				if err != nil {
 					return errors.New("the credential uuid is not valid: " + err.Error())
 				}
-				return storage.DeleteCredential(credUuid)
+				credUUID = parsed
 			}
-			return nil
+
+			return gc.Credentials().DeleteCredential(cmd.Context(), credUUID, deleteCredOpts.CredentialName)
 		},
 	}
 

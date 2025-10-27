@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -9,8 +10,9 @@ import (
 	"time"
 
 	"github.com/jgoldverg/grover/internal"
-	"github.com/jgoldverg/grover/pkg/groverclient"
-	"github.com/jgoldverg/grover/pkg/groverserver"
+	"github.com/jgoldverg/grover/pkg/gclient"
+	"github.com/jgoldverg/grover/pkg/gserver"
+	"github.com/jgoldverg/grover/pkg/util"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -81,14 +83,19 @@ func GroverPing() *cobra.Command {
 				"hb_err_threshold": appConfig.HeartBeatErrorCount,
 			})
 
-			policy := groverclient.ParseRoutePolicy(route)
-			gc := groverclient.NewGroverClient(*appConfig)
+			policy := util.ParseRoutePolicy(route)
+			gc := gclient.NewClient(*appConfig)
 			if err := gc.Initialize(ctx, policy); err != nil {
 				return err
 			}
+			defer gc.Close()
 
-			gc.HeartBeatClient.StartPulse(ctx)
-			defer gc.HeartBeatClient.StopPulse()
+			hb := gc.Heartbeat()
+			if hb == nil {
+				return errors.New("heartbeat client not initialized")
+			}
+			hb.StartPulse(ctx)
+			defer hb.StopPulse()
 
 			<-ctx.Done()
 			return nil
@@ -109,14 +116,17 @@ func StartServer() *cobra.Command {
 		Short:   "Start server",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := GetAppConfig(cmd)
-			gc := groverclient.NewGroverClient(*cfg)
-			rp := groverclient.ParseRoutePolicy(cfg.Route)
-			err := gc.Initialize(cmd.Context(), rp)
-
-			if err != nil {
+			gc := gclient.NewClient(*cfg)
+			rp := util.ParseRoutePolicy(cfg.Route)
+			if err := gc.Initialize(cmd.Context(), rp); err != nil {
 				return err
 			}
-			port, err := gc.ServerClient.StartServer(cmd.Context())
+			defer gc.Close()
+			serverAPI := gc.Server()
+			if serverAPI == nil {
+				return errors.New("server client not initialized")
+			}
+			port, err := serverAPI.StartServer(cmd.Context())
 
 			if err != nil {
 				return err
@@ -137,13 +147,17 @@ func StopServer() *cobra.Command {
 		Short:   "Stop udp server",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := GetAppConfig(cmd)
-			gc := groverclient.NewGroverClient(*cfg)
-			rp := groverclient.ParseRoutePolicy(cfg.Route)
-			err := gc.Initialize(cmd.Context(), rp)
-			if err != nil {
+			gc := gclient.NewClient(*cfg)
+			rp := util.ParseRoutePolicy(cfg.Route)
+			if err := gc.Initialize(cmd.Context(), rp); err != nil {
 				return err
 			}
-			msg, err := gc.ServerClient.StopServer(cmd.Context())
+			defer gc.Close()
+			serverAPI := gc.Server()
+			if serverAPI == nil {
+				return errors.New("server client not initialized")
+			}
+			msg, err := serverAPI.StopServer(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -163,13 +177,17 @@ func ListPorts() *cobra.Command {
 		Short:   "List ports",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := GetAppConfig(cmd)
-			gc := groverclient.NewGroverClient(*cfg)
-			rp := groverclient.ParseRoutePolicy(cfg.Route)
-			err := gc.Initialize(cmd.Context(), rp)
-			if err != nil {
+			gc := gclient.NewClient(*cfg)
+			rp := util.ParseRoutePolicy(cfg.Route)
+			if err := gc.Initialize(cmd.Context(), rp); err != nil {
 				return err
 			}
-			ports, err := gc.ServerClient.ListPorts()
+			defer gc.Close()
+			serverAPI := gc.Server()
+			if serverAPI == nil {
+				return errors.New("server client not initialized")
+			}
+			ports, err := serverAPI.ListPorts(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -203,12 +221,12 @@ func MtuProbe() *cobra.Command {
 				}
 			}
 
-			policy := groverclient.ParseRoutePolicy(route)
-			if policy == groverclient.RouteForceLocal {
+			policy := util.ParseRoutePolicy(route)
+			if policy == util.RouteForceLocal {
 				return fmt.Errorf("mtu probe requires a grover udp serverserver route; rerun with --via server or configure server_url")
 			}
 
-			gc := groverclient.NewGroverClient(*appConfig)
+			gc := gclient.NewClient(*appConfig)
 			if err := gc.Initialize(ctx, policy); err != nil {
 				return err
 			}
@@ -224,7 +242,7 @@ func MtuProbe() *cobra.Command {
 			}
 			pterm.DefaultSection.Println("MTU probe inputs")
 			pterm.DefaultBasicText.Println("  Target Host:", host)
-			size, err := gc.DiscoverPMTU(cmd.Context(), host, opts.udpPort, int(opts.minSize), int(opts.maxSize), time.Millisecond*time.Duration(opts.timeoutMs))
+			size, err := gc.MTU().DiscoverPMTU(cmd.Context(), host, opts.udpPort, int(opts.minSize), int(opts.maxSize), time.Millisecond*time.Duration(opts.timeoutMs))
 			if err != nil {
 				return err
 			}
@@ -235,7 +253,7 @@ func MtuProbe() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&opts.ipAddr, "ip-addr", "", "IP or hostname to probe (default derived from server_url)")
-	cmd.Flags().IntVar(&opts.udpPort, "udp-port", int(groverserver.DefaultMtuPort), "Existing UDP port to probe (defaults to MTU listener)")
+	cmd.Flags().IntVar(&opts.udpPort, "udp-port", int(gserver.DefaultMtuPort), "Existing UDP port to probe (defaults to MTU listener)")
 	cmd.Flags().UintVar(&opts.minSize, "min-size", 1200, "smallest mtu to start from(default is 1200)")
 	cmd.Flags().UintVar(&opts.maxSize, "max-size", 65000, "maximum mtu to start from(default is 65000)")
 	cmd.Flags().String("via", "", "routing policy (overrides config)")
@@ -261,18 +279,22 @@ func OpenUdpPorts() *cobra.Command {
 				}
 			}
 
-			policy := groverclient.ParseRoutePolicy(route)
-			if policy == groverclient.RouteForceLocal {
+			policy := util.ParseRoutePolicy(route)
+			if policy == util.RouteForceLocal {
 				return fmt.Errorf("mtu probe requires a grover udp serverserver route; rerun with --via server or configure server_url")
 			}
 
-			gc := groverclient.NewGroverClient(*appConfig)
+			gc := gclient.NewClient(*appConfig)
 			if err := gc.Initialize(ctx, policy); err != nil {
 				return err
 			}
 			defer gc.Close()
 
-			ports, err := gc.ServerClient.CreatePorts(uint32(opts.portCount))
+			serverAPI := gc.Server()
+			if serverAPI == nil {
+				return errors.New("server client not initialized")
+			}
+			ports, err := serverAPI.CreatePorts(ctx, uint32(opts.portCount))
 			if err != nil {
 				return err
 			}
@@ -306,22 +328,27 @@ func CloseUdpPorts() *cobra.Command {
 				}
 			}
 
-			policy := groverclient.ParseRoutePolicy(route)
-			if policy == groverclient.RouteForceLocal {
+			policy := util.ParseRoutePolicy(route)
+			if policy == util.RouteForceLocal {
 				return fmt.Errorf("mtu probe requires a grover udp serverserver route; rerun with --via server or configure server_url")
 			}
 
-			gc := groverclient.NewGroverClient(*appConfig)
+			gc := gclient.NewClient(*appConfig)
 			if err := gc.Initialize(ctx, policy); err != nil {
 				return err
 			}
 			defer gc.Close()
 
+			serverAPI := gc.Server()
+			if serverAPI == nil {
+				return errors.New("server client not initialized")
+			}
+
 			ports := make([]uint32, len(opts.ports))
 			for i, port := range opts.ports {
 				ports[i] = uint32(port)
 			}
-			res, err := gc.ServerClient.DeletePorts(cmd.Context(), ports)
+			res, err := serverAPI.DeletePorts(cmd.Context(), ports)
 			if err != nil {
 				return err
 			}

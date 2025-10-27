@@ -7,7 +7,7 @@ import (
 	"syscall"
 
 	"github.com/jgoldverg/grover/internal"
-	gs "github.com/jgoldverg/grover/pkg/groverserver"
+	gs "github.com/jgoldverg/grover/pkg/gserver"
 )
 
 func main() {

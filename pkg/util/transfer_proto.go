@@ -1,74 +1,21 @@
-package groverclient
+package util
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/jgoldverg/grover/backend"
-	"github.com/jgoldverg/grover/internal"
 	pb "github.com/jgoldverg/grover/pkg/groverpb/groverudpv1"
-	"google.golang.org/grpc"
 )
 
-type TransferService struct {
-	cfg            *internal.AppConfig
-	remote         pb.TransferServiceClient
-	policy         RoutePolicy
-	hasRemote      bool
-	store          backend.CredentialStorage
-	jobPersistence backend.JobPersistence
-}
-
-func NewClientTransferService(cfg *internal.AppConfig, conn grpc.ClientConnInterface, policy RoutePolicy) (*TransferService, error) {
-	store, err := backend.NewTomlCredentialStorage(cfg.CredentialsFile)
-	if err != nil {
-		return nil, err
-	}
-	svc := &TransferService{
-		cfg:    cfg,
-		policy: policy,
-		store:  store,
-	}
-	if conn != nil {
-		svc.remote = pb.NewTransferServiceClient(conn)
-		svc.hasRemote = true
-	}
-
-	return svc, nil
-}
-
-func (s *TransferService) LaunchTransfer(ctx context.Context, req *backend.TransferRequest) (*pb.FileTransferResponse, error) {
-	if req == nil {
-		return nil, errors.New("transfer request cannot be nil")
-	}
-	if ShouldUseRemote(s.policy, s.hasRemote) {
-		if s.remote == nil {
-			return nil, ErrRemoteUnavailable
-		}
-		pbReq, err := backendTransferRequestToProto(req)
-		if err != nil {
-			return nil, err
-		}
-		return s.remote.LaunchFileTransfer(ctx, pbReq)
-	}
-
-	// TODO make the job persistence type a part of the config here instead of hard coding Noop
-	executor := backend.NewTransferExecutor(req, s.store, backend.NoopStore)
-	executor.PrepareTransfer()
-	executor.StartTransfer(ctx)
-	return nil, ErrFileTransferNotImplemented
-}
-
-func backendTransferRequestToProto(req *backend.TransferRequest) (*pb.FileTransferRequest, error) {
+func BackendTransferRequestToProto(req *backend.TransferRequest) (*pb.FileTransferRequest, error) {
 	sources := make([]*pb.Endpoint, len(req.Sources))
 	for i, src := range req.Sources {
 		sources[i] = &pb.Endpoint{
 			Raw:            strings.TrimSpace(src.Raw),
 			Scheme:         strings.TrimSpace(src.Scheme),
-			Paths:          trimmedPaths(src.Paths),
+			Paths:          trimDistinctPaths(src.Paths),
 			CredentialHint: strings.TrimSpace(src.CredentialHint),
 			CredentialId:   strings.TrimSpace(src.CredentialID),
 		}
@@ -78,7 +25,7 @@ func backendTransferRequestToProto(req *backend.TransferRequest) (*pb.FileTransf
 		dests[i] = &pb.Endpoint{
 			Raw:            strings.TrimSpace(dst.Raw),
 			Scheme:         strings.TrimSpace(dst.Scheme),
-			Paths:          trimmedPaths(dst.Paths),
+			Paths:          trimDistinctPaths(dst.Paths),
 			CredentialHint: strings.TrimSpace(dst.CredentialHint),
 			CredentialId:   strings.TrimSpace(dst.CredentialID),
 		}
@@ -109,7 +56,7 @@ func backendTransferRequestToProto(req *backend.TransferRequest) (*pb.FileTransf
 		edges[i] = pbEdge
 	}
 
-	params, err := convertTransferParamsToProto(req.Params)
+	params, err := ConvertTransferParamsToProto(req.Params)
 	if err != nil {
 		return nil, err
 	}
@@ -124,27 +71,12 @@ func backendTransferRequestToProto(req *backend.TransferRequest) (*pb.FileTransf
 	}, nil
 }
 
-func trimmedPaths(paths []string) []string {
-	out := make([]string, 0, len(paths))
-	seen := make(map[string]struct{}, len(paths))
-	for _, p := range paths {
-		if trimmed := strings.TrimSpace(p); trimmed != "" {
-			if _, ok := seen[trimmed]; ok {
-				continue
-			}
-			seen[trimmed] = struct{}{}
-			out = append(out, trimmed)
-		}
-	}
-	return out
-}
-
-func convertTransferParamsToProto(in backend.TransferParams) (*pb.FileTransferParams, error) {
-	overwrite, err := convertOverwritePolicyToProto(in.Overwrite)
+func ConvertTransferParamsToProto(in backend.TransferParams) (*pb.FileTransferParams, error) {
+	overwrite, err := ConvertOverwritePolicyToProto(in.Overwrite)
 	if err != nil {
 		return nil, err
 	}
-	checksum, err := convertChecksumTypeToProto(in.Checksum)
+	checksum, err := ConvertChecksumTypeToProto(in.Checksum)
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +94,7 @@ func convertTransferParamsToProto(in backend.TransferParams) (*pb.FileTransferPa
 	}, nil
 }
 
-func convertOverwritePolicyToProto(in backend.OverwritePolicy) (pb.OverwritePolicy, error) {
+func ConvertOverwritePolicyToProto(in backend.OverwritePolicy) (pb.OverwritePolicy, error) {
 	switch in {
 	case backend.UNSPECIFIED:
 		return pb.OverwritePolicy_OVERWRITE_UNSPECIFIED, nil
@@ -179,7 +111,7 @@ func convertOverwritePolicyToProto(in backend.OverwritePolicy) (pb.OverwritePoli
 	}
 }
 
-func convertChecksumTypeToProto(in backend.CheckSumType) (pb.ChecksumType, error) {
+func ConvertChecksumTypeToProto(in backend.CheckSumType) (pb.ChecksumType, error) {
 	switch in {
 	case backend.NONE:
 		return pb.ChecksumType_CHECKSUM_NONE, nil
@@ -192,4 +124,19 @@ func convertChecksumTypeToProto(in backend.CheckSumType) (pb.ChecksumType, error
 	default:
 		return 0, fmt.Errorf("unsupported checksum type %d", in)
 	}
+}
+
+func trimDistinctPaths(paths []string) []string {
+	out := make([]string, 0, len(paths))
+	seen := make(map[string]struct{}, len(paths))
+	for _, p := range paths {
+		if trimmed := strings.TrimSpace(p); trimmed != "" {
+			if _, ok := seen[trimmed]; ok {
+				continue
+			}
+			seen[trimmed] = struct{}{}
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }

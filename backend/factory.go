@@ -22,13 +22,6 @@ func OpsFactory(t BackendType, cred Credential) (filesystem.FileOps, error) {
 	}
 }
 
-func RmFactory(kind BackendType, cred Credential) filesystem.FileOps {
-	if kind == LOCALFSBackend {
-		return localfs.NewFileSystemOperations()
-	}
-	return nil
-}
-
 func ReaderFactory(kind BackendType, cred Credential, ch *chunker.Chunker, file *filesystem.FileInfo) (Reader, error) {
 	switch kind {
 	case LOCALFSBackend:

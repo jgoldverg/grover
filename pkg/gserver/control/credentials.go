@@ -6,7 +6,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jgoldverg/grover/backend"
-	"github.com/jgoldverg/grover/internal"
 	pb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
 )
 
@@ -15,11 +14,10 @@ type CredentialService struct {
 	storage backend.CredentialStorage
 }
 
-func NewCredentialOps(config *internal.ServerConfig) *CredentialService {
-	storage, _ := backend.NewTomlCredentialStorage(config.CredentialsFile)
+func NewCredentialOps(credStore backend.CredentialStorage) *CredentialService {
 	return &CredentialService{
 		UnimplementedCredentialServiceServer: pb.UnimplementedCredentialServiceServer{},
-		storage:                              storage,
+		storage:                              credStore,
 	}
 }
 

@@ -1,5 +1,4 @@
-// server/control/udp_manager.go
-package control
+package pkg
 
 import (
 	"context"
@@ -10,9 +9,15 @@ import (
 	"time"
 
 	"github.com/jgoldverg/grover/internal"
-	"github.com/jgoldverg/grover/pkg/groverserver/dataplane"
 	"golang.org/x/sys/unix"
 )
+
+// PacketHandler defines the callbacks invoked by the UDP listener lifecycle.
+type PacketHandler interface {
+	OnStart(ctx context.Context, pc net.PacketConn) error
+	OnStop(ctx context.Context, pc net.PacketConn) error
+	HandlePacket(ctx context.Context, pc net.PacketConn, src net.Addr, buf []byte, n int)
+}
 
 type Options struct {
 	ReadBufferSize          int
@@ -28,16 +33,40 @@ type ListenerManager struct {
 	Opts      Options
 }
 
-func NewListenerManager() *ListenerManager {
-	return &ListenerManager{
-		Opts: Options{
-			ReadBufferSize:          64 * 1024,
-			WriteBufferSize:         64 * 1024,
-			PacketProcessingWorkers: 10,
-			ReadTimeout:             10 * time.Second,
-			QueueDepth:              0, // auto
-		},
+func DefaultOptions() Options {
+	return Options{
+		ReadBufferSize:          64 * 1024,
+		WriteBufferSize:         64 * 1024,
+		PacketProcessingWorkers: 10,
+		ReadTimeout:             10 * time.Second,
+		QueueDepth:              0,
 	}
+}
+
+func NewListenerManager() *ListenerManager {
+	return NewListenerManagerWithOptions(DefaultOptions())
+}
+
+func NewListenerManagerWithOptions(opts Options) *ListenerManager {
+	defaults := DefaultOptions()
+	if opts.ReadBufferSize <= 0 {
+		opts.ReadBufferSize = defaults.ReadBufferSize
+	}
+	if opts.WriteBufferSize < 0 {
+		opts.WriteBufferSize = defaults.WriteBufferSize
+	}
+	if opts.PacketProcessingWorkers <= 0 {
+		opts.PacketProcessingWorkers = defaults.PacketProcessingWorkers
+	}
+	if opts.ReadTimeout <= 0 {
+		opts.ReadTimeout = defaults.ReadTimeout
+	}
+	// QueueDepth of 0 retains auto behaviour; negative coerces to default auto as well
+	if opts.QueueDepth < 0 {
+		opts.QueueDepth = defaults.QueueDepth
+	}
+
+	return &ListenerManager{Opts: opts}
 }
 
 func (lm *ListenerManager) GetListener(portNum uint32) (uint32, net.PacketConn) {
@@ -57,7 +86,6 @@ func (lm *ListenerManager) DeleteListener(portNum uint32) {
 		})
 	}
 
-	// 2) Stop the pump and remove it.
 	if pv, ok := lm.pumps.Load(portNum); ok {
 		if p, ok2 := pv.(*PktPump); ok2 {
 			p.Stop()
@@ -76,18 +104,17 @@ func (lm *ListenerManager) GetListeners(ctx context.Context) ([]uint32, error) {
 }
 
 // LaunchNewListener binds a UDP socket (v6 preferred, then v4), registers it, starts a PktPump on it.
-func (lm *ListenerManager) LaunchNewListener(ctx context.Context, port int, h dataplane.Handler) (net.PacketConn, int, error) {
+func (lm *ListenerManager) LaunchNewListener(ctx context.Context, port int, h PacketHandler) (net.PacketConn, int, error) {
 	internal.Info("udp listener launch requested", internal.Fields{
 		internal.FieldPort: port,
 	})
-	// inside LaunchNewListener
+
 	lc := net.ListenConfig{
 		Control: func(network, _ string, c syscall.RawConn) error {
 			return c.Control(func(fd uintptr) {
 				_ = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEADDR, 1)
 				_ = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEPORT, 1)
 				if network == "udp6" {
-					// Try to make v6 socket dual-stack (Linux honors this; macOS ignores)
 					_ = unix.SetsockoptInt(int(fd), unix.IPPROTO_IPV6, unix.IPV6_V6ONLY, 0)
 				}
 			})
@@ -96,7 +123,6 @@ func (lm *ListenerManager) LaunchNewListener(ctx context.Context, port int, h da
 
 	addr6 := fmt.Sprintf("[::]:%d", port)
 	addr4 := fmt.Sprintf("0.0.0.0:%d", port)
-	// Prefer IPv6 dual-stack; if that fails, fall back to IPv4
 	pc, err := lc.ListenPacket(ctx, "udp6", addr6)
 	if err != nil {
 		internal.Warn("error creating udp ipv6 listener", internal.Fields{
@@ -112,7 +138,7 @@ func (lm *ListenerManager) LaunchNewListener(ctx context.Context, port int, h da
 			return nil, 0, err
 		}
 	}
-	// Apply buffer hints if UDPConn
+
 	if uc, ok := pc.(*net.UDPConn); ok {
 		_ = uc.SetReadBuffer(lm.Opts.ReadBufferSize)
 		if lm.Opts.WriteBufferSize > 0 {
@@ -147,8 +173,7 @@ func (lm *ListenerManager) LaunchNewListener(ctx context.Context, port int, h da
 	return pc, portOut, nil
 }
 
-func (lm *ListenerManager) CloseAll(ctx context.Context, h dataplane.Handler) error {
-	// 1) Close ALL sockets first to unblock readers.
+func (lm *ListenerManager) CloseAll(ctx context.Context, h PacketHandler) error {
 	lm.listeners.Range(func(k, v any) bool {
 		pc := v.(net.PacketConn)
 		if h != nil {
@@ -158,7 +183,6 @@ func (lm *ListenerManager) CloseAll(ctx context.Context, h dataplane.Handler) er
 		return true
 	})
 
-	// 2) Stop ALL pumps (their readers are now unblocked).
 	lm.pumps.Range(func(_ any, v any) bool {
 		if p, ok := v.(*PktPump); ok {
 			p.Stop()
@@ -166,7 +190,6 @@ func (lm *ListenerManager) CloseAll(ctx context.Context, h dataplane.Handler) er
 		return true
 	})
 
-	// 3) Clear maps.
 	lm.listeners.Clear()
 	lm.pumps.Clear()
 	return nil
@@ -181,14 +204,14 @@ type pkt struct {
 
 type PktPump struct {
 	pc     net.PacketConn
-	h      dataplane.Handler
+	h      PacketHandler
 	opts   Options
 	queue  chan pkt
 	wg     sync.WaitGroup
 	closed chan struct{}
 }
 
-func NewPktPump(pc net.PacketConn, h dataplane.Handler, opts Options) *PktPump {
+func NewPktPump(pc net.PacketConn, h PacketHandler, opts Options) *PktPump {
 	qd := opts.QueueDepth
 	if qd <= 0 {
 		qd = opts.PacketProcessingWorkers * 4
@@ -206,7 +229,6 @@ func NewPktPump(pc net.PacketConn, h dataplane.Handler, opts Options) *PktPump {
 }
 
 func (p *PktPump) Start(ctx context.Context) {
-	// Workers
 	workers := p.opts.PacketProcessingWorkers
 	if workers <= 0 {
 		workers = 1
@@ -223,11 +245,10 @@ func (p *PktPump) Start(ctx context.Context) {
 		}()
 	}
 
-	// Reader
 	p.wg.Add(1)
 	go func() {
 		defer func() {
-			close(p.queue) // signal workers to drain & exit
+			close(p.queue)
 			close(p.closed)
 			p.wg.Done()
 		}()
@@ -249,7 +270,6 @@ func (p *PktPump) Start(ctx context.Context) {
 				if ne, ok := err.(net.Error); ok && ne.Timeout() {
 					continue
 				}
-				// socket closed or fatal error
 				return
 			}
 
@@ -259,17 +279,12 @@ func (p *PktPump) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			default:
-				// queue full: drop (consider metrics)
 			}
 		}
 	}()
 }
 
-// Stop waits for the reader to exit (triggered by ctx cancel or pc.Close())
-// and for workers to drain.
 func (p *PktPump) Stop() {
-	// Ensure the read loop has exited.
 	<-p.closed
-	// Wait for workers to finish.
 	p.wg.Wait()
 }

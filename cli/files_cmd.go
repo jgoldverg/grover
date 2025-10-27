@@ -7,7 +7,8 @@ import (
 	"github.com/jgoldverg/grover/backend"
 	"github.com/jgoldverg/grover/cli/output"
 	"github.com/jgoldverg/grover/internal"
-	"github.com/jgoldverg/grover/pkg/groverclient"
+	"github.com/jgoldverg/grover/pkg/gclient"
+	"github.com/jgoldverg/grover/pkg/util"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -73,31 +74,29 @@ func deleteResource() *cobra.Command {
 				route, _ = cmd.Flags().GetString("via")
 			}
 
-			credUuid := uuid.Nil
 			if opts.CredentialUUID != "" {
-				var err error
-				credUuid, err = uuid.Parse(opts.CredentialUUID)
-				if err != nil {
+				if _, err := uuid.Parse(opts.CredentialUUID); err != nil {
 					return fmt.Errorf("invalid credential UUID '%s': %w", opts.CredentialUUID, err)
 				}
 			}
 
-			policy := groverclient.ParseRoutePolicy(route)
-			gc := groverclient.NewGroverClient(*appConfig)
+			policy := util.ParseRoutePolicy(route)
+			gc := gclient.NewClient(*appConfig)
 			if err := gc.Initialize(cmd.Context(), policy); err != nil {
 				return err
 			}
 			defer gc.Close()
 
-			success, err := gc.ResourceService.Rm(cmd.Context(), endpointType, opts.Path, opts.CredentialName, credUuid)
-			if success != true {
-				internal.Error("failed to delete path", internal.Fields{
-					internal.FieldMsg:         fmt.Sprintf("failed to delete path: %s", opts.Path),
-					internal.FieldError:       err.Error(),
-					internal.FieldKey("path"): opts.Path,
-				})
+			endpoint := backend.Endpoint{
+				Scheme:         string(endpointType),
+				Paths:          []string{opts.Path},
+				CredentialHint: opts.CredentialName,
+				CredentialID:   opts.CredentialUUID,
 			}
-			pterm.DefaultBasicText.Printf("\n Successfully deleted files %s with value %t", opts.Path, err)
+			if err := gc.Files().Remove(cmd.Context(), endpoint, opts.Path); err != nil {
+				return err
+			}
+			pterm.DefaultBasicText.Printf("\n Successfully deleted files %s", opts.Path)
 			return nil
 		},
 	}
@@ -134,24 +133,28 @@ func listResources() *cobra.Command {
 			if f := cmd.Flags().Lookup("via"); f != nil && f.Changed {
 				route, _ = cmd.Flags().GetString("via")
 			}
-			policy := groverclient.ParseRoutePolicy(route)
+			policy := util.ParseRoutePolicy(route)
 
-			gc := groverclient.NewGroverClient(*appConfig)
+			gc := gclient.NewClient(*appConfig)
 			if err := gc.Initialize(cmd.Context(), policy); err != nil {
 				return err
 			}
 			defer gc.Close()
 
-			var id uuid.UUID
 			if opts.CredentialUUID != "" {
-				parsed, err := uuid.Parse(opts.CredentialUUID)
-				if err != nil {
+				if _, err := uuid.Parse(opts.CredentialUUID); err != nil {
 					return fmt.Errorf("invalid credential UUID: %w", err)
 				}
-				id = parsed
 			}
 
-			files, err := gc.ResourceService.List(cmd.Context(), endpointType, opts.Path, opts.CredentialName, id)
+			endpoint := backend.Endpoint{
+				Scheme:         string(endpointType),
+				Paths:          []string{opts.Path},
+				CredentialHint: opts.CredentialName,
+				CredentialID:   opts.CredentialUUID,
+			}
+
+			files, err := gc.Files().List(cmd.Context(), endpoint)
 			if err != nil {
 				return err
 			}

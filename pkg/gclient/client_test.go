@@ -1,10 +1,10 @@
-package groverclient
+package gclient
 
 import (
 	"net"
 	"testing"
 
-	"github.com/jgoldverg/grover/pkg/groverserver"
+	"github.com/jgoldverg/grover/pkg/gserver"
 )
 
 func TestSplitHostPortDefaultUsesDefaultMtuPort(t *testing.T) {
@@ -12,8 +12,8 @@ func TestSplitHostPortDefaultUsesDefaultMtuPort(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if port != int(groverserver.DefaultMtuPort) {
-		t.Fatalf("expected default MTU port %d, got %d for host %q", groverserver.DefaultMtuPort, port, host)
+	if port != int(gserver.DefaultMtuPort) {
+		t.Fatalf("expected default MTU port %d, got %d for host %q", gserver.DefaultMtuPort, port, host)
 	}
 }
 

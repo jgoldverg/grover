@@ -7,7 +7,8 @@ import (
 
 	"github.com/jgoldverg/grover/backend"
 	"github.com/jgoldverg/grover/internal"
-	"github.com/jgoldverg/grover/pkg/groverclient"
+	"github.com/jgoldverg/grover/pkg/gclient"
+	"github.com/jgoldverg/grover/pkg/util"
 	"github.com/spf13/cobra"
 )
 
@@ -179,7 +180,7 @@ func launchTransferRequest(cmd *cobra.Command, direction string, opts *TransferC
 		return errors.New("app config not found; did PersistentPreRun execute?")
 	}
 	policy := resolveRoutePolicy(cmd, appCfg)
-	gc := groverclient.NewGroverClient(*appCfg)
+	gc := gclient.NewClient(*appCfg)
 	if err := gc.Initialize(cmd.Context(), policy); err != nil {
 		return err
 	}
@@ -193,10 +194,11 @@ func launchTransferRequest(cmd *cobra.Command, direction string, opts *TransferC
 		"idempotency": opts.IdempotencyKey,
 	})
 
-	if gc.TransferClient == nil {
+	transferAPI := gc.Transfer()
+	if transferAPI == nil {
 		return errors.New("transfer client not initialized")
 	}
-	resp, err := gc.TransferClient.LaunchTransfer(cmd.Context(), req)
+	resp, err := transferAPI.LaunchTransfer(cmd.Context(), req)
 	if err != nil {
 		return err
 	}
@@ -273,14 +275,14 @@ func parseChecksumType(raw string) (backend.CheckSumType, error) {
 	}
 }
 
-func resolveRoutePolicy(cmd *cobra.Command, cfg *internal.AppConfig) groverclient.RoutePolicy {
+func resolveRoutePolicy(cmd *cobra.Command, cfg *internal.AppConfig) util.RoutePolicy {
 	route := cfg.Route
 	if f := cmd.Flags().Lookup("via"); f != nil && f.Changed {
 		if v, err := cmd.Flags().GetString("via"); err == nil && v != "" {
 			route = v
 		}
 	}
-	return groverclient.ParseRoutePolicy(route)
+	return util.ParseRoutePolicy(route)
 }
 
 func defaultTransferOptions() TransferCommandOpts {

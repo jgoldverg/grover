@@ -144,6 +144,14 @@ func (te *TransferExecutor) SetConcurrency(size int) {
 	te.ConcurrencyPool.SetSize(size)
 }
 
+func (te *TransferExecutor) DefaultChunkSize() uint64 {
+	return te.transferRequest.Params.ChunkSize
+}
+
+func (te *TransferExecutor) CredentialStore() CredentialStorage {
+	return te.credStore
+}
+
 func (te *TransferExecutor) populateIngress(ctx context.Context) {
 	ingress := te.ConcurrencyPool.Ingress()
 	defer te.ConcurrencyPool.CloseIngress()

@@ -583,7 +583,9 @@ type FileTransferResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	TransferId    string                 `protobuf:"bytes,1,opt,name=transfer_id,json=transferId,proto3" json:"transfer_id,omitempty"` // server-generated ID
 	Accepted      bool                   `protobuf:"varint,2,opt,name=accepted,proto3" json:"accepted,omitempty"`
-	Message       string                 `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
+	UdpPort       int32                  `protobuf:"varint,3,opt,name=udpPort,proto3" json:"udpPort,omitempty"`
+	Message       string                 `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
+	SessionToken  []byte                 `protobuf:"bytes,5,opt,name=session_token,json=sessionToken,proto3" json:"session_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -632,11 +634,25 @@ func (x *FileTransferResponse) GetAccepted() bool {
 	return false
 }
 
+func (x *FileTransferResponse) GetUdpPort() int32 {
+	if x != nil {
+		return x.UdpPort
+	}
+	return 0
+}
+
 func (x *FileTransferResponse) GetMessage() string {
 	if x != nil {
 		return x.Message
 	}
 	return ""
+}
+
+func (x *FileTransferResponse) GetSessionToken() []byte {
+	if x != nil {
+		return x.SessionToken
+	}
+	return nil
 }
 
 type CreateUdpPortsRequest struct {
@@ -1149,12 +1165,14 @@ const file_grover_udp_proto_rawDesc = "" +
 	"\x05edges\x18\x03 \x03(\v2\x1a.groverudp.v1.TransferEdgeR\x05edges\x128\n" +
 	"\x06params\x18\x04 \x01(\v2 .groverudp.v1.FileTransferParamsR\x06params\x12'\n" +
 	"\x0fidempotency_key\x18\x05 \x01(\tR\x0eidempotencyKey\x12#\n" +
-	"\rdelete_source\x18\x06 \x01(\bR\fdeleteSource\"m\n" +
+	"\rdelete_source\x18\x06 \x01(\bR\fdeleteSource\"\xac\x01\n" +
 	"\x14FileTransferResponse\x12\x1f\n" +
 	"\vtransfer_id\x18\x01 \x01(\tR\n" +
 	"transferId\x12\x1a\n" +
 	"\baccepted\x18\x02 \x01(\bR\baccepted\x12\x18\n" +
-	"\amessage\x18\x03 \x01(\tR\amessage\"6\n" +
+	"\audpPort\x18\x03 \x01(\x05R\audpPort\x12\x18\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage\x12#\n" +
+	"\rsession_token\x18\x05 \x01(\fR\fsessionToken\"6\n" +
 	"\x15CreateUdpPortsRequest\x12\x1d\n" +
 	"\n" +
 	"port_count\x18\x01 \x01(\rR\tportCount\".\n" +

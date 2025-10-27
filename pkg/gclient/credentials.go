@@ -1,4 +1,4 @@
-package groverclient
+package gclient
 
 import (
 	"context"
@@ -7,18 +7,18 @@ import (
 	"github.com/jgoldverg/grover/backend"
 	"github.com/jgoldverg/grover/internal"
 	pb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
-	"github.com/jgoldverg/grover/pkg/protoutil"
+	"github.com/jgoldverg/grover/pkg/util"
 	"google.golang.org/grpc"
 )
 
 type CredentialService struct {
 	api       pb.CredentialServiceClient
 	storage   backend.CredentialStorage
-	policy    RoutePolicy
+	policy    util.RoutePolicy
 	hasRemote bool
 }
 
-func NewCredentialService(cfg *internal.AppConfig, conn grpc.ClientConnInterface, policy RoutePolicy) (*CredentialService, error) {
+func NewCredentialService(cfg *internal.AppConfig, conn grpc.ClientConnInterface, policy util.RoutePolicy) (*CredentialService, error) {
 	store, err := backend.NewTomlCredentialStorage(cfg.CredentialsFile)
 	if err != nil {
 		return nil, err
@@ -38,7 +38,7 @@ func NewCredentialService(cfg *internal.AppConfig, conn grpc.ClientConnInterface
 }
 
 func (c *CredentialService) AddCredential(ctx context.Context, cred backend.Credential) error {
-	if ShouldUseRemote(c.policy, c.hasRemote) {
+	if util.ShouldUseRemote(c.policy, c.hasRemote) {
 		credPb := &pb.Credential{
 			CredentialUuid: "",
 			CredentialName: "",
@@ -78,7 +78,7 @@ func (c *CredentialService) AddCredential(ctx context.Context, cred backend.Cred
 }
 
 func (c *CredentialService) ListCredentials(ctx context.Context, credType string) ([]backend.Credential, error) {
-	if ShouldUseRemote(c.policy, c.hasRemote) {
+	if util.ShouldUseRemote(c.policy, c.hasRemote) {
 		req := pb.ListCredentialsRequest{}
 		switch credType {
 		case "basic":
@@ -92,14 +92,14 @@ func (c *CredentialService) ListCredentials(ctx context.Context, credType string
 		if err != nil {
 			return nil, err
 		}
-		return protoutil.PbCredentialToBackendCredential(resp.GetCredentials()), nil
+		return util.PbCredentialToBackendCredential(resp.GetCredentials()), nil
 	} else {
 		return c.storage.ListCredentialsByType(credType)
 	}
 }
 
 func (c *CredentialService) DeleteCredential(ctx context.Context, credUuid uuid.UUID, credName string) error {
-	if ShouldUseRemote(c.policy, c.hasRemote) {
+	if util.ShouldUseRemote(c.policy, c.hasRemote) {
 		req := pb.DeleteCredentialRequest{}
 		if credUuid != uuid.Nil {
 			credRef := pb.CredentialRef{

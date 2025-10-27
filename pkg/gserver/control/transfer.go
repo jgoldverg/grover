@@ -8,18 +8,67 @@ import (
 	"github.com/jgoldverg/grover/backend"
 	"github.com/jgoldverg/grover/internal"
 	pb "github.com/jgoldverg/grover/pkg/groverpb/groverudpv1"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type TransferService struct {
 	pb.UnimplementedTransferServiceServer
+	registry  *backend.TransferRegistry
+	engine    backend.TransportEngine
+	store     backend.CredentialStorage
+	cfg       *internal.ServerConfig
+	credStore backend.CredentialStorage
 }
 
-func NewTransferService(config *internal.ServerConfig) *TransferService {
-	return &TransferService{}
+func NewTransferService(config *internal.ServerConfig, credStore backend.CredentialStorage, registry *backend.TransferRegistry, engine backend.TransportEngine) *TransferService {
+	return &TransferService{
+		registry: registry,
+		engine:   engine,
+		store:    credStore,
+		cfg:      config,
+	}
 }
 
 func (ts *TransferService) LaunchFileTransfer(ctx context.Context, req *pb.FileTransferRequest) (*pb.FileTransferResponse, error) {
-	return nil, nil
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "transfer request cannot be nil")
+	}
+	backendReq, err := NormalizeTransferRequest(req)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	exec := backend.NewTransferExecutor(backendReq, ts.store, backend.NoopStore)
+	jobCtx, cancel := context.WithCancel(ctx)
+
+	jobID, err := ts.registry.Create(ctx, backendReq, exec, cancel, 0)
+	if err != nil {
+		cancel()
+		return nil, status.Errorf(codes.Internal, "register transfer job: %v", err)
+	}
+
+	registration, err := ts.engine.RegisterJob(jobCtx, jobID, exec)
+	if err != nil {
+		ts.registry.Cancel(jobID)
+		_ = ts.registry.Complete(ctx, jobID, backend.StatusFailed, fmt.Sprintf("transport registration failed: %v", err))
+		cancel()
+		return nil, status.Errorf(codes.Internal, "transport registration failed: %v", err)
+	}
+
+	ts.registry.SetUDPPort(jobID, registration.Port)
+
+	internal.Info("transfer job registered for udp session", internal.Fields{
+		internal.FieldKey("job_id"): jobID.String(),
+		internal.FieldPort:          registration.Port,
+	})
+
+	return &pb.FileTransferResponse{
+		TransferId:   jobID.String(),
+		Accepted:     true,
+		UdpPort:      int32(registration.Port),
+		SessionToken: registration.SessionToken,
+	}, nil
 }
 
 func NormalizeTransferRequest(req *pb.FileTransferRequest) (*backend.TransferRequest, error) {
