@@ -1,4 +1,5 @@
-package control
+// Package control is where the control channel impl is contained, all of this uses grpc with TLS
+package gserver
 
 import (
 	"context"

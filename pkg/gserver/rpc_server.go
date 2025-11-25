@@ -1,3 +1,4 @@
+// Package gserver package is where the grover server code is stored
 package gserver
 
 import (
@@ -12,10 +13,8 @@ import (
 
 	"github.com/jgoldverg/grover/backend"
 	"github.com/jgoldverg/grover/internal"
-	"github.com/jgoldverg/grover/pkg"
-	groverPbUdp "github.com/jgoldverg/grover/pkg/groverpb/groverudpv1"
+	udpPb "github.com/jgoldverg/grover/pkg/groverpb/groverudpv1"
 	groverPb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
-	"github.com/jgoldverg/grover/pkg/gserver/control"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
@@ -26,8 +25,6 @@ type GroverServer struct {
 	config       *internal.ServerConfig
 	ctx          context.Context
 	shutdownChan chan struct{}
-
-	registry *backend.TransferRegistry
 }
 
 func NewGroverServer(ctx context.Context, serverConfig *internal.ServerConfig) *GroverServer {
@@ -41,49 +38,21 @@ func NewGroverServer(ctx context.Context, serverConfig *internal.ServerConfig) *
 	}
 	server := grpc.NewServer(grpc.Creds(certs))
 	reflection.Register(server)
-	opts := pkg.DefaultOptions()
-	if serverConfig.UDPReadBufferSize > 0 {
-		opts.ReadBufferSize = serverConfig.UDPReadBufferSize
-	}
-	if serverConfig.UDPWriteBufferSize >= 0 {
-		opts.WriteBufferSize = serverConfig.UDPWriteBufferSize
-	}
-	if serverConfig.UDPPacketWorkers > 0 {
-		opts.PacketProcessingWorkers = serverConfig.UDPPacketWorkers
-	}
-	if serverConfig.UDPReadTimeoutMs >= 0 {
-		opts.ReadTimeout = time.Duration(serverConfig.UDPReadTimeoutMs) * time.Millisecond
-	}
-	if serverConfig.UDPQueueDepth >= 0 {
-		opts.QueueDepth = serverConfig.UDPQueueDepth
-	}
-	lm := pkg.NewListenerManagerWithOptions(opts)
 	store, err := backend.NewTomlCredentialStorage(serverConfig.CredentialsFile)
-	jobRegistry := backend.NewTransferRegistry(nil)
 
-	fs, _ := control.NewFileService(serverConfig)
-	cs := control.NewCredentialOps(store)
-	hs := control.NewHeartBeatService(serverConfig)
-	ss := NewGroverUdpServer(lm, nil)
-	ts := control.NewTransferService(serverConfig, store, jobRegistry, nil)
-	err = ss.EnableMtuListener(ctx)
-	if err != nil {
-		internal.Error("failed to enable mtu listener", internal.Fields{
-			internal.FieldError: err.Error(),
-		})
-	}
-	groverPb.RegisterHeartBeatServer(server, hs)
+	fs, _ := NewFileService(serverConfig)
+	cs := NewCredentialOps(store)
+	udpControl := NewGUdpControl(serverConfig)
+
 	groverPb.RegisterFileServiceServer(server, fs)
 	groverPb.RegisterCredentialServiceServer(server, cs)
-	groverPbUdp.RegisterGroverServerServer(server, ss)
-	groverPbUdp.RegisterTransferServiceServer(server, ts)
+	udpPb.RegisterTransferControlServer(server, udpControl)
 
 	return &GroverServer{
 		config:       serverConfig,
 		grpcServer:   server,
 		ctx:          ctx,
 		shutdownChan: make(chan struct{}),
-		registry:     jobRegistry,
 	}
 }
 

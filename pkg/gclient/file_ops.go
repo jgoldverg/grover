@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jgoldverg/grover/backend"
 	"github.com/jgoldverg/grover/backend/filesystem"
-	pbudp "github.com/jgoldverg/grover/pkg/groverpb/groverudpv1"
 	groverpb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
 	"github.com/jgoldverg/grover/pkg/util"
 )
@@ -16,16 +15,14 @@ import (
 var ErrFileServiceNotImplemented = errors.New("file service functionality not implemented yet")
 
 type FileService struct {
-	transferSvc pbudp.TransferServiceClient
-	fileSvc     groverpb.FileServiceClient
-	credStore   backend.CredentialStorage
+	fileSvc   groverpb.FileServiceClient
+	credStore backend.CredentialStorage
 }
 
-func NewFileService(transferSvc pbudp.TransferServiceClient, fileSvc groverpb.FileServiceClient, credStore backend.CredentialStorage) *FileService {
+func NewFileService(fileSvc groverpb.FileServiceClient, credStore backend.CredentialStorage) *FileService {
 	return &FileService{
-		transferSvc: transferSvc,
-		fileSvc:     fileSvc,
-		credStore:   credStore,
+		fileSvc:   fileSvc,
+		credStore: credStore,
 	}
 }
 
@@ -90,15 +87,6 @@ func (c *FileService) Remove(ctx context.Context, endpoint backend.Endpoint, pat
 }
 
 func (c *FileService) resolveCredential(endpoint backend.Endpoint) (backend.Credential, error) {
-	if c.credStore == nil {
-		return nil, nil
-	}
-	if id := strings.TrimSpace(endpoint.CredentialID); id != "" {
-		return backend.ResolveCredential(c.credStore, id)
-	}
-	if hint := strings.TrimSpace(endpoint.CredentialHint); hint != "" {
-		return backend.ResolveCredential(c.credStore, hint)
-	}
 	return nil, nil
 }
 

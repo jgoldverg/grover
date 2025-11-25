@@ -11,84 +11,40 @@ service GroverServer {
   rpc CreateUdpPorts (CreateUdpPortsRequest) returns (CreateUdpPortsResponse);
 }
 
-service TransferService {
-  rpc LaunchFileTransfer(FileTransferRequest) returns (FileTransferResponse);
+service TransferControl {
+  rpc OpenSession (OpenSessionRequest) returns (OpenSessionResponse);
+  rpc CloseSession (CloseSessionRequest) returns (CloseSessionResponse);
 }
 
-enum OverwritePolicy {
-  OVERWRITE_UNSPECIFIED = 0;
-  OVERWRITE_ALWAYS = 1;
-  OVERWRITE_IF_NEWER = 2;
-  OVERWRITE_NEVER = 3;
-  OVERWRITE_IF_DIFFERENT = 4;
+
+message OpenSessionRequest {
+  enum Mode {
+    MODE_UNSPECIFIED = 0;
+    READ  = 1;
+    WRITE = 2;
+  }
+
+  Mode mode = 1;
+  string path = 2;                 // Object path
+  int64  size = 3;                 // Used when mode=WRITE; -1 if unknown
+  bool   verify_checksum = 4;      // Request checksum in FIN
+  uint32 parallel_streams = 5;     // Number of UDP streams client wants
 }
 
-message FsEntry {
-  string path = 1;
+message OpenSessionResponse {
+  bytes  session_id  = 1;          // 16-byte UUID
+  bytes  token       = 2;          // HMAC’d cookie for UDP HELO
+  string server_host = 3;          // UDP endpoint host
+  uint32 server_port = 4;          // UDP port (can be shared across streams)
+  repeated uint32 stream_ids = 5;  // One per parallel stream
+  uint32 mtu_hint    = 6;
+  uint64 total_size  = 7;
+  uint32 ttl_seconds = 8;
 }
 
-enum ChecksumType {
-  CHECKSUM_NONE = 0;
-  CHECKSUM_MD5 = 1;
-  CHECKSUM_SHA256 = 2;
-  CHECKSUM_XXH3 = 3;
-}
+message CloseSessionRequest  { bytes session_id = 1; }
+message CloseSessionResponse { bool ok = 1; }
 
-// Transfer tuning knobs
-message FileTransferParams {
-  uint32 concurrency = 1;
-  uint32 parallelism = 2;
-  uint32 pipelining = 3;
-  uint64 chunk_size = 4;
-  uint32 rate_limit_mbps = 5;
-
-  OverwritePolicy overwrite = 6;
-  ChecksumType checksum_type = 7;
-  bool verify_checksum = 8;
-
-  uint32 max_retries = 9;
-  uint32 retry_backoff_ms = 10;
-}
-
-message Endpoint {
-  string raw = 1;
-  string scheme = 2;
-  repeated string paths = 3;
-  string credential_hint = 4;
-  string credential_id = 5;
-}
-
-message TransferEdgeOption {
-  string key = 1;
-  string value = 2;
-}
-
-message TransferEdge {
-  uint32 source_index = 1;
-  uint32 dest_index = 2;
-  string source_path = 3;
-  string dest_path = 4;
-  repeated TransferEdgeOption options = 5;
-}
-
-// Request
-message FileTransferRequest {
-  repeated Endpoint sources = 1;
-  repeated Endpoint destinations = 2;
-  repeated TransferEdge edges = 3;
-  FileTransferParams params = 4;
-  string idempotency_key = 5;
-  bool delete_source = 6;
-}
-
-// Response
-message FileTransferResponse {
-  string transfer_id = 1; // server-generated ID
-  bool accepted = 2;
-  int32 udpPort = 3;
-  string message = 4;
-  bytes session_token = 5;
-}
 
 
 

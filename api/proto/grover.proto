@@ -3,7 +3,6 @@ syntax = "proto3";
 package grover.v1;
 option go_package = "github.com/jgoldverg/grover/pkg/groverpb/groverv1;groverv1";
 
-import "google/protobuf/timestamp.proto";
 
 enum EndpointType {
   ENDPOINT_TYPE_UNSPECIFIED = 0;  // default value, must be 0
@@ -16,33 +15,6 @@ message CredentialRef {
     string credential_uuid = 1;
     string credential_name = 2;
   }
-}
-
-service HeartBeat {
-  // Unary heartbeat. (If you later want streaming, switch to bidi stream.)
-  rpc Pulse (PulseRequest) returns (PulseResponse);
-}
-
-enum HeartbeatStatus {
-  HEARTBEAT_STATUS_UNSPECIFIED = 0;
-  OK = 1;  // healthy
-  DEGRADED = 2;  // overloaded/partial outage
-  DRAINING = 3;  // preparing to shut down, avoid new flows
-}
-
-message PulseRequest {
-  string client_id = 1;                       // stable UUID for this control-plane client
-  uint64 seq = 2;                       // monotonically increasing counter
-  google.protobuf.Timestamp sent_at = 3;      // client send timestamp
-}
-
-message PulseResponse {
-  uint64 seq = 1;                       // echoed from request for correlation
-  string server_id = 2;                       // server instance UUID
-  google.protobuf.Timestamp recv_at = 3;      // server receive time
-  google.protobuf.Timestamp sent_at = 4;      // server send time
-  HeartbeatStatus status = 5;                 // server health hint
-  int64 recommended_interval_ms = 6;         // e.g., 20000 (20s)
 }
 
 service FileService {

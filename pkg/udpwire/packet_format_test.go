@@ -1,6 +1,8 @@
 package udpwire
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestStatusPacketEncodeDecodeWithSacks(t *testing.T) {
 	original := StatusPacket{

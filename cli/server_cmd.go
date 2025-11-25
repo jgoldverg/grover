@@ -11,7 +11,6 @@ import (
 
 	"github.com/jgoldverg/grover/internal"
 	"github.com/jgoldverg/grover/pkg/gclient"
-	"github.com/jgoldverg/grover/pkg/gserver"
 	"github.com/jgoldverg/grover/pkg/util"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
@@ -47,65 +46,7 @@ func GroverServerOps() *cobra.Command {
 		Short:   "server",
 		Long:    "management operations related to the grover server.",
 	}
-	cmd.AddCommand(GroverPing(), StartServer(), StopServer(), MtuProbe(), ListPorts(), OpenUdpPorts(), CloseUdpPorts())
-	return cmd
-}
-
-func GroverPing() *cobra.Command {
-	var opts PingOpts
-
-	cmd := &cobra.Command{
-		Use:     "ping",
-		Aliases: []string{"p"},
-		Short:   "Ping",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
-
-			appConfig := GetAppConfig(cmd)
-
-			route := appConfig.Route
-			if f := cmd.Flags().Lookup("via"); f != nil && f.Changed {
-				if v, err := cmd.Flags().GetString("via"); err == nil && v != "" {
-					route = v
-				}
-			}
-
-			if cmd.Flags().Changed("ip-addr") || cmd.Flags().Changed("port") {
-				appConfig.ServerURL = fmt.Sprintf("%s:%d", opts.ipAddr, opts.port)
-			}
-
-			internal.Info("running ping", internal.Fields{
-				"server":           appConfig.ServerURL,
-				"route":            route,
-				"hb_interval_ms":   appConfig.HeartBeatInterval,
-				"hb_timeout_secs":  appConfig.HeartBeatTimeout,
-				"hb_err_threshold": appConfig.HeartBeatErrorCount,
-			})
-
-			policy := util.ParseRoutePolicy(route)
-			gc := gclient.NewClient(*appConfig)
-			if err := gc.Initialize(ctx, policy); err != nil {
-				return err
-			}
-			defer gc.Close()
-
-			hb := gc.Heartbeat()
-			if hb == nil {
-				return errors.New("heartbeat client not initialized")
-			}
-			hb.StartPulse(ctx)
-			defer hb.StopPulse()
-
-			<-ctx.Done()
-			return nil
-		},
-	}
-
-	cmd.Flags().StringVar(&opts.ipAddr, "ip-addr", "localhost", "IP address of grover")
-	cmd.Flags().IntVar(&opts.port, "port", 22444, "Port of grover")
-	cmd.Flags().String("via", "", "routing policy (overrides config)")
-
+	cmd.AddCommand(StartServer(), StopServer(), MtuProbe(), ListPorts(), OpenUdpPorts(), CloseUdpPorts())
 	return cmd
 }
 
@@ -253,7 +194,6 @@ func MtuProbe() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&opts.ipAddr, "ip-addr", "", "IP or hostname to probe (default derived from server_url)")
-	cmd.Flags().IntVar(&opts.udpPort, "udp-port", int(gserver.DefaultMtuPort), "Existing UDP port to probe (defaults to MTU listener)")
 	cmd.Flags().UintVar(&opts.minSize, "min-size", 1200, "smallest mtu to start from(default is 1200)")
 	cmd.Flags().UintVar(&opts.maxSize, "max-size", 65000, "maximum mtu to start from(default is 65000)")
 	cmd.Flags().String("via", "", "routing policy (overrides config)")

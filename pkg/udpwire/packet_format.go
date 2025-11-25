@@ -3,6 +3,7 @@ package udpwire
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"hash/crc32"
 )
 
@@ -10,7 +11,7 @@ const (
 	Version         byte = 1
 	KindData        byte = 1
 	KindStatus      byte = 2
-	DataHeaderLen        = 18
+	DataHeaderLen        = 26
 	StatusHeaderLen      = 15
 	SackBlockLen         = 8 // two uint32 values
 )
@@ -19,8 +20,9 @@ type DataPacket struct {
 	SessionID uint32
 	StreamID  uint32
 	Seq       uint32
+	Offset    uint64
 	Payload   []byte
-	Checksum  uint32 //CRC32 over payload
+	Checksum  uint32 // CRC32 over payload
 }
 
 func (p *DataPacket) Encode(dst []byte) (int, error) {
@@ -33,11 +35,12 @@ func (p *DataPacket) Encode(dst []byte) (int, error) {
 	binary.BigEndian.PutUint32(dst[2:6], p.SessionID)
 	binary.BigEndian.PutUint32(dst[6:10], p.StreamID)
 	binary.BigEndian.PutUint32(dst[10:14], p.Seq)
-	binary.BigEndian.PutUint32(dst[14:18], uint32(len(p.Payload)))
+	binary.BigEndian.PutUint64(dst[14:22], p.Offset)
+	binary.BigEndian.PutUint32(dst[22:26], uint32(len(p.Payload)))
 
-	copy(dst[18:], p.Payload)
+	copy(dst[26:], p.Payload)
 	sum := crc32.ChecksumIEEE(p.Payload)
-	binary.BigEndian.PutUint32(dst[18+len(p.Payload):need], sum)
+	binary.BigEndian.PutUint32(dst[26+len(p.Payload):need], sum)
 	return need, nil
 }
 
@@ -51,13 +54,14 @@ func (p *DataPacket) Decode(src []byte) (int, error) {
 	p.SessionID = binary.BigEndian.Uint32(src[2:6])
 	p.StreamID = binary.BigEndian.Uint32(src[6:10])
 	p.Seq = binary.BigEndian.Uint32(src[10:14])
-	payloadLen := int(binary.BigEndian.Uint32(src[14:18]))
+	p.Offset = binary.BigEndian.Uint64(src[14:22])
+	payloadLen := int(binary.BigEndian.Uint32(src[22:26]))
 	needed := DataHeaderLen + payloadLen + 4
 	if len(src) < DataHeaderLen+payloadLen+4 {
 		return 0, errors.New("payload truncated")
 	}
-	payload := src[18 : 18+payloadLen]
-	checksum := binary.BigEndian.Uint32(src[18+payloadLen : needed])
+	payload := src[26 : 26+payloadLen]
+	checksum := binary.BigEndian.Uint32(src[26+payloadLen : needed])
 	if crc32.ChecksumIEEE(payload) != checksum {
 		return 0, errors.New("checksum mismatch")
 	}
@@ -160,4 +164,56 @@ func (sp *StatusPacket) Decode(src []byte) (int, error) {
 	}
 
 	return need, nil
+}
+
+type HelloPacket struct {
+	SessionID string
+	Token     string
+}
+
+func (hp *HelloPacket) Encode(buf []byte) (int, error) {
+	sid := []byte(hp.SessionID)
+	tok := []byte(hp.Token)
+	sessionLen := len(sid)
+	tokLen := len(tok)
+
+	if sessionLen > 0xffff || tokLen > 0xffff {
+		return 0, fmt.Errorf("session or token too long")
+	}
+
+	totalLen := 2 + 2 + sessionLen + tokLen
+
+	if len(buf) < totalLen {
+		return 0, fmt.Errorf("buffer too small: need %d, got %d", totalLen, len(buf))
+	}
+	binary.BigEndian.PutUint16(buf[0:2], uint16(sessionLen))
+	binary.BigEndian.PutUint16(buf[2:4], uint16(tokLen))
+	offset := 4
+	copy(buf[offset:offset+sessionLen], sid)
+	offset += sessionLen
+	copy(buf[offset:offset+tokLen], tok)
+	offset += tokLen
+	return offset, nil
+}
+
+func (hp *HelloPacket) Decode(buf []byte) (int, error) {
+	if len(buf) < 4 {
+		return 0, fmt.Errorf("buffer too small for header: %d", len(buf))
+	}
+
+	sessionLen := int(binary.BigEndian.Uint16(buf[0:2]))
+	tokenLen := int(binary.BigEndian.Uint16(buf[2:4]))
+
+	totalLen := 4 + sessionLen + tokenLen
+	if len(buf) < totalLen {
+		return 0, fmt.Errorf("buffer too small for payload: need %d, got %d", totalLen, len(buf))
+	}
+
+	offset := 4
+	hp.SessionID = string(buf[offset : offset+sessionLen])
+	offset += sessionLen
+	hp.Token = string(buf[offset : offset+tokenLen])
+	offset += tokenLen
+
+	return offset, nil
 }

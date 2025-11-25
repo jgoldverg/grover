@@ -25,6 +25,64 @@ type AppConfig struct {
 	LogLevel            string `mapstructure:"log_level"`
 }
 
+type UdpClientConfig struct {
+	AckTimeout         int  `mapstructure:"ack_timeout"`
+	SocketBufferSize   int  `mapstructure:"socket_buffer_size"`
+	ParallelSenders    uint `mapstructure:"parallel_senders"`
+	QueueSize          int  `mapstructure:"queue_size"`
+	MaxInFlightPackets int  `mapstructure:"max_in_flight_packets"`
+	RateLimitMbps      int  `mapstructure:"rate_limit_mbps"`
+	MaxRetries         int  `mapstructure:"max_retries"`
+	EnableSack         bool `mapstructure:"enable_sack"`
+	MtuSize            int  `mapstructure:"mtu_size"`
+	CheckSum           bool `mapstructure:"check_sum"`
+	SessionTTL         int  `mapstructure:"session_ttl"`
+	SessionScan        int  `mapstructure:"scan_time"`
+}
+
+func LoadUdpClientConfig(configPath string) (*UdpClientConfig, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+
+	v, err := initViper(configPath, filepath.Join(home, ".grover"), "udp_client_config", "toml", "GUDP_CLIENT_CONFIG")
+	if err != nil {
+		return nil, err
+	}
+
+	v.SetDefault("ack_timeout", 50)
+	v.SetDefault("socket_buffer_size", 8<<20)
+	v.SetDefault("parallel_senders", 1)
+	v.SetDefault("queue_size", 65536)
+	v.SetDefault("max_in_flight_packets", 4096)
+	v.SetDefault("rate_limit_mbps", 0)
+	v.SetDefault("max_retries", 5)
+	v.SetDefault("enable_sack", true)
+	v.SetDefault("mtu_size", 1500)
+	v.SetDefault("check_sum", true)
+
+	var cfg UdpClientConfig
+	if err := v.Unmarshal(&cfg); err != nil {
+		return nil, fmt.Errorf("unmarshal config: %w", err)
+	}
+	if v.ConfigFileUsed() == "" {
+		writePath := configPath
+		if writePath == "" {
+			writePath = filepath.Join(home, ".grover", "udp_client_config.toml")
+		}
+		if _, statErr := os.Stat(writePath); errors.Is(statErr, os.ErrNotExist) {
+			if _, err := cfg.Save(writePath); err != nil {
+				return nil, fmt.Errorf("persist default app config: %w", err)
+			}
+		}
+		Info("client config written", Fields{
+			ConfigPath: writePath,
+		})
+	}
+	return &cfg, nil
+}
+
 func LoadAppConfig(configPath string) (*AppConfig, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -196,6 +254,39 @@ func initViper(configPath, defaultDir, defaultName, defaultType, envPrefix strin
 		}
 	}
 	return v, nil
+}
+
+func (cfg *UdpClientConfig) Save(path string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	if path == "" {
+		path = filepath.Join(home, ".grover", "udp_client_config.toml")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	v := viper.New()
+	v.SetConfigType("toml")
+	v.SetDefault("ack_timeout", cfg.AckTimeout)
+	v.SetDefault("socket_buffer_size", cfg.SocketBufferSize)
+	v.SetDefault("parallel_senders", cfg.ParallelSenders)
+	v.SetDefault("queue_size", cfg.QueueSize)
+	v.SetDefault("max_in_flight_packets", cfg.MaxInFlightPackets)
+	v.SetDefault("rate_limit_mbps", cfg.RateLimitMbps)
+	v.SetDefault("max_retries", cfg.MaxRetries)
+	v.SetDefault("enable_sack", cfg.EnableSack)
+	v.SetDefault("mtu_size", cfg.MtuSize)
+	v.SetDefault("check_sum", cfg.CheckSum)
+	v.SetDefault("session_ttl", 10)
+	v.SetDefault("scan_time", 10)
+
+	if err := v.WriteConfigAs(path); err != nil {
+		return "", fmt.Errorf("write udp client config: %w", err)
+	}
+	_ = os.Chmod(path, 0o600)
+	return path, nil
 }
 
 func (cfg *AppConfig) Save(path string) (string, error) {

@@ -2,97 +2,158 @@ package gclient
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"net"
-	"net/url"
-	"strings"
+	"io"
+	"time"
 
 	"github.com/jgoldverg/grover/backend"
 	"github.com/jgoldverg/grover/internal"
 	pb "github.com/jgoldverg/grover/pkg/groverpb/groverudpv1"
-	"github.com/jgoldverg/grover/pkg/util"
-	"google.golang.org/grpc"
 )
 
-type TransferService struct {
-	cfg       *internal.AppConfig
-	remote    pb.TransferServiceClient
-	policy    util.RoutePolicy
-	hasRemote bool
-	store     backend.CredentialStorage
-	registry  *backend.TransferRegistry
+type Mode int
+
+const (
+	UPLOAD Mode = iota
+	DOWNLOAD
+)
+
+type GroverTransferClient struct {
+	cfg            *internal.UdpClientConfig
+	sessionManager *sessionManager
+	controlPb      pb.TransferControlClient
 }
 
-var ErrRemoteUnavailable = errors.New("remote route requested but server_url not configured")
+func NewTransferAPI(cfg *internal.UdpClientConfig, cc pb.TransferControlClient) *GroverTransferClient {
+	return &GroverTransferClient{
+		cfg:            cfg,
+		sessionManager: newSessionManager(time.Duration(cfg.SessionTTL), time.Duration(cfg.SessionScan)),
+		controlPb:      cc,
+	}
+}
 
-func NewClientTransferService(cfg *internal.AppConfig, conn grpc.ClientConnInterface, policy util.RoutePolicy) (*TransferService, error) {
-	store, err := backend.NewTomlCredentialStorage(cfg.CredentialsFile)
+// Get we assume a number of things at this point. 1. The file path exists, 2. the remoteURI is working correctly ip:port is valid and server is ready
+func (t *GroverTransferClient) Get(ctx context.Context, path string, w io.Writer) error {
+	sess, err := t.OpenSession(ctx, path, -1, DOWNLOAD)
+	if err != nil {
+		return err
+	}
+	defer sess.Close()
+
+	rc, err := sess.Read(ctx)
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+
+	_, err = io.Copy(w, rc)
+	return err
+}
+
+func (t *GroverTransferClient) Put(ctx context.Context, path string, r io.Reader, size int64, overwrite backend.OverwritePolicy) error {
+	sess, err := t.OpenSession(ctx, path, size, UPLOAD)
+	if err != nil {
+		return err
+	}
+	defer sess.Close()
+
+	if err := sess.Write(ctx, r, size, overwrite); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (t *GroverTransferClient) ReadAt(ctx context.Context, path string, offset int64, p []byte) (int, error) {
+	sess, err := t.OpenSession(ctx, path, -1, DOWNLOAD)
+	if err != nil {
+		return -1, err
+	}
+	defer sess.Close()
+
+	ra, err := sess.ReadAt(ctx, offset, p)
+	if err != nil {
+		return -1, err
+	}
+	return ra, nil
+}
+
+func (t *GroverTransferClient) WriteAt(ctx context.Context, path string, offset int64, p []byte) (int, error) {
+	sess, err := t.OpenSession(ctx, path, -1, UPLOAD)
+	if err != nil {
+		return -1, err
+	}
+	defer sess.Close()
+
+	wa, err := sess.WriteAt(ctx, offset, p)
+	if err != nil {
+		return -1, err
+	}
+	return wa, nil
+}
+
+func (t *GroverTransferClient) OpenSession(
+	ctx context.Context,
+	path string,
+	size int64,
+	mode Mode,
+) (Session, error) {
+	// 1) Map local Mode → gRPC enum.
+	var m pb.OpenSessionRequest_Mode
+	switch mode {
+	case UPLOAD:
+		m = pb.OpenSessionRequest_WRITE
+	case DOWNLOAD:
+		m = pb.OpenSessionRequest_READ
+	default:
+		m = pb.OpenSessionRequest_MODE_UNSPECIFIED
+	}
+
+	req := pb.OpenSessionRequest{
+		Mode:            m,
+		Path:            path,
+		Size:            size,
+		VerifyChecksum:  true,
+		ParallelStreams: 1, // bump later
+	}
+
+	// 2) Call control plane.
+	resp, err := t.controlPb.OpenSession(ctx, &req, nil)
 	if err != nil {
 		return nil, err
 	}
-	svc := &TransferService{
-		cfg:    cfg,
-		policy: policy,
-		store:  store,
-		registry: backend.NewTransferRegistry(
-			backend.JobPersistenceFactory(backend.NoopStore),
-		),
-	}
-	if conn != nil {
-		svc.remote = pb.NewTransferServiceClient(conn)
-		svc.hasRemote = true
+
+	// 3) Extract parameters for data plane.
+	streamIDs := resp.GetStreamIds()
+	if len(streamIDs) == 0 {
+		return nil, fmt.Errorf("server returned no stream_ids")
 	}
 
-	return svc, nil
-}
+	sessionIDBytes := resp.GetSessionId()
+	sessionID := fmt.Sprintf("%x", sessionIDBytes) // or uuid.FromBytes
 
-func (s *TransferService) LaunchTransfer(ctx context.Context, req *backend.TransferRequest) (*pb.FileTransferResponse, error) {
-	return nil, ErrFileTransferNotImplemented
-}
+	params := SessionParams{
+		SessionID:    sessionID,
+		SessionIDRaw: sessionIDBytes,
+		Token:        string(resp.GetToken()),
+		UDPHost:      resp.GetServerHost(),
+		UDPPort:      resp.GetServerPort(),
+		MTU:          int(resp.GetMtuHint()),
+		BufferSize:   uint64(t.cfg.SocketBufferSize),
+		StreamIDs:    streamIDs,
+	}
 
-func (s *TransferService) resolveUDPHost(req *backend.TransferRequest) (string, error) {
-	if req != nil {
-		for _, dst := range req.Destinations {
-			if strings.EqualFold(strings.TrimSpace(dst.Scheme), string(backend.GROVERBackend)) {
-				if host := parseHost(dst.Raw); host != "" {
-					return host, nil
-				}
-			}
-		}
+	// 4) Let sessionManager handle UDP and session lifecycle.
+	conn, err := t.sessionManager.Open(ctx, params)
+	if err != nil {
+		return nil, err
 	}
-	if s.cfg != nil {
-		if host := parseHost(s.cfg.ServerURL); host != "" {
-			return host, nil
-		}
-	}
-	return "", fmt.Errorf("unable to determine udp host for transfer")
-}
 
-func parseHost(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return ""
+	// For now, we bind one logical Session to the first streamID.
+	// Multi-stream (striping, etc.) can be added later.
+	s := &udpSession{
+		conn:     conn,
+		streamID: streamIDs[0],
 	}
-	if strings.Contains(raw, "://") {
-		if u, err := url.Parse(raw); err == nil {
-			if host := u.Hostname(); host != "" {
-				return host
-			}
-			return strings.TrimSpace(u.Host)
-		}
-	}
-	if host, _, err := net.SplitHostPort(raw); err == nil {
-		return host
-	}
-	return raw
-}
 
-func firstNonEmptyPath(paths []string) string {
-	for _, p := range paths {
-		if trimmed := strings.TrimSpace(p); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
+	return s, nil
 }

@@ -1,9 +1,11 @@
+// Package gclient provides the public API to using the grover protocol client
 package gclient
 
 import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -12,13 +14,34 @@ import (
 	"github.com/jgoldverg/grover/backend"
 	"github.com/jgoldverg/grover/backend/filesystem"
 	"github.com/jgoldverg/grover/internal"
-	"github.com/jgoldverg/grover/pkg"
 	pb "github.com/jgoldverg/grover/pkg/groverpb/groverudpv1"
 	groverpb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
 	"github.com/jgoldverg/grover/pkg/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )
+
+type TransferAPI interface {
+	Get(ctx context.Context, path string, w io.Writer) error
+	Put(ctx context.Context, path string, r io.Reader, size int64, overwrite backend.OverwritePolicy) error
+
+	ReadAt(ctx context.Context, path string, offset int64, p []byte) (int, error)
+	WriteAt(ctx context.Context, path string, offset int64, p []byte) (int, error)
+
+	OpenSession(ctx context.Context, path string, size int64, mode Mode) (Session, error)
+}
+
+// Session represents a prepared data connection for a specific path/object.
+// Callers can stream or do ranged I/O repeatedly, then Close.
+type Session interface {
+	Read(ctx context.Context) (io.ReadCloser, error)
+	Write(ctx context.Context, r io.Reader, size int64, overwrite backend.OverwritePolicy) error
+
+	ReadAt(ctx context.Context, offset int64, p []byte) (int, error)
+	WriteAt(ctx context.Context, offset int64, p []byte) (int, error)
+
+	Close()
+}
 
 type FilesAPI interface {
 	List(ctx context.Context, endpoint backend.Endpoint) ([]filesystem.FileInfo, error)
@@ -31,10 +54,6 @@ type CredentialsAPI interface {
 	AddCredential(ctx context.Context, cred backend.Credential) error
 	ListCredentials(ctx context.Context, credType string) ([]backend.Credential, error)
 	DeleteCredential(ctx context.Context, credUUID uuid.UUID, credName string) error
-}
-
-type TransferAPI interface {
-	LaunchTransfer(ctx context.Context, req *backend.TransferRequest) (*pb.FileTransferResponse, error)
 }
 
 type MTUAPI interface {
@@ -50,24 +69,20 @@ type ServerAPI interface {
 }
 
 type Client struct {
-	cfg        internal.AppConfig
-	conn       *grpc.ClientConn
-	udpManager *pkg.ListenerManager
+	cfg  internal.AppConfig
+	conn *grpc.ClientConn
 
 	mtu MTUAPI
 
 	files       FilesAPI
 	credentials CredentialsAPI
-	transfer    TransferAPI
 	server      ServerAPI
-	heartbeat   *HeartBeatService
+	transfer    TransferAPI
 }
 
 func NewClient(cfg internal.AppConfig) *Client {
 	return &Client{
-		cfg:        cfg,
-		udpManager: pkg.NewListenerManager(),
-		mtu:        NewMTUService(),
+		cfg: cfg,
 	}
 }
 
@@ -75,11 +90,7 @@ func (c *Client) Files() FilesAPI { return c.files }
 
 func (c *Client) Credentials() CredentialsAPI { return c.credentials }
 
-func (c *Client) Transfer() TransferAPI { return c.transfer }
-
 func (c *Client) Server() ServerAPI { return c.server }
-
-func (c *Client) Heartbeat() *HeartBeatService { return c.heartbeat }
 
 func (c *Client) MTU() MTUAPI { return c.mtu }
 
@@ -107,29 +118,25 @@ func (c *Client) Initialize(ctx context.Context, policy util.RoutePolicy) error 
 	if e != nil {
 		return e
 	}
-	c.transfer, e = NewClientTransferService(&c.cfg, ci, policy)
-	if e != nil {
-		return e
-	}
 	if c.conn != nil {
 		c.server = NewServerService(&c.cfg, c.conn)
-		c.heartbeat = NewHeartBeatService(&c.cfg, c.conn)
 	} else {
 		c.server = nil
-		c.heartbeat = nil
 	}
 
 	fileStore, err := backend.NewTomlCredentialStorage(c.cfg.CredentialsFile)
 	if err != nil {
 		return err
 	}
-	var transferClient pb.TransferServiceClient
 	var fileServiceClient groverpb.FileServiceClient
 	if ci != nil {
-		transferClient = pb.NewTransferServiceClient(ci)
 		fileServiceClient = groverpb.NewFileServiceClient(ci)
 	}
-	c.files = NewFileService(transferClient, fileServiceClient, fileStore)
+	if wantRemote {
+		c.files = NewFileService(fileServiceClient, fileStore)
+		udpConfig, _ := internal.LoadUdpClientConfig("")
+		c.transfer = NewTransferAPI(udpConfig, pb.NewTransferControlClient(cc))
+	}
 	return nil
 }
 
@@ -158,7 +165,7 @@ func (c *Client) dialTLS(ctx context.Context, target, caPath string) (*grpc.Clie
 	// Give dialing a sane default timeout if the caller didn’t.
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 10*time.Second)
+		_, cancel = context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 	}
 
