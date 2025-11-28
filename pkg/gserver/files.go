@@ -51,6 +51,47 @@ func (s *FileService) List(ctx context.Context, in *pb.ListFilesRequest) (*pb.Li
 	return &pb.ListFilesResponse{Files: toPBFiles(files)}, nil
 }
 
+func (s *FileService) Rename(ctx context.Context, in *pb.RenameRequest) (*pb.RenameResponse, error) {
+	bt := backend.PbTypeToBackendType(in.GetType())
+	if bt == backend.UnknownBackend {
+		return nil, status.Errorf(codes.InvalidArgument, "unsupported endpoint type %s", in.GetType().String())
+	}
+	cred, err := util.ResolveCredentialProto(s.storage, in.GetCredentialRef())
+	if err != nil {
+		return nil, err
+	}
+	ops, err := backend.OpsFactory(bt, cred)
+	if err != nil {
+		return nil, err
+	}
+	err = ops.Rename(ctx, in.GetOldPath(), in.GetNewPath())
+	if err != nil {
+		return nil, err
+	}
+
+	return &pb.RenameResponse{}, nil
+}
+
+func (s *FileService) Mkdir(ctx context.Context, in *pb.MkdirRequest) (*pb.MkdirResponse, error) {
+	bt := backend.PbTypeToBackendType(in.GetType())
+	if bt == backend.UnknownBackend {
+		return nil, status.Errorf(codes.InvalidArgument, "unsupported endpoint type %s", in.GetType().String())
+	}
+	cred, err := util.ResolveCredentialProto(s.storage, in.GetCredentialRef())
+	if err != nil {
+		return nil, err
+	}
+	ops, err := backend.OpsFactory(bt, cred)
+	if err != nil {
+		return nil, err
+	}
+	err = ops.Mkdir(ctx, in.GetPath())
+	if err != nil {
+		return nil, err
+	}
+	return &pb.MkdirResponse{}, nil
+}
+
 func (s *FileService) Remove(ctx context.Context, in *pb.RemoveFileRequest) (*pb.RemoveFileResponse, error) {
 	bt := backend.PbTypeToBackendType(in.GetType())
 

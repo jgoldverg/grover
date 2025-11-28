@@ -20,8 +20,30 @@ message CredentialRef {
 service FileService {
   rpc List   (ListFilesRequest)   returns (ListFilesResponse);
   rpc Remove (RemoveFileRequest)  returns (RemoveFileResponse);
+  rpc Mkdir (MkdirRequest) returns (MkdirResponse);
+  rpc Rename (RenameRequest) returns (RenameResponse);
 }
 
+message MkdirRequest {
+  EndpointType type = 1;
+  string path = 2;
+  CredentialRef CredentialRef = 3;
+}
+
+message MkdirResponse {
+
+}
+
+message RenameRequest {
+  EndpointType type = 1;
+  string oldPath = 2;
+  string newPath = 3;
+  CredentialRef credentialRef = 4;
+}
+
+message RenameResponse {
+
+}
 message FileInfo {
   string path = 1;
   string id = 2;

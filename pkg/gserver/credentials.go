@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jgoldverg/grover/backend"
+	"github.com/jgoldverg/grover/internal"
 	pb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
 )
 
@@ -49,12 +50,14 @@ func (co *CredentialService) List(ctx context.Context, in *pb.ListCredentialsReq
 }
 
 func (co *CredentialService) Create(ctx context.Context, in *pb.CreateCredentialRequest) (*pb.CreateCredentialResponse, error) {
-	_, err := uuid.Parse(in.GetCredential().GetCredentialUuid())
-	if err != nil {
-		return nil, err
-	}
+	internal.Info("Create Credential: ", internal.Fields{
+		"cred_pb_req": in,
+	})
 	cred := toBackendCredential(in.GetCredential())
-	err = co.storage.AddCredential(cred)
+	internal.Info("Backend Credential: ", internal.Fields{
+		"cred": cred,
+	})
+	err := co.storage.AddCredential(cred)
 	if err != nil {
 		return nil, err
 	}
@@ -120,9 +123,18 @@ func convertCredType(credentialType pb.CredentialType) string {
 }
 
 func toBackendCredential(cred *pb.Credential) backend.Credential {
-	credUuid, _ := uuid.Parse(cred.GetCredentialUuid())
-	if cred.GetType() == pb.CredentialType_SSH_CREDENTIAL_TYPE {
-		pbCred := cred.GetSsh()
+	if cred == nil {
+		return nil
+	}
+
+	credUUID := uuid.New()
+	if id := cred.GetCredentialUuid(); id != "" {
+		if parsed, err := uuid.Parse(id); err == nil {
+			credUUID = parsed
+		}
+	}
+
+	if pbCred := cred.GetSsh(); pbCred != nil {
 		sshCred := backend.SSHCredential{
 			Name:           cred.GetCredentialName(),
 			Username:       pbCred.GetUsername(),
@@ -132,24 +144,38 @@ func toBackendCredential(cred *pb.Credential) backend.Credential {
 			PublicKeyPath:  "",
 			PrivateKey:     pbCred.GetPrivateKey(),
 			PublicKey:      pbCred.GetPublicKey(),
-			UUID:           credUuid,
+			UUID:           credUUID,
 			UseAgent:       pbCred.GetUseAgent(),
 		}
 		return &sshCred
 	}
 
-	if cred.GetType() == pb.CredentialType_BASIC_CREDENTIAL_TYPE {
-		pbCred := cred.GetBasic()
+	if pbCred := cred.GetBasic(); pbCred != nil {
 		basicCred := backend.BasicAuthCredential{
 			Name:     cred.GetCredentialName(),
 			Username: pbCred.GetUsername(),
 			Password: pbCred.GetPassword(),
 			URL:      pbCred.GetUrl(),
-			UUID:     credUuid,
+			UUID:     credUUID,
 		}
 		return &basicCred
 	}
-	return nil
+
+	// fallback on the type field if no details are defined
+	switch cred.GetType() {
+	case pb.CredentialType_SSH_CREDENTIAL_TYPE:
+		return &backend.SSHCredential{
+			Name: cred.GetCredentialName(),
+			UUID: credUUID,
+		}
+	case pb.CredentialType_BASIC_CREDENTIAL_TYPE:
+		return &backend.BasicAuthCredential{
+			Name: cred.GetCredentialName(),
+			UUID: credUUID,
+		}
+	default:
+		return nil
+	}
 }
 
 func toProtoCredential(cred backend.Credential) *pb.Credential {

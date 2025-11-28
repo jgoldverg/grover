@@ -39,7 +39,11 @@ func NewGroverServer(ctx context.Context, serverConfig *internal.ServerConfig) *
 	server := grpc.NewServer(grpc.Creds(certs))
 	reflection.Register(server)
 	store, err := backend.NewTomlCredentialStorage(serverConfig.CredentialsFile)
-
+	if err != nil {
+		internal.Error("failed to load grover store", internal.Fields{
+			"credential_path": serverConfig.ServerCertificatePath,
+		})
+	}
 	fs, _ := NewFileService(serverConfig)
 	cs := NewCredentialOps(store)
 	udpControl := NewGUdpControl(serverConfig)

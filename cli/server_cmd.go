@@ -58,7 +58,7 @@ func StartServer() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := GetAppConfig(cmd)
 			gc := gclient.NewClient(*cfg)
-			rp := util.ParseRoutePolicy(cfg.Route)
+			rp := resolveRoutePolicy(cmd, cfg.Route)
 			if err := gc.Initialize(cmd.Context(), rp); err != nil {
 				return err
 			}
@@ -89,7 +89,7 @@ func StopServer() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := GetAppConfig(cmd)
 			gc := gclient.NewClient(*cfg)
-			rp := util.ParseRoutePolicy(cfg.Route)
+			rp := resolveRoutePolicy(cmd, cfg.Route)
 			if err := gc.Initialize(cmd.Context(), rp); err != nil {
 				return err
 			}
@@ -119,7 +119,7 @@ func ListPorts() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := GetAppConfig(cmd)
 			gc := gclient.NewClient(*cfg)
-			rp := util.ParseRoutePolicy(cfg.Route)
+			rp := resolveRoutePolicy(cmd, cfg.Route)
 			if err := gc.Initialize(cmd.Context(), rp); err != nil {
 				return err
 			}
@@ -155,14 +155,7 @@ func MtuProbe() *cobra.Command {
 			defer stop()
 
 			appConfig := GetAppConfig(cmd)
-			route := appConfig.Route
-			if f := cmd.Flags().Lookup("via"); f != nil && f.Changed {
-				if v, err := cmd.Flags().GetString("via"); err == nil && v != "" {
-					route = v
-				}
-			}
-
-			policy := util.ParseRoutePolicy(route)
+			policy := resolveRoutePolicy(cmd, appConfig.Route)
 			if policy == util.RouteForceLocal {
 				return fmt.Errorf("mtu probe requires a grover udp serverserver route; rerun with --via server or configure server_url")
 			}
@@ -212,14 +205,7 @@ func OpenUdpPorts() *cobra.Command {
 			defer stop()
 
 			appConfig := GetAppConfig(cmd)
-			route := appConfig.Route
-			if f := cmd.Flags().Lookup("via"); f != nil && f.Changed {
-				if v, err := cmd.Flags().GetString("via"); err == nil && v != "" {
-					route = v
-				}
-			}
-
-			policy := util.ParseRoutePolicy(route)
+			policy := resolveRoutePolicy(cmd, appConfig.Route)
 			if policy == util.RouteForceLocal {
 				return fmt.Errorf("mtu probe requires a grover udp serverserver route; rerun with --via server or configure server_url")
 			}
@@ -261,14 +247,7 @@ func CloseUdpPorts() *cobra.Command {
 			defer stop()
 
 			appConfig := GetAppConfig(cmd)
-			route := appConfig.Route
-			if f := cmd.Flags().Lookup("via"); f != nil && f.Changed {
-				if v, err := cmd.Flags().GetString("via"); err == nil && v != "" {
-					route = v
-				}
-			}
-
-			policy := util.ParseRoutePolicy(route)
+			policy := resolveRoutePolicy(cmd, appConfig.Route)
 			if policy == util.RouteForceLocal {
 				return fmt.Errorf("mtu probe requires a grover udp serverserver route; rerun with --via server or configure server_url")
 			}

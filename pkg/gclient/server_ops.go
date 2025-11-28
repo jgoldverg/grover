@@ -76,7 +76,6 @@ func (g *ServerService) DeletePorts(ctx context.Context, ports []uint32) (bool, 
 		PortNum: ports,
 	}
 	resp, err := g.gs.DeleteUdpPorts(ctx, &req)
-
 	if err != nil {
 		return false, err
 	}

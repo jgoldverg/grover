@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 	"os/user"
 
 	"github.com/google/uuid"
@@ -9,7 +10,6 @@ import (
 	"github.com/jgoldverg/grover/cli/output"
 	"github.com/jgoldverg/grover/internal"
 	"github.com/jgoldverg/grover/pkg/gclient"
-	"github.com/jgoldverg/grover/pkg/util"
 	"github.com/spf13/cobra"
 )
 
@@ -70,7 +70,6 @@ func CredentialCommand() *cobra.Command {
 	cmd.PersistentFlags().StringVarP(&commonOpts.URL, "--server-url", "u", "", "Backend URL")
 	cmd.PersistentFlags().StringVarP(&commonOpts.CredentialName, "name", "n", "", "Credential name")
 	cmd.PersistentFlags().String("via", "", "Where to execute: auto|client|server")
-	cmd.PersistentFlags().Lookup("via").NoOptDefVal = "auto" // optional
 
 	// Store subcommand constructors (not instances)
 	cmd.AddCommand(ListCredentialCommand())
@@ -81,9 +80,7 @@ func CredentialCommand() *cobra.Command {
 }
 
 func AddBasicCredentialCommand(commonOpts *AddCredentialOpts) *cobra.Command {
-	var (
-		basicOpts BasicAuthCredentialOpts
-	)
+	var basicOpts BasicAuthCredentialOpts
 	cmd := &cobra.Command{
 		Use:   "add-basic",
 		Long:  "Add a basic credential for a remote server",
@@ -115,17 +112,14 @@ func AddBasicCredentialCommand(commonOpts *AddCredentialOpts) *cobra.Command {
 				URL:      commonOpts.URL,
 				UUID:     uuid.New(),
 			}
+			fmt.Printf("Adding credential %v\n", credential)
 			err := credential.Validate()
 			if err != nil {
 				return errors.New("Failed to validate basic-credential: " + err.Error())
 			}
 
 			cfg := GetAppConfig(cmd)
-			route := cfg.Route
-			if f := cmd.Flags().Lookup("via"); f != nil && f.Changed {
-				route, _ = cmd.Flags().GetString("via")
-			}
-			policy := util.ParseRoutePolicy(route)
+			policy := resolveRoutePolicy(cmd, cfg.Route)
 			gc := gclient.NewClient(*cfg)
 			err = gc.Initialize(cmd.Context(), policy)
 			if err != nil {
@@ -146,9 +140,7 @@ func AddBasicCredentialCommand(commonOpts *AddCredentialOpts) *cobra.Command {
 }
 
 func AddSShCredentialCommand(commonOpts *AddCredentialOpts) *cobra.Command {
-	var (
-		sshOpts SSHCredentialOpts
-	)
+	var sshOpts SSHCredentialOpts
 	cmd := &cobra.Command{
 		Use:  "add-ssh",
 		Long: "Adds a new SSH credential",
@@ -187,11 +179,7 @@ func AddSShCredentialCommand(commonOpts *AddCredentialOpts) *cobra.Command {
 				return errors.New("Failed in validating SSH credential: " + err.Error())
 			}
 			cfg := GetAppConfig(cmd)
-			route := cfg.Route
-			if f := cmd.Flags().Lookup("via"); f != nil && f.Changed {
-				route, _ = cmd.Flags().GetString("via")
-			}
-			policy := util.ParseRoutePolicy(route)
+			policy := resolveRoutePolicy(cmd, cfg.Route)
 			gc := gclient.NewClient(*cfg)
 			err = gc.Initialize(cmd.Context(), policy)
 			if err != nil {
@@ -221,11 +209,7 @@ func ListCredentialCommand() *cobra.Command {
 		Short:   "List credentials stored in the credential storage",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := GetAppConfig(cmd)
-			route := cfg.Route
-			if f := cmd.Flags().Lookup("via"); f != nil && f.Changed {
-				route, _ = cmd.Flags().GetString("via")
-			}
-			policy := util.ParseRoutePolicy(route)
+			policy := resolveRoutePolicy(cmd, cfg.Route)
 			gc := gclient.NewClient(*cfg)
 			err := gc.Initialize(cmd.Context(), policy)
 			if err != nil {
@@ -262,11 +246,7 @@ func DeleteCredentialCommand() *cobra.Command {
 			}
 
 			cfg := GetAppConfig(cmd)
-			route := cfg.Route
-			if f := cmd.Flags().Lookup("via"); f != nil && f.Changed {
-				route, _ = cmd.Flags().GetString("via")
-			}
-			policy := util.ParseRoutePolicy(route)
+			policy := resolveRoutePolicy(cmd, cfg.Route)
 			gc := gclient.NewClient(*cfg)
 			if err := gc.Initialize(cmd.Context(), policy); err != nil {
 				return err

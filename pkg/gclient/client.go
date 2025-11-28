@@ -132,8 +132,8 @@ func (c *Client) Initialize(ctx context.Context, policy util.RoutePolicy) error 
 	if ci != nil {
 		fileServiceClient = groverpb.NewFileServiceClient(ci)
 	}
+	c.files = NewFileService(c, fileServiceClient, fileStore)
 	if wantRemote {
-		c.files = NewFileService(fileServiceClient, fileStore)
 		udpConfig, _ := internal.LoadUdpClientConfig("")
 		c.transfer = NewTransferAPI(udpConfig, pb.NewTransferControlClient(cc))
 	}

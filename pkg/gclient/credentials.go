@@ -40,19 +40,21 @@ func NewCredentialService(cfg *internal.AppConfig, conn grpc.ClientConnInterface
 func (c *CredentialService) AddCredential(ctx context.Context, cred backend.Credential) error {
 	if util.ShouldUseRemote(c.policy, c.hasRemote) {
 		credPb := &pb.Credential{
-			CredentialUuid: "",
-			CredentialName: "",
-			Type:           0,
+			CredentialUuid: cred.GetUUID().String(),
+			CredentialName: cred.GetName(),
+			Type:           util.CredentialTypeToPbType(cred),
 			Details:        nil,
 		}
 		switch v := cred.(type) {
 		case *backend.BasicAuthCredential:
+			credPb.Type = pb.CredentialType_BASIC_CREDENTIAL_TYPE
 			credPb.Details = &pb.Credential_Basic{Basic: &pb.BasicDetails{
 				Username: v.GetUserName(),
 				Password: v.GetPassword(),
 				Url:      v.GetUrl(),
 			}}
 		case *backend.SSHCredential:
+			credPb.Type = pb.CredentialType_SSH_CREDENTIAL_TYPE
 			credPb.Details = &pb.Credential_Ssh{Ssh: &pb.SshDetails{
 				Username:   v.Username,
 				Host:       v.Host,

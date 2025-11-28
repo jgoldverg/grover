@@ -167,3 +167,21 @@ func (o *FileSystemOperations) Remove(ctx context.Context, path string) error {
 	}
 	return os.RemoveAll(path)
 }
+
+func (o *FileSystemOperations) Mkdir(ctx context.Context, path string) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	return os.MkdirAll(path, 0755)
+}
+
+func (o *FileSystemOperations) Rename(ctx context.Context, oldPath, newPath string) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	return os.Rename(oldPath, newPath)
+}
