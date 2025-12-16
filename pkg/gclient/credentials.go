@@ -100,12 +100,12 @@ func (c *CredentialService) ListCredentials(ctx context.Context, credType string
 	}
 }
 
-func (c *CredentialService) DeleteCredential(ctx context.Context, credUuid uuid.UUID, credName string) error {
+func (c *CredentialService) DeleteCredential(ctx context.Context, credUUID uuid.UUID, credName string) error {
 	if util.ShouldUseRemote(c.policy, c.hasRemote) {
 		req := pb.DeleteCredentialRequest{}
-		if credUuid != uuid.Nil {
+		if credUUID != uuid.Nil {
 			credRef := pb.CredentialRef{
-				Ref: &pb.CredentialRef_CredentialUuid{CredentialUuid: credUuid.String()},
+				Ref: &pb.CredentialRef_CredentialUuid{CredentialUuid: credUUID.String()},
 			}
 			req.Ref = &credRef
 		}
@@ -118,8 +118,8 @@ func (c *CredentialService) DeleteCredential(ctx context.Context, credUuid uuid.
 		_, err := c.api.Delete(ctx, &req)
 		return err
 	} else {
-		if credUuid != uuid.Nil {
-			return c.storage.DeleteCredential(credUuid)
+		if credUUID != uuid.Nil {
+			return c.storage.DeleteCredential(credUUID)
 		} else {
 			return c.storage.DeleteCredentialByName(credName)
 		}

@@ -24,6 +24,7 @@ func NewCredentialOps(credStore backend.CredentialStorage) *CredentialService {
 
 func (co *CredentialService) List(ctx context.Context, in *pb.ListCredentialsRequest) (*pb.ListCredentialsResponse, error) {
 	var credentials []*pb.Credential
+	internal.Info("server listing credentials", nil)
 	if in.GetType() == pb.CredentialType_CREDENTIAL_TYPE_UNSPECIFIED {
 		creds, err := co.storage.ListCredentials()
 		if err != nil {
@@ -66,11 +67,11 @@ func (co *CredentialService) Create(ctx context.Context, in *pb.CreateCredential
 
 func (co *CredentialService) Delete(ctx context.Context, in *pb.DeleteCredentialRequest) (*pb.DeleteCredentialResponse, error) {
 	if in.GetRef().GetCredentialUuid() != "" {
-		credUuid, err := uuid.Parse(in.GetRef().GetCredentialUuid())
+		credUUID, err := uuid.Parse(in.GetRef().GetCredentialUuid())
 		if err != nil {
 			return nil, err
 		}
-		err = co.storage.DeleteCredential(credUuid)
+		err = co.storage.DeleteCredential(credUUID)
 		if err != nil {
 			return nil, err
 		}
@@ -90,11 +91,11 @@ func (co *CredentialService) Get(ctx context.Context, in *pb.GetCredentialReques
 		return nil, fmt.Errorf("no credential uuid or credential name")
 	}
 	if in.GetRef().GetCredentialUuid() != "" {
-		credUuid, err := uuid.Parse(in.GetRef().GetCredentialUuid())
+		credUUID, err := uuid.Parse(in.GetRef().GetCredentialUuid())
 		if err != nil {
 			return nil, err
 		}
-		cred, err := co.storage.GetCredentialByUUID(credUuid)
+		cred, err := co.storage.GetCredentialByUUID(credUUID)
 		if err != nil {
 			return nil, err
 		}

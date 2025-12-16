@@ -14,6 +14,9 @@ const (
 	DataHeaderLen        = 26
 	StatusHeaderLen      = 15
 	SackBlockLen         = 8 // two uint32 values
+
+	HelloMagic   = "GRVR"
+	HelloVersion = 1
 )
 
 type DataPacket struct {
@@ -167,52 +170,70 @@ func (sp *StatusPacket) Decode(src []byte) (int, error) {
 }
 
 type HelloPacket struct {
-	SessionID string
-	Token     string
+	SessionID []byte
+	Token     []byte
 }
 
 func (hp *HelloPacket) Encode(buf []byte) (int, error) {
-	sid := []byte(hp.SessionID)
-	tok := []byte(hp.Token)
-	sessionLen := len(sid)
-	tokLen := len(tok)
-
-	if sessionLen > 0xffff || tokLen > 0xffff {
-		return 0, fmt.Errorf("session or token too long")
+	if len(hp.SessionID) > 0xff {
+		return 0, fmt.Errorf("sessionID too long for hello packet: %d", len(hp.SessionID))
+	}
+	if len(hp.Token) > 0xffff {
+		return 0, fmt.Errorf("token too long for hello packet: %d", len(hp.Token))
 	}
 
-	totalLen := 2 + 2 + sessionLen + tokLen
-
+	totalLen := len(HelloMagic) + 1 + 1 + len(hp.SessionID) + 2 + len(hp.Token)
 	if len(buf) < totalLen {
 		return 0, fmt.Errorf("buffer too small: need %d, got %d", totalLen, len(buf))
 	}
-	binary.BigEndian.PutUint16(buf[0:2], uint16(sessionLen))
-	binary.BigEndian.PutUint16(buf[2:4], uint16(tokLen))
-	offset := 4
-	copy(buf[offset:offset+sessionLen], sid)
-	offset += sessionLen
-	copy(buf[offset:offset+tokLen], tok)
-	offset += tokLen
+
+	offset := 0
+	copy(buf[offset:], []byte(HelloMagic))
+	offset += len(HelloMagic)
+
+	buf[offset] = HelloVersion
+	offset++
+
+	buf[offset] = byte(len(hp.SessionID))
+	offset++
+	copy(buf[offset:offset+len(hp.SessionID)], hp.SessionID)
+	offset += len(hp.SessionID)
+
+	binary.BigEndian.PutUint16(buf[offset:offset+2], uint16(len(hp.Token)))
+	offset += 2
+	copy(buf[offset:offset+len(hp.Token)], hp.Token)
+	offset += len(hp.Token)
+
 	return offset, nil
 }
 
 func (hp *HelloPacket) Decode(buf []byte) (int, error) {
-	if len(buf) < 4 {
-		return 0, fmt.Errorf("buffer too small for header: %d", len(buf))
+	if len(buf) < len(HelloMagic)+2 {
+		return 0, fmt.Errorf("buffer too small for hello packet: %d", len(buf))
+	}
+	if string(buf[:len(HelloMagic)]) != HelloMagic {
+		return 0, fmt.Errorf("unexpected hello magic %q", string(buf[:len(HelloMagic)]))
+	}
+	if buf[len(HelloMagic)] != HelloVersion {
+		return 0, fmt.Errorf("unexpected hello version %d", buf[len(HelloMagic)])
 	}
 
-	sessionLen := int(binary.BigEndian.Uint16(buf[0:2]))
-	tokenLen := int(binary.BigEndian.Uint16(buf[2:4]))
-
-	totalLen := 4 + sessionLen + tokenLen
-	if len(buf) < totalLen {
-		return 0, fmt.Errorf("buffer too small for payload: need %d, got %d", totalLen, len(buf))
+	offset := len(HelloMagic) + 1
+	sessionLen := int(buf[offset])
+	offset++
+	if len(buf) < offset+sessionLen+2 {
+		return 0, fmt.Errorf("hello packet truncated before session id bytes")
 	}
 
-	offset := 4
-	hp.SessionID = string(buf[offset : offset+sessionLen])
+	hp.SessionID = append(hp.SessionID[:0], buf[offset:offset+sessionLen]...)
 	offset += sessionLen
-	hp.Token = string(buf[offset : offset+tokenLen])
+
+	tokenLen := int(binary.BigEndian.Uint16(buf[offset : offset+2]))
+	offset += 2
+	if len(buf) < offset+tokenLen {
+		return 0, fmt.Errorf("hello packet truncated before token bytes")
+	}
+	hp.Token = append(hp.Token[:0], buf[offset:offset+tokenLen]...)
 	offset += tokenLen
 
 	return offset, nil

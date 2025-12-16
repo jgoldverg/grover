@@ -7,15 +7,15 @@ import (
 	"time"
 )
 
-func TestNewSessionManager(t *testing.T) {
+func TestNewClientSessions(t *testing.T) {
 	ttl := 5 * time.Second
 	scan := 500 * time.Millisecond
-	sm := newSessionManager(ttl, scan)
+	sm := newClientSessions(ttl, scan)
 
 	t.Cleanup(sm.Stop)
 
 	if sm == nil {
-		t.Fatalf("NewSessionManager returned nil")
+		t.Fatalf("NewClientSessions returned nil")
 	}
 
 	if sm.sessions == nil {
@@ -36,7 +36,7 @@ func TestNewSessionManager(t *testing.T) {
 func TestCreateNewSession(t *testing.T) {
 	ttl := 5 * time.Second
 	scan := 500 * time.Millisecond
-	sm := newSessionManager(ttl, scan)
+	sm := newClientSessions(ttl, scan)
 
 	t.Cleanup(sm.Stop)
 	sessionID := "s1"
@@ -113,7 +113,7 @@ func TestCreateNewSession(t *testing.T) {
 func TestReleaseSessions(t *testing.T) {
 	ttl := 5 * time.Second
 	scan := 500 * time.Millisecond
-	sm := newSessionManager(ttl, scan)
+	sm := newClientSessions(ttl, scan)
 	t.Cleanup(sm.Stop)
 
 	sp := SessionParams{
@@ -175,7 +175,7 @@ func TestReleaseSessions(t *testing.T) {
 func TestStopSm(t *testing.T) {
 	ttl := 5 * time.Second
 	scan := 500 * time.Millisecond
-	sm := newSessionManager(ttl, scan)
+	sm := newClientSessions(ttl, scan)
 
 	sp := SessionParams{
 		SessionID:  "sess-" + strconv.Itoa(0),

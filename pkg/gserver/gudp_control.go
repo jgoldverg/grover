@@ -13,20 +13,21 @@ import (
 )
 
 // GudpControl implements the TransferControl gRPC service and delegates the
-// heavy lifting to the SessionManager.
+// heavy lifting to the ServerSessions.
 type GudpControl struct {
 	pb.UnimplementedTransferControlServer
 
-	sm *SessionManager
+	sm *ServerSessions
 }
 
 func NewGUdpControl(cfg *internal.ServerConfig) *GudpControl {
 	return &GudpControl{
-		sm: NewSessionManager(cfg),
+		sm: NewServerSessions(cfg),
 	}
 }
 
 func (gc *GudpControl) OpenSession(ctx context.Context, req *pb.OpenSessionRequest) (*pb.OpenSessionResponse, error) {
+	internal.Info("Opening Session ServerConfig", nil)
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "empty request")
 	}
@@ -60,7 +61,12 @@ func (gc *GudpControl) OpenSession(ctx context.Context, req *pb.OpenSessionReque
 		SessionId:  sessionID,
 		Token:      token,
 		ServerHost: gc.sm.UDPHost(meta),
-		ServerPort: uint32(meta.LocalAddr.Port),
+		ServerPort: func() uint32 {
+			if addr := meta.LocalAddr(); addr != nil {
+				return uint32(addr.Port)
+			}
+			return 0
+		}(),
 		StreamIds:  append([]uint32(nil), meta.StreamIDs...),
 		MtuHint:    meta.MTU,
 		TotalSize:  meta.TotalSize,

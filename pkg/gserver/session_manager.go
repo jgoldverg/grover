@@ -9,6 +9,8 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,12 +21,12 @@ import (
 	"github.com/jgoldverg/grover/pkg/udpwire"
 )
 
-// SessionManager tracks every live UDP transfer session along with the
+// ServerSessions tracks every live UDP transfer session along with the
 // stream identifiers that belong to that session so that the UDP data plane
 // can route packets without needing to hit the control channel again.
-type SessionManager struct {
+type ServerSessions struct {
 	mu           sync.RWMutex
-	sessions     map[string]*SessionMeta
+	sessions     map[string]*ServerSession
 	streamLookup map[uint32]string
 
 	cfg          *internal.ServerConfig
@@ -33,10 +35,9 @@ type SessionManager struct {
 	streamSeq atomic.Uint32
 }
 
-// SessionMeta contains the server-side state for a single Upload/Download
-// session that mirrors what the client keeps locally. Each session has its
-// own UDP socket (so we can start simple) and one or more logical stream IDs.
-type SessionMeta struct {
+// SessionDescriptor captures the immutable information about a transfer that
+// we share with clients over the control plane.
+type SessionDescriptor struct {
 	ID        uuid.UUID
 	Token     []byte
 	Mode      pb.OpenSessionRequest_Mode
@@ -44,40 +45,89 @@ type SessionMeta struct {
 	Size      int64
 	StreamIDs []uint32
 
-	Conn      *net.UDPConn
-	LocalAddr *net.UDPAddr
-
 	MTU        uint32
 	TTLSeconds uint32
 	TotalSize  uint64
 	CreatedAt  time.Time
+}
 
-	file       *os.File
-	fileSize   int64
+type sessionRuntime struct {
+	conn      *net.UDPConn
+	localAddr *net.UDPAddr
+
+	file     *os.File
+	fileSize int64
+
 	remoteMu   sync.RWMutex
 	remoteAddr *net.UDPAddr
 }
 
+// ServerSession bundles together a descriptor with the runtime resources that
+// only exist while the transfer is alive.
+type ServerSession struct {
+	SessionDescriptor
+	runtime sessionRuntime
+}
+
+func (s *ServerSession) Conn() *net.UDPConn {
+	return s.runtime.conn
+}
+
+func (s *ServerSession) LocalAddr() *net.UDPAddr {
+	return s.runtime.localAddr
+}
+
+func (s *ServerSession) File() *os.File {
+	return s.runtime.file
+}
+
+func (s *ServerSession) FileSize() int64 {
+	return s.runtime.fileSize
+}
+
+func (s *ServerSession) SetFileSize(size int64) {
+	s.runtime.fileSize = size
+}
+
+func (s *ServerSession) RemoteAddr() *net.UDPAddr {
+	s.runtime.remoteMu.RLock()
+	defer s.runtime.remoteMu.RUnlock()
+	return s.runtime.remoteAddr
+}
+
+func (s *ServerSession) SetRemoteAddr(addr *net.UDPAddr) {
+	s.runtime.remoteMu.Lock()
+	s.runtime.remoteAddr = addr
+	s.runtime.remoteMu.Unlock()
+}
+
+func (s *ServerSession) CloseRuntime() {
+	if s.runtime.conn != nil {
+		_ = s.runtime.conn.Close()
+	}
+	if s.runtime.file != nil {
+		_ = s.runtime.file.Close()
+	}
+}
+
 const (
-	helloMagic   = "GRVR"
-	helloVersion = 1
 	helloTimeout = 30 * time.Second
 	defaultMTU   = 1500
 )
 
 var errNotRegularFile = errors.New("path is not a regular file")
 
-// NewSessionManager builds an instance that knows how to size the sockets and
+// NewServerSessions builds an instance that knows how to size the sockets and
 // what host should be advertised back to clients. The host can be overridden
 // via GROVER_UDP_HOST; otherwise we default to localhost.
-func NewSessionManager(cfg *internal.ServerConfig) *SessionManager {
+func NewServerSessions(cfg *internal.ServerConfig) *ServerSessions {
 	host := os.Getenv("GROVER_UDP_HOST")
 	if host == "" {
 		host = "127.0.0.1"
 	}
 
-	return &SessionManager{
-		sessions:     make(map[string]*SessionMeta),
+	return &ServerSessions{
+		sessions:     make(map[string]*ServerSession),
 		streamLookup: make(map[uint32]string),
 		cfg:          cfg,
 		announceHost: host,
@@ -87,58 +137,117 @@ func NewSessionManager(cfg *internal.ServerConfig) *SessionManager {
 // CreateSession allocates a UDP socket, generates stream IDs, and stores the
 // metadata so the control plane can reply with everything the client needs to
 // dial the data plane.
-func (sm *SessionManager) CreateSession(req *pb.OpenSessionRequest) (*SessionMeta, error) {
+func (sm *ServerSessions) CreateSession(req *pb.OpenSessionRequest) (*ServerSession, error) {
 	if req == nil {
 		return nil, errors.New("request cannot be nil")
 	}
+	if err := sm.validateOpenRequest(req); err != nil {
+		return nil, err
+	}
 
-	conn, err := sm.newUDPConn()
+	conn, laddr, err := sm.allocateUDPConn()
 	if err != nil {
 		return nil, fmt.Errorf("allocate udp socket: %w", err)
 	}
 
-	laddr, _ := conn.LocalAddr().(*net.UDPAddr)
-	if laddr == nil {
-		conn.Close()
-		return nil, errors.New("udp listener missing local address")
+	dataFile, fileSize, err := sm.prepareDataFile(req)
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
 	}
 
-	var (
-		downloadFile *os.File
-		fileSize     int64
-	)
-	if req.GetMode() == pb.OpenSessionRequest_READ {
-		var err error
-		downloadFile, fileSize, err = sm.openFileForRead(req.GetPath())
-		if err != nil {
-			conn.Close()
-			return nil, err
-		}
-	}
-
-	var token [32]byte
-	if _, err := rand.Read(token[:]); err != nil {
-		conn.Close()
-		if downloadFile != nil {
-			_ = downloadFile.Close()
+	token, err := sm.generateSessionToken()
+	if err != nil {
+		_ = conn.Close()
+		if dataFile != nil {
+			_ = dataFile.Close()
 		}
 		return nil, fmt.Errorf("generate session token: %w", err)
 	}
 
+	streamIDs := sm.allocateStreams(req.GetParallelStreams())
 	sessionID := uuid.New()
-	streamCount := req.GetParallelStreams()
+
+	session := &ServerSession{
+		SessionDescriptor: sm.buildDescriptor(req, sessionID, token, streamIDs, fileSize),
+		runtime: sessionRuntime{
+			conn:      conn,
+			localAddr: laddr,
+			file:      dataFile,
+			fileSize:  fileSize,
+		},
+	}
+
+	sm.storeSession(session)
+	sm.launchSession(session)
+
+	return session, nil
+}
+
+func (sm *ServerSessions) validateOpenRequest(req *pb.OpenSessionRequest) error {
+	if req.GetMode() == pb.OpenSessionRequest_MODE_UNSPECIFIED {
+		return errors.New("session mode is required")
+	}
+	if req.GetPath() == "" {
+		return errors.New("path is required")
+	}
+	return nil
+}
+
+func (sm *ServerSessions) allocateUDPConn() (*net.UDPConn, *net.UDPAddr, error) {
+	conn, err := sm.newUDPConn()
+	if err != nil {
+		return nil, nil, err
+	}
+	laddr, _ := conn.LocalAddr().(*net.UDPAddr)
+	if laddr == nil {
+		conn.Close()
+		return nil, nil, errors.New("udp listener missing local address")
+	}
+	return conn, laddr, nil
+}
+
+func (sm *ServerSessions) prepareDataFile(req *pb.OpenSessionRequest) (*os.File, int64, error) {
+	switch req.GetMode() {
+	case pb.OpenSessionRequest_READ:
+		return sm.openFileForRead(req.GetPath())
+	case pb.OpenSessionRequest_WRITE:
+		f, err := sm.openFileForWrite(req.GetPath())
+		return f, 0, err
+	default:
+		return nil, 0, fmt.Errorf("unsupported session mode %s", req.GetMode().String())
+	}
+}
+
+func (sm *ServerSessions) generateSessionToken() ([]byte, error) {
+	token := make([]byte, 32)
+	if _, err := rand.Read(token); err != nil {
+		return nil, err
+	}
+	return token, nil
+}
+
+func (sm *ServerSessions) allocateStreams(streamCount uint32) []uint32 {
 	if streamCount == 0 {
 		streamCount = 1
 	}
-
 	streamIDs := make([]uint32, 0, streamCount)
 	for i := uint32(0); i < streamCount; i++ {
 		streamIDs = append(streamIDs, sm.nextStreamID())
 	}
+	return streamIDs
+}
 
-	meta := &SessionMeta{
+func (sm *ServerSessions) buildDescriptor(
+	req *pb.OpenSessionRequest,
+	sessionID uuid.UUID,
+	token []byte,
+	streamIDs []uint32,
+	fileSize int64,
+) SessionDescriptor {
+	return SessionDescriptor{
 		ID:    sessionID,
-		Token: token[:],
+		Token: append([]byte(nil), token...),
 		Mode:  req.GetMode(),
 		Path:  req.GetPath(),
 		Size: func() int64 {
@@ -147,16 +256,9 @@ func (sm *SessionManager) CreateSession(req *pb.OpenSessionRequest) (*SessionMet
 			}
 			return req.GetSize()
 		}(),
-		StreamIDs: streamIDs,
-		Conn:      conn,
-		LocalAddr: laddr,
-		MTU:       sm.mtuHint(),
-		TTLSeconds: func() uint32 {
-			if sm.cfg != nil && sm.cfg.UDPReadTimeoutMs > 0 {
-				return uint32(time.Duration(sm.cfg.UDPReadTimeoutMs) * time.Millisecond / time.Second)
-			}
-			return 30
-		}(),
+		StreamIDs:  append([]uint32(nil), streamIDs...),
+		MTU:        sm.mtuHint(),
+		TTLSeconds: sm.ttlSeconds(),
 		TotalSize: func() uint64 {
 			switch {
 			case fileSize > 0:
@@ -168,24 +270,20 @@ func (sm *SessionManager) CreateSession(req *pb.OpenSessionRequest) (*SessionMet
 			}
 		}(),
 		CreatedAt: time.Now(),
-		file:      downloadFile,
-		fileSize:  fileSize,
 	}
+}
 
-	sessionKey := sessionID.String()
+func (sm *ServerSessions) storeSession(session *ServerSession) {
+	sessionKey := session.ID.String()
 	sm.mu.Lock()
-	sm.sessions[sessionKey] = meta
-	for _, sid := range streamIDs {
+	sm.sessions[sessionKey] = session
+	for _, sid := range session.StreamIDs {
 		sm.streamLookup[sid] = sessionKey
 	}
 	sm.mu.Unlock()
-
-	sm.launchSession(meta)
-
-	return meta, nil
 }
 
-func (sm *SessionManager) launchSession(meta *SessionMeta) {
+func (sm *ServerSessions) launchSession(meta *ServerSession) {
 	if meta == nil {
 		return
 	}
@@ -193,6 +291,8 @@ func (sm *SessionManager) launchSession(meta *SessionMeta) {
 	switch meta.Mode {
 	case pb.OpenSessionRequest_READ:
 		go sm.runDownload(meta)
+	case pb.OpenSessionRequest_WRITE:
+		go sm.runUpload(meta)
 	default:
 		internal.Debug("session mode not implemented yet", internal.Fields{
 			internal.FieldMsg: "mode not supported for udp transfer",
@@ -203,100 +303,164 @@ func (sm *SessionManager) launchSession(meta *SessionMeta) {
 	}
 }
 
-func (sm *SessionManager) runDownload(meta *SessionMeta) {
-	sessionID := meta.ID.String()
+func (sm *ServerSessions) runDownload(session *ServerSession) {
+	if session.File() == nil {
+		internal.Error("download session missing source file", internal.Fields{
+			"session_id": session.ID.String(),
+			"path":       session.Path,
+		})
+		sm.CloseSession(session.ID.String())
+		return
+	}
+
+	sm.runSession(
+		session,
+		"completed udp file stream",
+		"failed to stream file over udp",
+		func(sess *ServerSession, addr *net.UDPAddr) error {
+			go sm.recvLoop(sess)
+			return sm.sendFile(sess, addr)
+		},
+		func(sess *ServerSession) internal.Fields {
+			return internal.Fields{"bytes": sess.FileSize()}
+		},
+	)
+}
+
+func (sm *ServerSessions) runUpload(session *ServerSession) {
+	if session.File() == nil {
+		internal.Error("upload session missing destination file", internal.Fields{
+			"session_id": session.ID.String(),
+			"path":       session.Path,
+		})
+		sm.CloseSession(session.ID.String())
+		return
+	}
+
+	sm.runSession(
+		session,
+		"completed udp file upload",
+		"failed to receive file over udp",
+		func(sess *ServerSession, _ *net.UDPAddr) error {
+			if err := sm.receiveFile(sess); err != nil {
+				return err
+			}
+			if f := sess.File(); f != nil {
+				if err := f.Sync(); err != nil {
+					return fmt.Errorf("sync file: %w", err)
+				}
+			}
+			return nil
+		},
+		func(sess *ServerSession) internal.Fields {
+			return internal.Fields{"bytes": sess.FileSize()}
+		},
+	)
+}
+
+func (sm *ServerSessions) runSession(
+	session *ServerSession,
+	successMsg string,
+	failureMsg string,
+	handler func(*ServerSession, *net.UDPAddr) error,
+	successFields func(*ServerSession) internal.Fields,
+) {
+	sessionID := session.ID.String()
 	defer sm.CloseSession(sessionID)
 
-	addr, err := sm.awaitHello(meta)
+	addr, err := sm.awaitHello(session)
 	if err != nil {
 		internal.Error("failed to receive udp hello", internal.Fields{
 			internal.FieldError: err.Error(),
 			"session_id":        sessionID,
-			"path":              meta.Path,
+			"path":              session.Path,
 		})
 		return
 	}
 
-	go sm.recvLoop(meta)
-
-	if err := sm.sendFile(meta, addr); err != nil {
-		internal.Error("failed to stream file over udp", internal.Fields{
+	if err := handler(session, addr); err != nil {
+		fields := internal.Fields{
 			internal.FieldError: err.Error(),
 			"session_id":        sessionID,
-			"path":              meta.Path,
-		})
+			"path":              session.Path,
+		}
+		internal.Error(failureMsg, fields)
 		return
 	}
 
-	internal.Info("completed udp file stream", internal.Fields{
+	fields := internal.Fields{
 		"session_id": sessionID,
-		"path":       meta.Path,
-		"bytes":      meta.fileSize,
-	})
+		"path":       session.Path,
+	}
+	if successFields != nil {
+		for k, v := range successFields(session) {
+			fields[k] = v
+		}
+	}
+
+	internal.Info(successMsg, fields)
 }
 
-func (sm *SessionManager) awaitHello(meta *SessionMeta) (*net.UDPAddr, error) {
-	if meta.Conn == nil {
+func (sm *ServerSessions) awaitHello(session *ServerSession) (*net.UDPAddr, error) {
+	conn := session.Conn()
+	if conn == nil {
 		return nil, errors.New("nil udp connection for session")
 	}
 
 	buf := make([]byte, 1024)
-	_ = meta.Conn.SetReadDeadline(time.Now().Add(helloTimeout))
-	defer meta.Conn.SetReadDeadline(time.Time{})
+	_ = conn.SetReadDeadline(time.Now().Add(helloTimeout))
+	defer conn.SetReadDeadline(time.Time{})
+	var hp udpwire.HelloPacket
+	listenAddr := ""
+	if conn.LocalAddr() != nil {
+		listenAddr = conn.LocalAddr().String()
+	}
+	internal.Info("waiting for udp hello", internal.Fields{
+		"session_id":  session.ID.String(),
+		"path":        session.Path,
+		"listen_addr": listenAddr,
+		"token_len":   len(session.Token),
+	})
 
 	for {
-		n, addr, err := meta.Conn.ReadFromUDP(buf)
+		n, addr, err := conn.ReadFromUDP(buf)
 		if err != nil {
 			return nil, err
 		}
 		if n == 0 {
 			continue
 		}
-		if n < len(helloMagic)+2 {
+		if _, err := hp.Decode(buf[:n]); err != nil {
 			continue
 		}
-		if string(buf[:len(helloMagic)]) != helloMagic {
+		if !bytes.Equal(hp.SessionID, session.ID[:]) {
 			continue
 		}
-		if buf[len(helloMagic)] != helloVersion {
-			return nil, fmt.Errorf("unexpected hello version %d", buf[len(helloMagic)])
-		}
-
-		sessionLen := int(buf[len(helloMagic)+1])
-		offset := len(helloMagic) + 2
-		if n < offset+sessionLen+2 {
-			continue
-		}
-		if !bytes.Equal(buf[offset:offset+sessionLen], meta.ID[:]) {
-			continue
-		}
-		offset += sessionLen
-
-		tokenLen := int(binary.BigEndian.Uint16(buf[offset : offset+2]))
-		offset += 2
-		if n < offset+tokenLen {
-			continue
-		}
-		if !bytes.Equal(buf[offset:offset+tokenLen], meta.Token) {
+		if !bytes.Equal(hp.Token, session.Token) {
 			continue
 		}
 
-		meta.remoteMu.Lock()
-		meta.remoteAddr = addr
-		meta.remoteMu.Unlock()
+		session.SetRemoteAddr(addr)
+		internal.Info("received udp hello", internal.Fields{
+			"session_id":  session.ID.String(),
+			"path":        session.Path,
+			"remote_addr": addr.String(),
+			"token_len":   len(hp.Token),
+		})
 		return addr, nil
 	}
 }
 
-func (sm *SessionManager) recvLoop(meta *SessionMeta) {
-	if meta.Conn == nil {
+func (sm *ServerSessions) recvLoop(session *ServerSession) {
+	conn := session.Conn()
+	if conn == nil {
 		return
 	}
 	buf := make([]byte, sm.recvBufferSize())
 	var sp udpwire.StatusPacket
 
 	for {
-		n, _, err := meta.Conn.ReadFromUDP(buf)
+		n, _, err := conn.ReadFromUDP(buf)
 		if err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				continue
@@ -322,35 +486,115 @@ func (sm *SessionManager) recvLoop(meta *SessionMeta) {
 	}
 }
 
-func (sm *SessionManager) sendFile(meta *SessionMeta, addr *net.UDPAddr) error {
-	if meta.file == nil {
+func (sm *ServerSessions) receiveFile(session *ServerSession) error {
+	conn := session.Conn()
+	if conn == nil {
+		return errors.New("nil udp connection for session")
+	}
+	file := session.File()
+	if file == nil {
+		return errors.New("no file attached to upload session")
+	}
+	if len(session.StreamIDs) == 0 {
+		return errors.New("no stream IDs configured for upload session")
+	}
+
+	validStreams := make(map[uint32]struct{}, len(session.StreamIDs))
+	for _, sid := range session.StreamIDs {
+		validStreams[sid] = struct{}{}
+	}
+
+	buf := make([]byte, sm.recvBufferSize())
+	var packet udpwire.DataPacket
+	var offset uint64
+
+	for {
+		n, _, err := conn.ReadFromUDP(buf)
+		if err != nil {
+			if isClosedNetworkError(err) {
+				return nil
+			}
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				continue
+			}
+			return err
+		}
+		if n == 0 {
+			continue
+		}
+		if !udpwire.IsDataPacket(buf[:n]) {
+			continue
+		}
+		if _, err := packet.Decode(buf[:n]); err != nil {
+			continue
+		}
+		if _, ok := validStreams[packet.StreamID]; !ok {
+			continue
+		}
+
+		if packet.Offset != offset {
+			if packet.Offset < offset {
+				continue
+			}
+			if _, err := file.Seek(int64(packet.Offset), io.SeekStart); err != nil {
+				return fmt.Errorf("seek file: %w", err)
+			}
+			offset = packet.Offset
+		}
+
+		if _, err := file.Write(packet.Payload); err != nil {
+			return fmt.Errorf("write file: %w", err)
+		}
+		offset += uint64(len(packet.Payload))
+		session.SetFileSize(int64(offset))
+	}
+}
+
+func isClosedNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, net.ErrClosed) || errors.Is(err, os.ErrClosed) {
+		return true
+	}
+	// Fallback for platforms that wrap the error string.
+	return strings.Contains(err.Error(), "use of closed network connection")
+}
+
+func (sm *ServerSessions) sendFile(session *ServerSession, addr *net.UDPAddr) error {
+	conn := session.Conn()
+	if conn == nil {
+		return errors.New("nil udp connection for session")
+	}
+	file := session.File()
+	if file == nil {
 		return errors.New("no file attached to download session")
 	}
-	if len(meta.StreamIDs) == 0 {
+	if len(session.StreamIDs) == 0 {
 		return errors.New("no stream IDs configured for session")
 	}
 	if addr == nil {
 		return errors.New("nil remote address for session")
 	}
-	if _, err := meta.file.Seek(0, io.SeekStart); err != nil {
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("seek file: %w", err)
 	}
 
-	payloadSize := sm.payloadSize(meta)
+	payloadSize := sm.payloadSize(session)
 	if payloadSize <= 0 {
 		payloadSize = 1024
 	}
 
 	payloadBuf := make([]byte, payloadSize)
 	packetBuf := make([]byte, udpwire.DataHeaderLen+payloadSize+4)
-	sessionID32 := binary.BigEndian.Uint32(meta.ID[:4])
-	streamID := meta.StreamIDs[0]
+	sessionID32 := binary.BigEndian.Uint32(session.ID[:4])
+	streamID := session.StreamIDs[0]
 
 	var seq uint32
 	var offset uint64
 
 	for {
-		n, readErr := meta.file.Read(payloadBuf)
+		n, readErr := file.Read(payloadBuf)
 		if n > 0 {
 			seq++
 			dp := udpwire.DataPacket{
@@ -364,7 +608,7 @@ func (sm *SessionManager) sendFile(meta *SessionMeta, addr *net.UDPAddr) error {
 			if err != nil {
 				return fmt.Errorf("encode data packet: %w", err)
 			}
-			if _, err := meta.Conn.WriteToUDP(packetBuf[:pktLen], addr); err != nil {
+			if _, err := conn.WriteToUDP(packetBuf[:pktLen], addr); err != nil {
 				return fmt.Errorf("write udp packet: %w", err)
 			}
 			offset += uint64(n)
@@ -380,8 +624,8 @@ func (sm *SessionManager) sendFile(meta *SessionMeta, addr *net.UDPAddr) error {
 	return nil
 }
 
-func (sm *SessionManager) payloadSize(meta *SessionMeta) int {
-	mtu := int(meta.MTU)
+func (sm *ServerSessions) payloadSize(session *ServerSession) int {
+	mtu := int(session.MTU)
 	if mtu <= 0 {
 		mtu = defaultMTU
 	}
@@ -392,14 +636,14 @@ func (sm *SessionManager) payloadSize(meta *SessionMeta) int {
 	return payload
 }
 
-func (sm *SessionManager) recvBufferSize() int {
+func (sm *ServerSessions) recvBufferSize() int {
 	if sm.cfg != nil && sm.cfg.UDPReadBufferSize > 0 {
 		return sm.cfg.UDPReadBufferSize
 	}
 	return 64 * 1024
 }
 
-func (sm *SessionManager) openFileForRead(path string) (*os.File, int64, error) {
+func (sm *ServerSessions) openFileForRead(path string) (*os.File, int64, error) {
 	if path == "" {
 		return nil, 0, errors.New("path is required for read sessions")
 	}
@@ -419,9 +663,26 @@ func (sm *SessionManager) openFileForRead(path string) (*os.File, int64, error) 
 	return f, info.Size(), nil
 }
 
+func (sm *ServerSessions) openFileForWrite(path string) (*os.File, error) {
+	if path == "" {
+		return nil, errors.New("path is required for write sessions")
+	}
+	dir := filepath.Dir(path)
+	if dir != "" && dir != "." && dir != "/" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, err
+		}
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
 // CloseSession tears down the UDP socket and removes all metadata for the
 // session. The bool return indicates whether we actually had the session.
-func (sm *SessionManager) CloseSession(sessionID string) (*SessionMeta, bool) {
+func (sm *ServerSessions) CloseSession(sessionID string) (*ServerSession, bool) {
 	sm.mu.Lock()
 	meta, ok := sm.sessions[sessionID]
 	if ok {
@@ -436,17 +697,12 @@ func (sm *SessionManager) CloseSession(sessionID string) (*SessionMeta, bool) {
 		return nil, false
 	}
 
-	if meta.Conn != nil {
-		_ = meta.Conn.Close()
-	}
-	if meta.file != nil {
-		_ = meta.file.Close()
-	}
+	meta.CloseRuntime()
 	return meta, true
 }
 
 // GetSession returns the metadata for a given session id.
-func (sm *SessionManager) GetSession(sessionID string) (*SessionMeta, bool) {
+func (sm *ServerSessions) GetSession(sessionID string) (*ServerSession, bool) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	meta, ok := sm.sessions[sessionID]
@@ -454,7 +710,7 @@ func (sm *SessionManager) GetSession(sessionID string) (*SessionMeta, bool) {
 }
 
 // LookupByStream lets the UDP workers reverse-map a stream to its session.
-func (sm *SessionManager) LookupByStream(streamID uint32) (*SessionMeta, bool) {
+func (sm *ServerSessions) LookupByStream(streamID uint32) (*ServerSession, bool) {
 	sm.mu.RLock()
 	sessionID, ok := sm.streamLookup[streamID]
 	if !ok {
@@ -468,14 +724,16 @@ func (sm *SessionManager) LookupByStream(streamID uint32) (*SessionMeta, bool) {
 
 // UDPHost returns the host we should advertise back to clients. If we bound
 // the socket to a concrete IP we prefer that over the announceHost fallback.
-func (sm *SessionManager) UDPHost(meta *SessionMeta) string {
-	if meta != nil && meta.LocalAddr != nil && meta.LocalAddr.IP != nil && !meta.LocalAddr.IP.IsUnspecified() {
-		return meta.LocalAddr.IP.String()
+func (sm *ServerSessions) UDPHost(session *ServerSession) string {
+	if session != nil {
+		if addr := session.LocalAddr(); addr != nil && addr.IP != nil && !addr.IP.IsUnspecified() {
+			return addr.IP.String()
+		}
 	}
 	return sm.announceHost
 }
 
-func (sm *SessionManager) nextStreamID() uint32 {
+func (sm *ServerSessions) nextStreamID() uint32 {
 	id := sm.streamSeq.Add(1)
 	if id == 0 {
 		// Skip 0 as a stream identifier; wraparound here is very unlikely but
@@ -485,7 +743,7 @@ func (sm *SessionManager) nextStreamID() uint32 {
 	return id
 }
 
-func (sm *SessionManager) newUDPConn() (*net.UDPConn, error) {
+func (sm *ServerSessions) newUDPConn() (*net.UDPConn, error) {
 	addr := &net.UDPAddr{
 		IP:   net.IPv4zero,
 		Port: 0,
@@ -506,9 +764,16 @@ func (sm *SessionManager) newUDPConn() (*net.UDPConn, error) {
 	return conn, nil
 }
 
-func (sm *SessionManager) mtuHint() uint32 {
+func (sm *ServerSessions) mtuHint() uint32 {
 	if sm.cfg != nil && sm.cfg.UDPQueueDepth > 0 {
 		return uint32(sm.cfg.UDPQueueDepth)
 	}
 	return defaultMTU
+}
+
+func (sm *ServerSessions) ttlSeconds() uint32 {
+	if sm.cfg != nil && sm.cfg.UDPReadTimeoutMs > 0 {
+		return uint32(time.Duration(sm.cfg.UDPReadTimeoutMs) * time.Millisecond / time.Second)
+	}
+	return 30
 }

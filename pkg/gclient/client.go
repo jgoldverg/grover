@@ -6,6 +6,8 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -94,6 +96,8 @@ func (c *Client) Server() ServerAPI { return c.server }
 
 func (c *Client) MTU() MTUAPI { return c.mtu }
 
+func (c *Client) Transfer() TransferAPI { return c.transfer }
+
 func (c *Client) Initialize(ctx context.Context, policy util.RoutePolicy) error {
 	var (
 		cc         *grpc.ClientConn         // the real conn pointer (may stay nil)
@@ -104,10 +108,17 @@ func (c *Client) Initialize(ctx context.Context, policy util.RoutePolicy) error 
 	)
 
 	if wantRemote {
+		internal.Info("dialing the remote server", internal.Fields{
+			"server_url":   c.cfg.ServerURL,
+			"ca_cert_file": c.cfg.CACertFile,
+		})
 		cc, err = c.dialTLS(ctx, c.cfg.ServerURL, c.cfg.CACertFile)
 		if err != nil {
 			return err
 		}
+		cc.Connect()
+		internal.Info(cc.GetState().String(), nil)
+
 		ci = cc
 	}
 
@@ -135,7 +146,7 @@ func (c *Client) Initialize(ctx context.Context, policy util.RoutePolicy) error 
 	c.files = NewFileService(c, fileServiceClient, fileStore)
 	if wantRemote {
 		udpConfig, _ := internal.LoadUdpClientConfig("")
-		c.transfer = NewTransferAPI(udpConfig, pb.NewTransferControlClient(cc))
+		c.transfer = NewTransferAPI(udpConfig, pb.NewTransferControlClient(cc), hostFromTarget(c.cfg.ServerURL))
 	}
 	return nil
 }
@@ -173,4 +184,37 @@ func (c *Client) dialTLS(ctx context.Context, target, caPath string) (*grpc.Clie
 		target,
 		grpc.WithTransportCredentials(creds),
 	)
+}
+
+func hostFromTarget(target string) string {
+	host := strings.TrimSpace(target)
+	if host == "" {
+		return ""
+	}
+
+	if strings.HasPrefix(host, "dns:///") {
+		host = strings.TrimPrefix(host, "dns:///")
+	} else if strings.HasPrefix(host, "passthrough:///") {
+		host = strings.TrimPrefix(host, "passthrough:///")
+	}
+
+	if strings.Contains(host, "://") {
+		if u, err := url.Parse(host); err == nil {
+			if h := u.Hostname(); h != "" {
+				return h
+			}
+			if path := strings.Trim(u.Path, "/"); path != "" {
+				return path
+			}
+		}
+	}
+
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		return h
+	}
+
+	if idx := strings.LastIndex(host, "/"); idx >= 0 && idx < len(host)-1 {
+		return host[idx+1:]
+	}
+	return host
 }

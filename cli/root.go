@@ -66,6 +66,7 @@ func NewRootCommand() *cobra.Command {
 	rootCmd.AddCommand(BackendCommand())
 	rootCmd.AddCommand(CredentialCommand())
 	rootCmd.AddCommand(GroverServerOps())
+	rootCmd.AddCommand(SimpleCopy())
 
 	return rootCmd
 }

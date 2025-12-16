@@ -1,9 +1,9 @@
 package gclient
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -13,6 +13,7 @@ import (
 
 	"github.com/jgoldverg/grover/backend"
 	"github.com/jgoldverg/grover/backend/pool"
+	"github.com/jgoldverg/grover/internal"
 	"github.com/jgoldverg/grover/pkg/udpwire"
 )
 
@@ -22,10 +23,11 @@ import (
 
 type udpConn struct {
 	// identity
-	sessionID string
-	token     string
-	udpHost   string
-	udpPort   uint32
+	sessionID  string
+	sessionKey uint32
+	token      string
+	udpHost    string
+	udpPort    uint32
 
 	// data-plane
 	streams map[uint32]*streamState // stream id -> state
@@ -47,23 +49,24 @@ type streamState struct {
 	id uint32
 	pw *io.PipeWriter
 	pr *io.PipeReader
-
-	mu sync.Mutex
 }
 
 // newSession constructs a udpConn and starts the recv loop.
 // It assumes conn is already a dialed *net.UDPConn.
 func newSession(
-	sessionID, token, udpHost string,
+	sessionID string,
+	sessionIDRaw []byte,
+	token string,
+	udpHost string,
 	udpPort uint32,
 	conn *net.UDPConn,
 	mtu int,
 	bufferSize uint64,
-	streamIds []uint32,
+	streamIDs []uint32,
 ) *udpConn {
-	streams := make(map[uint32]*streamState, len(streamIds))
+	streams := make(map[uint32]*streamState, len(streamIDs))
 
-	for _, id := range streamIds {
+	for _, id := range streamIDs {
 		pr, pw := io.Pipe()
 		streams[id] = &streamState{
 			id: id,
@@ -72,11 +75,17 @@ func newSession(
 		}
 	}
 
+	var sessionKey uint32
+	if len(sessionIDRaw) >= 4 {
+		sessionKey = binary.BigEndian.Uint32(sessionIDRaw[:4])
+	}
+
 	u := &udpConn{
-		sessionID: sessionID,
-		token:     token,
-		udpHost:   udpHost,
-		udpPort:   udpPort,
+		sessionID:  sessionID,
+		sessionKey: sessionKey,
+		token:      token,
+		udpHost:    udpHost,
+		udpPort:    udpPort,
 
 		streams: streams,
 
@@ -109,6 +118,32 @@ func (u *udpConn) Close() {
 	u.mu.Unlock()
 
 	<-u.rxDone
+}
+
+func (u *udpConn) payloadCapacity() int {
+	payload := u.mtu - udpwire.DataHeaderLen - 4
+	if payload <= 0 {
+		return 1024
+	}
+	return payload
+}
+
+func (u *udpConn) writePacket(ctx context.Context, packet []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = u.conn.SetWriteDeadline(deadline)
+		defer u.conn.SetWriteDeadline(time.Time{})
+	}
+	_, err := u.conn.Write(packet)
+	return err
+}
+
+func (u *udpConn) touch() {
+	u.mu.Lock()
+	u.lastUse = time.Now()
+	u.mu.Unlock()
 }
 
 func (u *udpConn) Write(ctx context.Context, r io.Reader, size int64, overwrite backend.OverwritePolicy) error {
@@ -227,7 +262,7 @@ func (u *udpConn) recvLoop() {
 // =======================================================
 
 type SessionParams struct {
-	// SessionID is a printable key for the sessionManager map.
+	// SessionID is a printable key for the ClientSessions map.
 	SessionID string
 
 	// Raw session/token as returned by gRPC.
@@ -241,35 +276,31 @@ type SessionParams struct {
 	StreamIDs  []uint32
 }
 
-const (
-	helloMagic   = "GRVR" // 4-byte magic
-	helloVersion = 1      // protocol version for HELLO
-)
-
 // sendHello sends a simple HELLO packet over conn to bind this UDP 5-tuple to
 // (sessionID, token) on the server side.
 func sendHello(ctx context.Context, conn *net.UDPConn, sessionID []byte, token []byte) error {
-	var buf bytes.Buffer
-
-	// Magic + version
-	_, _ = buf.WriteString(helloMagic)
-	_ = buf.WriteByte(helloVersion)
-
-	// Session ID length + bytes (uint8)
-	if len(sessionID) > 255 {
-		return fmt.Errorf("sessionID too long for hello packet: %d", len(sessionID))
+	totalLen := len(udpwire.HelloMagic) + 1 + 1 + len(sessionID) + 2 + len(token)
+	tmp := make([]byte, totalLen)
+	hp := udpwire.HelloPacket{
+		SessionID: sessionID,
+		Token:     token,
 	}
-	_ = buf.WriteByte(byte(len(sessionID)))
-	_, _ = buf.Write(sessionID)
-
-	// Token length + bytes (uint16)
-	if len(token) > 0xFFFF {
-		return fmt.Errorf("token too long for hello packet: %d", len(token))
+	n, err := hp.Encode(tmp)
+	if err != nil {
+		return err
 	}
-	var tokLen [2]byte
-	binary.BigEndian.PutUint16(tokLen[:], uint16(len(token)))
-	_, _ = buf.Write(tokLen[:])
-	_, _ = buf.Write(token)
+
+	remoteAddr := ""
+	if conn != nil && conn.RemoteAddr() != nil {
+		remoteAddr = conn.RemoteAddr().String()
+	}
+	fields := internal.Fields{
+		"session_id":  fmt.Sprintf("%x", sessionID),
+		"token_len":   len(token),
+		"hello_bytes": n,
+		"remote_addr": remoteAddr,
+	}
+	internal.Info("sending udp hello", fields)
 
 	// Respect ctx deadline if present
 	if deadline, ok := ctx.Deadline(); ok {
@@ -277,8 +308,19 @@ func sendHello(ctx context.Context, conn *net.UDPConn, sessionID []byte, token [
 		defer conn.SetWriteDeadline(time.Time{})
 	}
 
-	_, err := conn.Write(buf.Bytes())
-	return err
+	if _, err := conn.Write(tmp[:n]); err != nil {
+		errFields := internal.Fields{
+			"session_id":        fields["session_id"],
+			"token_len":         len(token),
+			"hello_bytes":       n,
+			"remote_addr":       remoteAddr,
+			internal.FieldError: err.Error(),
+		}
+		internal.Error("failed to send udp hello", errFields)
+		return err
+	}
+	internal.Info("udp hello sent", fields)
+	return nil
 }
 
 // =======================================================
@@ -286,8 +328,10 @@ func sendHello(ctx context.Context, conn *net.UDPConn, sessionID []byte, token [
 // =======================================================
 
 type udpSession struct {
-	conn     *udpConn
-	streamID uint32
+	conn      *udpConn
+	streamID  uint32
+	onClose   func()
+	closeOnce sync.Once
 }
 
 // Read returns an io.ReadCloser for this session's stream.
@@ -305,8 +349,56 @@ func (s *udpSession) Read(ctx context.Context) (io.ReadCloser, error) {
 }
 
 func (s *udpSession) Write(ctx context.Context, r io.Reader, size int64, overwrite backend.OverwritePolicy) error {
-	// TODO: implement packetization + send via s.conn.
-	return fmt.Errorf("udpSession.Write not implemented yet")
+	if s.conn == nil {
+		return fmt.Errorf("udp session closed")
+	}
+
+	payloadCap := s.conn.payloadCapacity()
+	if payloadCap <= 0 {
+		payloadCap = 1024
+	}
+
+	payload := make([]byte, payloadCap)
+	packetBuf := make([]byte, udpwire.DataHeaderLen+payloadCap+4)
+
+	var seq uint32
+	var offset uint64
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		n, readErr := r.Read(payload)
+		if n > 0 {
+			seq++
+			packet := udpwire.DataPacket{
+				SessionID: s.conn.sessionKey,
+				StreamID:  s.streamID,
+				Seq:       seq,
+				Offset:    offset,
+				Payload:   payload[:n],
+			}
+			pktLen, err := packet.Encode(packetBuf)
+			if err != nil {
+				return fmt.Errorf("encode data packet: %w", err)
+			}
+			if err := s.conn.writePacket(ctx, packetBuf[:pktLen]); err != nil {
+				return err
+			}
+			offset += uint64(n)
+			s.conn.touch()
+		}
+
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			return readErr
+		}
+	}
+
+	return nil
 }
 
 func (s *udpSession) ReadAt(ctx context.Context, offset int64, p []byte) (int, error) {
@@ -320,19 +412,24 @@ func (s *udpSession) WriteAt(ctx context.Context, offset int64, p []byte) (int, 
 }
 
 func (s *udpSession) Close() {
-	if s.conn != nil {
-		s.conn.Close()
-	}
+	s.closeOnce.Do(func() {
+		if s.onClose != nil {
+			s.onClose()
+		}
+		if s.conn != nil {
+			s.conn.Close()
+		}
+	})
 }
 
 // Ensure udpSession satisfies the high-level Session interface.
 var _ Session = (*udpSession)(nil)
 
 // =======================================================
-// sessionManager
+// ClientSessions
 // =======================================================
 
-type sessionManager struct {
+type ClientSessions struct {
 	mu        sync.RWMutex
 	sessions  map[string]*udpConn
 	ttl       time.Duration
@@ -343,8 +440,8 @@ type sessionManager struct {
 	stopOnce sync.Once
 }
 
-func newSessionManager(ttl, scanEvery time.Duration) *sessionManager {
-	sm := &sessionManager{
+func newClientSessions(ttl, scanEvery time.Duration) *ClientSessions {
+	sm := &ClientSessions{
 		sessions:  make(map[string]*udpConn),
 		ttl:       ttl,
 		scanEvery: scanEvery,
@@ -357,7 +454,7 @@ func newSessionManager(ttl, scanEvery time.Duration) *sessionManager {
 
 // Open either returns an existing session for p.SessionID or dials a new UDP
 // conn, sends HELLO, and constructs a udpConn.
-func (m *sessionManager) Open(ctx context.Context, p SessionParams) (*udpConn, error) {
+func (m *ClientSessions) Open(ctx context.Context, p SessionParams) (*udpConn, error) {
 	// Fast path: already have this session
 	m.mu.RLock()
 	if sess, ok := m.sessions[p.SessionID]; ok {
@@ -386,6 +483,7 @@ func (m *sessionManager) Open(ctx context.Context, p SessionParams) (*udpConn, e
 
 	sess := newSession(
 		p.SessionID,
+		p.SessionIDRaw,
 		p.Token,
 		p.UDPHost,
 		p.UDPPort,
@@ -403,7 +501,7 @@ func (m *sessionManager) Open(ctx context.Context, p SessionParams) (*udpConn, e
 }
 
 // Get returns an existing session by ID, if present.
-func (m *sessionManager) Get(sessionID string) (*udpConn, bool) {
+func (m *ClientSessions) Get(sessionID string) (*udpConn, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	sess, ok := m.sessions[sessionID]
@@ -411,7 +509,7 @@ func (m *sessionManager) Get(sessionID string) (*udpConn, bool) {
 }
 
 // Release closes and removes the given session from the manager.
-func (m *sessionManager) Release(s *udpConn) {
+func (m *ClientSessions) Release(s *udpConn) {
 	m.mu.Lock()
 	sess, ok := m.sessions[s.sessionID]
 	if !ok {
@@ -424,7 +522,7 @@ func (m *sessionManager) Release(s *udpConn) {
 }
 
 // janitor periodically evicts idle / closed sessions based on ttl.
-func (m *sessionManager) janitor() {
+func (m *ClientSessions) janitor() {
 	defer m.wg.Done()
 
 	if m.scanEvery <= 0 {
@@ -460,7 +558,7 @@ func (m *sessionManager) janitor() {
 }
 
 // Stop stops the janitor and closes all remaining sessions.
-func (m *sessionManager) Stop() {
+func (m *ClientSessions) Stop() {
 	m.stopOnce.Do(func() {
 		close(m.stopCh)
 		m.wg.Wait()
