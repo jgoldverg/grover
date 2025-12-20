@@ -40,6 +40,7 @@ type udpConn struct {
 	lastUse time.Time
 	closed  atomic.Bool
 
+	rb      *RingBuffer
 	rxDone  chan struct{}
 	txDone  chan struct{}
 	bufPool *pool.BufferPool
@@ -96,10 +97,11 @@ func newSession(
 		rxDone:  make(chan struct{}),
 		txDone:  make(chan struct{}),
 		bufPool: pool.NewBufferPool(bufferSize),
+		rb:      NewRingBuffer(64),
 	}
 
 	go u.recvLoop()
-
+	go u.txLoop(context.Background())
 	return u
 }
 
@@ -116,7 +118,7 @@ func (u *udpConn) Close() {
 		_ = s.pw.Close()
 	}
 	u.mu.Unlock()
-
+	u.rb.Close()
 	<-u.rxDone
 }
 
@@ -185,6 +187,43 @@ func (u *udpConn) Read(ctx context.Context) (io.ReadCloser, error) {
 func (u *udpConn) ReadAt(ctx context.Context, offset int64, p []byte) (int, error) {
 	// Random access isn't a transport concern. Session layer does this.
 	return 0, fmt.Errorf("udpConn.ReadAt not implemented at transport level")
+}
+
+func (u *udpConn) txLoop(ctx context.Context) {
+	defer close(u.txDone)
+	scratch := make([]byte, udpwire.DataHeaderLen+u.payloadCapacity()+4)
+	for {
+		pkt, err := u.rb.Dequeue(ctx)
+		if err != nil {
+			internal.Info("error inside of txLoop", internal.Fields{
+				"error": err.Error(),
+			})
+			if errors.Is(err, io.EOF) {
+				return
+			}
+			_ = u.conn.Close()
+			return
+		}
+		dp := udpwire.DataPacket{
+			SessionID: u.sessionKey,
+			StreamID:  pkt.streamID,
+			Seq:       pkt.seq,
+			Offset:    pkt.offset,
+			Payload:   pkt.payload,
+		}
+		internal.Info("created packet with properties", internal.Fields{
+			"data_packet": dp,
+		})
+		n, err := dp.Encode(scratch)
+		if err != nil {
+			continue
+		}
+		if err := u.writePacket(ctx, scratch[:n]); err != nil {
+			_ = u.conn.Close()
+			return
+		}
+		u.touch()
+	}
 }
 
 func (u *udpConn) recvLoop() {
@@ -327,6 +366,13 @@ func sendHello(ctx context.Context, conn *net.UDPConn, sessionID []byte, token [
 // udpSession: per-file logical Session implementation
 // =======================================================
 
+type txPacket struct {
+	payload  []byte
+	seq      uint32
+	offset   uint64
+	streamID uint32
+}
+
 type udpSession struct {
 	conn      *udpConn
 	streamID  uint32
@@ -353,14 +399,7 @@ func (s *udpSession) Write(ctx context.Context, r io.Reader, size int64, overwri
 		return fmt.Errorf("udp session closed")
 	}
 
-	payloadCap := s.conn.payloadCapacity()
-	if payloadCap <= 0 {
-		payloadCap = 1024
-	}
-
-	payload := make([]byte, payloadCap)
-	packetBuf := make([]byte, udpwire.DataHeaderLen+payloadCap+4)
-
+	payload := make([]byte, s.conn.payloadCapacity())
 	var seq uint32
 	var offset uint64
 
@@ -368,22 +407,25 @@ func (s *udpSession) Write(ctx context.Context, r io.Reader, size int64, overwri
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-
+		// io.Reader here is a file. We may consider a network socket as well but that is strictly sequential io, which kinda sucks.
 		n, readErr := r.Read(payload)
 		if n > 0 {
 			seq++
-			packet := udpwire.DataPacket{
-				SessionID: s.conn.sessionKey,
-				StreamID:  s.streamID,
-				Seq:       seq,
-				Offset:    offset,
-				Payload:   payload[:n],
+			chunk := append([]byte(nil), payload[:n]...)
+			pkt := txPacket{
+				streamID: s.streamID,
+				seq:      seq,
+				offset:   offset,
+				payload:  chunk,
 			}
-			pktLen, err := packet.Encode(packetBuf)
-			if err != nil {
-				return fmt.Errorf("encode data packet: %w", err)
-			}
-			if err := s.conn.writePacket(ctx, packetBuf[:pktLen]); err != nil {
+			internal.Info("UdpSession.Write called with fields: ", internal.Fields{
+				"pkt.streamID":       s.streamID,
+				"pkt.seq":            seq,
+				"pkt.offset":         offset,
+				"pkt.payload.length": len(payload[:n]),
+			})
+			if err := s.conn.rb.Enqueue(ctx, pkt); err != nil {
+				internal.Error("failed to enqueue pkt", nil)
 				return err
 			}
 			offset += uint64(n)
@@ -398,6 +440,8 @@ func (s *udpSession) Write(ctx context.Context, r io.Reader, size int64, overwri
 		}
 	}
 
+	s.conn.rb.Close()
+	<-s.conn.txDone
 	return nil
 }
 
@@ -408,6 +452,7 @@ func (s *udpSession) ReadAt(ctx context.Context, offset int64, p []byte) (int, e
 
 func (s *udpSession) WriteAt(ctx context.Context, offset int64, p []byte) (int, error) {
 	// TODO: random access write via protocol extensions.
+	//
 	return 0, fmt.Errorf("udpSession.WriteAt not implemented yet")
 }
 
