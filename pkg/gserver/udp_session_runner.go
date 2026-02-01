@@ -54,7 +54,6 @@ func (r *udpSessionRunner) runDownload() {
 		"completed udp file stream",
 		"failed to stream file over udp",
 		func(addr *net.UDPAddr) error {
-			go r.recvLoop()
 			return r.sendFile(addr)
 		},
 	)
@@ -146,50 +145,6 @@ func (r *udpSessionRunner) awaitHello() (*net.UDPAddr, error) {
 			"token_len":   len(hp.Token),
 		})
 		return addr, nil
-	}
-}
-
-func (r *udpSessionRunner) recvLoop() {
-	conn := r.session.Conn()
-	if conn == nil {
-		return
-	}
-	buf := make([]byte, r.recvBufferSize())
-	var sp udpwire.StatusPacket
-
-	for {
-		n, _, err := conn.ReadFromUDP(buf)
-		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				continue
-			}
-			return
-		}
-		if n == 0 {
-			continue
-		}
-
-		kind, ok := udpwire.PeekKind(buf[:n])
-		if !ok {
-			continue
-		}
-
-		if kind != udpwire.KindStatus {
-			continue
-		}
-		if _, err := sp.Decode(buf[:n]); err != nil {
-			continue
-		}
-		fields := internal.Fields{
-			"session": r.session.ID.String(),
-			"stream":  sp.StreamID,
-			"ack":     sp.AckSeq,
-		}
-		if desc := describeSackRanges(sp.Sacks); desc != "" {
-			fields["sacks"] = desc
-		}
-		internal.Debug("server udp status rx", fields)
-		// TODO: feed ACK/SACK information into congestion control once implemented.
 	}
 }
 
@@ -289,6 +244,8 @@ func (r *udpSessionRunner) sendFile(addr *net.UDPAddr) error {
 
 	payloadBuf := make([]byte, payloadSize)
 	packetBuf := make([]byte, udpwire.DataHeaderLen+payloadSize+4)
+	statusBuf := make([]byte, r.recvBufferSize())
+	var statusPkt udpwire.StatusPacket
 	sessionID32 := binary.BigEndian.Uint32(r.session.ID[:4])
 	streamID := r.session.StreamIDs[0]
 	binding := r.session.binding(streamID)
@@ -328,6 +285,8 @@ func (r *udpSessionRunner) sendFile(addr *net.UDPAddr) error {
 				"bytes":   n,
 			})
 			offset += uint64(n)
+
+			r.drainStatusPackets(conn, statusBuf, &statusPkt)
 		}
 
 		if readErr != nil {
@@ -416,6 +375,51 @@ func (r *udpSessionRunner) emitStatusPacket(
 		internal.Debug("server udp status tx", fields)
 	}
 	return sacks[:0]
+}
+
+func (r *udpSessionRunner) drainStatusPackets(conn *net.UDPConn, buf []byte, sp *udpwire.StatusPacket) {
+	if conn == nil || len(buf) == 0 || sp == nil {
+		return
+	}
+
+	for {
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Millisecond))
+		n, _, err := conn.ReadFromUDP(buf)
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				break
+			}
+			if isClosedNetworkError(err) {
+				break
+			}
+			internal.Debug("failed reading udp status", internal.Fields{
+				internal.FieldError: err.Error(),
+				"session":           r.session.ID.String(),
+			})
+			break
+		}
+		if n == 0 {
+			continue
+		}
+
+		kind, ok := udpwire.PeekKind(buf[:n])
+		if !ok || kind != udpwire.KindStatus {
+			continue
+		}
+		if _, err := sp.Decode(buf[:n]); err != nil {
+			continue
+		}
+		fields := internal.Fields{
+			"session": r.session.ID.String(),
+			"stream":  sp.StreamID,
+			"ack":     sp.AckSeq,
+		}
+		if desc := describeSackRanges(sp.Sacks); desc != "" {
+			fields["sacks"] = desc
+		}
+		internal.Debug("server udp status rx", fields)
+	}
+	_ = conn.SetReadDeadline(time.Time{})
 }
 
 func isClosedNetworkError(err error) bool {

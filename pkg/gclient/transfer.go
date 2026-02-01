@@ -563,6 +563,7 @@ func toProtoOverwrite(p backend.OverwritePolicy) pb.OverwritePolicy {
 		return pb.OverwritePolicy_OVERWRITE_UNSPECIFIED
 	}
 }
+
 func writePacketWithRetry(ctx context.Context, conn *net.UDPConn, packet []byte) error {
 	for {
 		if err := setWriteDeadline(ctx, conn); err != nil {
@@ -615,5 +616,5 @@ func isNoBufferSpaceErr(err error) bool {
 			return errors.Is(sysErr.Err, syscall.ENOBUFS)
 		}
 	}
-	return false
+	return strings.Contains(strings.ToLower(err.Error()), "no buffer space")
 }
