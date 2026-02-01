@@ -196,7 +196,7 @@ func (r *udpSessionRunner) receiveFile() error {
 		if file == nil {
 			continue
 		}
-		internal.Debug("server udp data rx", internal.Fields{
+		internal.Info("server udp data rx", internal.Fields{
 			"session": r.session.ID.String(),
 			"stream":  binding.streamID,
 			"seq":     packet.Seq,
@@ -278,7 +278,7 @@ func (r *udpSessionRunner) sendFile(addr *net.UDPAddr) error {
 			if _, err := conn.WriteToUDP(packetBuf[:pktLen], addr); err != nil {
 				return fmt.Errorf("write udp packet: %w", err)
 			}
-			internal.Debug("server udp data tx", internal.Fields{
+			internal.Info("server udp data tx", internal.Fields{
 				"session": r.session.ID.String(),
 				"stream":  streamID,
 				"seq":     seq,
@@ -358,7 +358,7 @@ func (r *udpSessionRunner) emitStatusPacket(
 	}
 
 	if _, err := conn.WriteToUDP(statusBuf[:n], target); err != nil {
-		internal.Debug("failed to send udp status", internal.Fields{
+		internal.Info("failed to send udp status", internal.Fields{
 			internal.FieldError: err.Error(),
 			"session_id":        r.session.ID.String(),
 			"stream_id":         streamID,
@@ -372,7 +372,7 @@ func (r *udpSessionRunner) emitStatusPacket(
 		if desc := describeSackRanges(sacks); desc != "" {
 			fields["sacks"] = desc
 		}
-		internal.Debug("server udp status tx", fields)
+		internal.Info("server udp status tx", fields)
 	}
 	return sacks[:0]
 }
@@ -392,7 +392,7 @@ func (r *udpSessionRunner) drainStatusPackets(conn *net.UDPConn, buf []byte, sp 
 			if isClosedNetworkError(err) {
 				break
 			}
-			internal.Debug("failed reading udp status", internal.Fields{
+			internal.Info("failed reading udp status", internal.Fields{
 				internal.FieldError: err.Error(),
 				"session":           r.session.ID.String(),
 			})
@@ -417,7 +417,7 @@ func (r *udpSessionRunner) drainStatusPackets(conn *net.UDPConn, buf []byte, sp 
 		if desc := describeSackRanges(sp.Sacks); desc != "" {
 			fields["sacks"] = desc
 		}
-		internal.Debug("server udp status rx", fields)
+		internal.Info("server udp status rx", fields)
 	}
 	_ = conn.SetReadDeadline(time.Time{})
 }
