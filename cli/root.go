@@ -13,8 +13,10 @@ import (
 
 type ctxKey string
 
-const appCtxKey ctxKey = "appData"
-const appConfigPathKey ctxKey = "appConfigPath"
+const (
+	appCtxKey        ctxKey = "appData"
+	appConfigPathKey ctxKey = "appConfigPath"
+)
 
 func NewRootCommand() *cobra.Command {
 	var appConfigPath string
@@ -41,13 +43,13 @@ func NewRootCommand() *cobra.Command {
 				})
 			}
 
-			internal.Info("using credentials file", internal.Fields{
+			internal.Debug("using credentials file", internal.Fields{
 				internal.CredentialPath: cfg.CredentialsFile,
 			})
 
 			// Ensure credentials file directory exists
 			dir := filepath.Dir(cfg.CredentialsFile)
-			if err := os.MkdirAll(dir, 0755); err != nil {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
 				return fmt.Errorf("failed to create directory for credentials file: %w", err)
 			}
 

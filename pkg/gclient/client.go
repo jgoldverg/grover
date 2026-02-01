@@ -26,24 +26,7 @@ import (
 type TransferAPI interface {
 	Get(ctx context.Context, path string, w io.Writer) error
 	Put(ctx context.Context, path string, r io.Reader, size int64, overwrite backend.OverwritePolicy) error
-
-	ReadAt(ctx context.Context, path string, offset int64, p []byte) (int, error)
-	WriteAt(ctx context.Context, path string, offset int64, p []byte) (int, error)
-
-	OpenSession(ctx context.Context, path string, size int64, mode Mode, overwrite backend.OverwritePolicy) (Session, error)
 	Enumerate(ctx context.Context, path string, recursive bool) ([]RemoteFile, error)
-}
-
-// Session represents a prepared data connection for a specific path/object.
-// Callers can stream or do ranged I/O repeatedly, then Close.
-type Session interface {
-	Read(ctx context.Context) (io.ReadCloser, error)
-	Write(ctx context.Context, r io.Reader, size int64, overwrite backend.OverwritePolicy) error
-
-	ReadAt(ctx context.Context, offset int64, p []byte) (int, error)
-	WriteAt(ctx context.Context, offset int64, p []byte) (int, error)
-
-	Close()
 }
 
 type FilesAPI interface {

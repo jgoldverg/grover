@@ -173,7 +173,27 @@ func downloadFromRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts C
 		})
 	}
 
-	return runDownloadJobs(cmd.Context(), transfer, jobs, opts.effectiveConcurrency())
+	jobFns := make([]jobFunc, 0, len(jobs))
+	for _, job := range jobs {
+		job := job
+		jobFns = append(jobFns, func(ctx context.Context) error {
+			if err := ensureParentDir(job.localPath); err != nil {
+				return err
+			}
+			out, err := os.Create(job.localPath)
+			if err != nil {
+				return fmt.Errorf("create %s: %w", job.localPath, err)
+			}
+			defer out.Close()
+
+			if err := transfer.Get(ctx, job.remotePath, out); err != nil {
+				return fmt.Errorf("download %s -> %s: %w", job.remotePath, job.localPath, err)
+			}
+			return nil
+		})
+	}
+
+	return runJobs(cmd.Context(), opts.effectiveConcurrency(), jobFns)
 }
 
 func uploadToRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts CopyOptions) error {
@@ -201,7 +221,7 @@ func uploadToRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts CopyO
 		return fmt.Errorf("destination %q must end with / when uploading a directory", dst.Raw)
 	}
 
-	internal.Info("resolved transfer paths", internal.Fields{
+	internal.Debug("resolved transfer paths", internal.Fields{
 		"local_path":    localPath,
 		"remote_path":   remotePath,
 		"delete_source": opts.DeleteSource,
@@ -221,7 +241,29 @@ func uploadToRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts CopyO
 	if err != nil {
 		return err
 	}
-	return runUploadJobs(cmd.Context(), transfer, jobs, opts.effectiveConcurrency(), backend.ALWAYS, opts.DeleteSource)
+	jobFns := make([]jobFunc, 0, len(jobs))
+	for _, job := range jobs {
+		job := job
+		jobFns = append(jobFns, func(ctx context.Context) error {
+			f, err := os.Open(job.localPath)
+			if err != nil {
+				return fmt.Errorf("open %s: %w", job.localPath, err)
+			}
+			defer f.Close()
+
+			if err := transfer.Put(ctx, job.remotePath, f, job.size, backend.ALWAYS); err != nil {
+				return fmt.Errorf("upload %s -> %s: %w", job.localPath, job.remotePath, err)
+			}
+			if opts.DeleteSource {
+				if err := os.Remove(job.localPath); err != nil {
+					return fmt.Errorf("remove source %s: %w", job.localPath, err)
+				}
+			}
+			return nil
+		})
+	}
+
+	return runJobs(cmd.Context(), opts.effectiveConcurrency(), jobFns)
 }
 
 func remotePathString(ref RemoteRef) string {
@@ -310,6 +352,10 @@ func buildUploadJobs(localRoot string, remoteBase string, destIsDir bool, info o
 				remotePath: remotePath,
 				size:       entryInfo.Size(),
 			})
+			internal.Info("file for job\n", internal.Fields{
+				"file_path": remotePath,
+				"size":      entryInfo.Size(),
+			})
 			return nil
 		})
 		if err != nil {
@@ -335,69 +381,26 @@ func buildUploadJobs(localRoot string, remoteBase string, destIsDir bool, info o
 	}}, nil
 }
 
-func runUploadJobs(ctx context.Context, transfer gclient.TransferAPI, jobs []uploadJob, concurrency int, overwrite backend.OverwritePolicy, deleteSource bool) error {
+type jobFunc func(context.Context) error
+
+func runJobs(ctx context.Context, concurrency int, jobs []jobFunc) error {
 	if concurrency < 1 {
 		concurrency = 1
 	}
+	if len(jobs) == 0 {
+		return nil
+	}
+
 	sem := make(chan struct{}, concurrency)
 	errCh := make(chan error, len(jobs))
 	var wg sync.WaitGroup
 
 	for _, job := range jobs {
-		job := job
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				errCh <- ctx.Err()
-				return
-			}
-			defer func() { <-sem }()
-
-			f, err := os.Open(job.localPath)
-			if err != nil {
-				errCh <- fmt.Errorf("open %s: %w", job.localPath, err)
-				return
-			}
-			defer f.Close()
-
-			if err := transfer.Put(ctx, job.remotePath, f, job.size, overwrite); err != nil {
-				errCh <- fmt.Errorf("upload %s -> %s: %w", job.localPath, job.remotePath, err)
-				return
-			}
-			if deleteSource {
-				if err := os.Remove(job.localPath); err != nil {
-					errCh <- fmt.Errorf("remove source %s: %w", job.localPath, err)
-					return
-				}
-			}
-		}()
-	}
-
-	wg.Wait()
-	close(errCh)
-	for err := range errCh {
-		if err != nil {
-			return err
+		if job == nil {
+			continue
 		}
-	}
-	return ctx.Err()
-}
-
-func runDownloadJobs(ctx context.Context, transfer gclient.TransferAPI, jobs []downloadJob, concurrency int) error {
-	if concurrency < 1 {
-		concurrency = 1
-	}
-	sem := make(chan struct{}, concurrency)
-	errCh := make(chan error, len(jobs))
-	var wg sync.WaitGroup
-
-	for _, job := range jobs {
-		job := job
 		wg.Add(1)
-		go func() {
+		go func(fn jobFunc) {
 			defer wg.Done()
 			select {
 			case sem <- struct{}{}:
@@ -407,22 +410,10 @@ func runDownloadJobs(ctx context.Context, transfer gclient.TransferAPI, jobs []d
 			}
 			defer func() { <-sem }()
 
-			if err := ensureParentDir(job.localPath); err != nil {
+			if err := fn(ctx); err != nil {
 				errCh <- err
-				return
 			}
-			out, err := os.Create(job.localPath)
-			if err != nil {
-				errCh <- fmt.Errorf("create %s: %w", job.localPath, err)
-				return
-			}
-			defer out.Close()
-
-			if err := transfer.Get(ctx, job.remotePath, out); err != nil {
-				errCh <- fmt.Errorf("download %s -> %s: %w", job.remotePath, job.localPath, err)
-				return
-			}
-		}()
+		}(job)
 	}
 
 	wg.Wait()
