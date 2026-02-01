@@ -273,8 +273,11 @@ var GroverServer_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	TransferControl_OpenSession_FullMethodName  = "/groverudp.v1.TransferControl/OpenSession"
-	TransferControl_CloseSession_FullMethodName = "/groverudp.v1.TransferControl/CloseSession"
+	TransferControl_OpenSession_FullMethodName   = "/groverudp.v1.TransferControl/OpenSession"
+	TransferControl_CloseSession_FullMethodName  = "/groverudp.v1.TransferControl/CloseSession"
+	TransferControl_LeaseStream_FullMethodName   = "/groverudp.v1.TransferControl/LeaseStream"
+	TransferControl_ReleaseStream_FullMethodName = "/groverudp.v1.TransferControl/ReleaseStream"
+	TransferControl_EnumeratePath_FullMethodName = "/groverudp.v1.TransferControl/EnumeratePath"
 )
 
 // TransferControlClient is the client API for TransferControl service.
@@ -283,6 +286,9 @@ const (
 type TransferControlClient interface {
 	OpenSession(ctx context.Context, in *OpenSessionRequest, opts ...grpc.CallOption) (*OpenSessionResponse, error)
 	CloseSession(ctx context.Context, in *CloseSessionRequest, opts ...grpc.CallOption) (*CloseSessionResponse, error)
+	LeaseStream(ctx context.Context, in *LeaseStreamRequest, opts ...grpc.CallOption) (*LeaseStreamResponse, error)
+	ReleaseStream(ctx context.Context, in *ReleaseStreamRequest, opts ...grpc.CallOption) (*ReleaseStreamResponse, error)
+	EnumeratePath(ctx context.Context, in *EnumeratePathRequest, opts ...grpc.CallOption) (*EnumeratePathResponse, error)
 }
 
 type transferControlClient struct {
@@ -313,12 +319,45 @@ func (c *transferControlClient) CloseSession(ctx context.Context, in *CloseSessi
 	return out, nil
 }
 
+func (c *transferControlClient) LeaseStream(ctx context.Context, in *LeaseStreamRequest, opts ...grpc.CallOption) (*LeaseStreamResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LeaseStreamResponse)
+	err := c.cc.Invoke(ctx, TransferControl_LeaseStream_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *transferControlClient) ReleaseStream(ctx context.Context, in *ReleaseStreamRequest, opts ...grpc.CallOption) (*ReleaseStreamResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReleaseStreamResponse)
+	err := c.cc.Invoke(ctx, TransferControl_ReleaseStream_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *transferControlClient) EnumeratePath(ctx context.Context, in *EnumeratePathRequest, opts ...grpc.CallOption) (*EnumeratePathResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EnumeratePathResponse)
+	err := c.cc.Invoke(ctx, TransferControl_EnumeratePath_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // TransferControlServer is the server API for TransferControl service.
 // All implementations must embed UnimplementedTransferControlServer
 // for forward compatibility.
 type TransferControlServer interface {
 	OpenSession(context.Context, *OpenSessionRequest) (*OpenSessionResponse, error)
 	CloseSession(context.Context, *CloseSessionRequest) (*CloseSessionResponse, error)
+	LeaseStream(context.Context, *LeaseStreamRequest) (*LeaseStreamResponse, error)
+	ReleaseStream(context.Context, *ReleaseStreamRequest) (*ReleaseStreamResponse, error)
+	EnumeratePath(context.Context, *EnumeratePathRequest) (*EnumeratePathResponse, error)
 	mustEmbedUnimplementedTransferControlServer()
 }
 
@@ -334,6 +373,15 @@ func (UnimplementedTransferControlServer) OpenSession(context.Context, *OpenSess
 }
 func (UnimplementedTransferControlServer) CloseSession(context.Context, *CloseSessionRequest) (*CloseSessionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CloseSession not implemented")
+}
+func (UnimplementedTransferControlServer) LeaseStream(context.Context, *LeaseStreamRequest) (*LeaseStreamResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method LeaseStream not implemented")
+}
+func (UnimplementedTransferControlServer) ReleaseStream(context.Context, *ReleaseStreamRequest) (*ReleaseStreamResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReleaseStream not implemented")
+}
+func (UnimplementedTransferControlServer) EnumeratePath(context.Context, *EnumeratePathRequest) (*EnumeratePathResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method EnumeratePath not implemented")
 }
 func (UnimplementedTransferControlServer) mustEmbedUnimplementedTransferControlServer() {}
 func (UnimplementedTransferControlServer) testEmbeddedByValue()                         {}
@@ -392,6 +440,60 @@ func _TransferControl_CloseSession_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _TransferControl_LeaseStream_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LeaseStreamRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TransferControlServer).LeaseStream(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TransferControl_LeaseStream_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TransferControlServer).LeaseStream(ctx, req.(*LeaseStreamRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TransferControl_ReleaseStream_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReleaseStreamRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TransferControlServer).ReleaseStream(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TransferControl_ReleaseStream_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TransferControlServer).ReleaseStream(ctx, req.(*ReleaseStreamRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TransferControl_EnumeratePath_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EnumeratePathRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TransferControlServer).EnumeratePath(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TransferControl_EnumeratePath_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TransferControlServer).EnumeratePath(ctx, req.(*EnumeratePathRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // TransferControl_ServiceDesc is the grpc.ServiceDesc for TransferControl service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -406,6 +508,18 @@ var TransferControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CloseSession",
 			Handler:    _TransferControl_CloseSession_Handler,
+		},
+		{
+			MethodName: "LeaseStream",
+			Handler:    _TransferControl_LeaseStream_Handler,
+		},
+		{
+			MethodName: "ReleaseStream",
+			Handler:    _TransferControl_ReleaseStream_Handler,
+		},
+		{
+			MethodName: "EnumeratePath",
+			Handler:    _TransferControl_EnumeratePath_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/jgoldverg/grover/internal"
 	"github.com/spf13/cobra"
@@ -13,6 +14,7 @@ import (
 type ctxKey string
 
 const appCtxKey ctxKey = "appData"
+const appConfigPathKey ctxKey = "appConfigPath"
 
 func NewRootCommand() *cobra.Command {
 	var appConfigPath string
@@ -49,7 +51,17 @@ func NewRootCommand() *cobra.Command {
 				return fmt.Errorf("failed to create directory for credentials file: %w", err)
 			}
 
+			cfgPath := appConfigPath
+			if strings.TrimSpace(cfgPath) == "" {
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return err
+				}
+				cfgPath = filepath.Join(home, ".grover", "cli_config.toml")
+			}
+
 			ctx := context.WithValue(cmd.Context(), appCtxKey, cfg)
+			ctx = context.WithValue(ctx, appConfigPathKey, cfgPath)
 			cmd.SetContext(ctx)
 
 			return nil
@@ -67,6 +79,8 @@ func NewRootCommand() *cobra.Command {
 	rootCmd.AddCommand(CredentialCommand())
 	rootCmd.AddCommand(GroverServerOps())
 	rootCmd.AddCommand(SimpleCopy())
+	rootCmd.AddCommand(DownloadCommand())
+	rootCmd.AddCommand(ConfigCommand())
 
 	return rootCmd
 }
@@ -79,4 +93,13 @@ func GetAppConfig(cmd *cobra.Command) *internal.AppConfig {
 		}
 	}
 	return nil
+}
+
+func getAppConfigPath(cmd *cobra.Command) string {
+	if v := cmd.Context().Value(appConfigPathKey); v != nil {
+		if path, ok := v.(string); ok {
+			return path
+		}
+	}
+	return ""
 }

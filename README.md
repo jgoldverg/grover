@@ -61,3 +61,10 @@ Decisions that we can consider:
 2. No eBPF support in tons of protocol servers when tbh we just want traffic to come in as fast as possible.
 3. Lets see if we can do a zero copy approach for the client and server, but that would be a fun challenge to make a protocol server and client as fast as bleeding possible.
 4. There are just tons of tricks you can do in networking that many file transfer protocols simply dont support and its killing me at this point. Whats crazy is http tends up being the most performant but is still extremely lacking when looking at performance.
+
+### Transport roadmap (near-term)
+
+- Per-stream TX windows: keep a `txWindow` per stream on the client that tracks bytes in flight (sequence + payload length). Gate `udpSession.Write` enqueueing on that budget so we stop shoving data when the server stops ACKing. Start with a byte limit tied to `socket_buffer_size`, grow toward selective retransmits driven by SACK ranges.
+- Error propagation + retries: treat fatal TX/RX errors as first-class signals (already started by surfacing `txLoop` failures). Next, wire status packets into the window logic and add bounded retries so slow links don’t silently drop uploads.
+- Portable batching interface: wrap the send/recv path behind an interface so Linux builds can use `sendmmsg`/`recvmmsg` (and later `io_uring` or zero-copy `SEND_ZC`) while macOS/BSD fall back to tight per-packet writes with `kqueue`. Same batching loop, OS-specific backend.
+- Future perf tracks: once single-stream reliability sticks, explore io_uring (multishot recv, batched send) and, if needed, userspace stacks (DPDK) or kernel hooks (XDP/eBPF). Keep the design flexible enough to slot these in without rewriting the client.

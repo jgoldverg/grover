@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/jgoldverg/grover/backend"
@@ -27,6 +30,7 @@ type RemoteRef struct {
 
 type CopyOptions struct {
 	DeleteSource bool
+	Concurrency  int
 }
 
 func SimpleCopy() *cobra.Command {
@@ -56,13 +60,14 @@ func SimpleCopy() *cobra.Command {
 				if opts.DeleteSource {
 					return fmt.Errorf("--delete-source is only supported for local sources")
 				}
-				return downloadFromRemote(cmd, src, dst)
+				return downloadFromRemote(cmd, src, dst, opts)
 			default:
-				return uploadToRemote(cmd, src, dst, opts.DeleteSource)
+				return uploadToRemote(cmd, src, dst, opts)
 			}
 		},
 	}
 	cmd.Flags().BoolVar(&opts.DeleteSource, "delete-source", false, "Delete the local source file after a successful upload")
+	cmd.Flags().IntVar(&opts.Concurrency, "concurrency", 4, "Maximum number of files to transfer in parallel")
 	return cmd
 }
 
@@ -118,15 +123,13 @@ func parseLocation(input string) (RemoteRef, error) {
 	return ref, nil
 }
 
-func downloadFromRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef) error {
+func downloadFromRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts CopyOptions) error {
 	if dst.isRemote {
 		return fmt.Errorf("destination must be local when downloading")
 	}
-	if src.ExpectDirectory {
-		return fmt.Errorf("source %q refers to a directory; specify a file to download", src.Raw)
-	}
-	remotePath := remotePathString(src)
-	if strings.TrimSpace(remotePath) == "" {
+
+	remoteRoot := remotePathString(src)
+	if strings.TrimSpace(remoteRoot) == "" {
 		return fmt.Errorf("remote source %q is missing a path", src.Raw)
 	}
 
@@ -141,27 +144,39 @@ func downloadFromRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef) error 
 		return fmt.Errorf("transfer service unavailable on remote server")
 	}
 
-	localPath, err := prepareLocalDestination(dst, remotePath)
+	files, err := transfer.Enumerate(cmd.Context(), remoteRoot, true)
 	if err != nil {
 		return err
 	}
-	if err := ensureParentDir(localPath); err != nil {
-		return err
+	if len(files) == 0 {
+		return fmt.Errorf("no files found at remote path %q", remoteRoot)
 	}
 
-	out, err := os.Create(localPath)
+	localBase, treatAsDir, err := resolveDownloadDestination(dst, len(files) > 1 || src.ExpectDirectory)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
 
-	if err := transfer.Get(cmd.Context(), remotePath, out); err != nil {
-		return err
+	jobs := make([]downloadJob, 0, len(files))
+	for _, rf := range files {
+		rel := strings.TrimSpace(rf.RelativePath)
+		if rel == "" {
+			rel = path.Base(rf.FullPath)
+		}
+		localTarget := localBase
+		if treatAsDir {
+			localTarget = filepath.Join(localBase, filepath.FromSlash(rel))
+		}
+		jobs = append(jobs, downloadJob{
+			remotePath: rf.FullPath,
+			localPath:  localTarget,
+		})
 	}
-	return nil
+
+	return runDownloadJobs(cmd.Context(), transfer, jobs, opts.effectiveConcurrency())
 }
 
-func uploadToRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, deleteSource bool) error {
+func uploadToRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts CopyOptions) error {
 	if !dst.isRemote {
 		return fmt.Errorf("destination must be remote when uploading")
 	}
@@ -180,23 +195,16 @@ func uploadToRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, deleteSour
 	if err != nil {
 		return err
 	}
-	if info.IsDir() {
-		return fmt.Errorf("source %q is a directory; directory transfers are not supported yet", localPath)
-	}
 
 	remotePath := remotePathString(dst)
-	if dst.ExpectDirectory || remotePath == "" {
-		filename := filepath.Base(localPath)
-		remotePath = path.Join(remotePath, filename)
-	}
-	if strings.TrimSpace(remotePath) == "" || remotePath == "." {
-		return fmt.Errorf("remote destination %q is missing a path", dst.Raw)
+	if info.IsDir() && !dst.ExpectDirectory && strings.TrimSpace(remotePath) != "" {
+		return fmt.Errorf("destination %q must end with / when uploading a directory", dst.Raw)
 	}
 
 	internal.Info("resolved transfer paths", internal.Fields{
 		"local_path":    localPath,
 		"remote_path":   remotePath,
-		"delete_source": deleteSource,
+		"delete_source": opts.DeleteSource,
 	})
 	client, err := newTransferClientForRemote(cmd, dst)
 	if err != nil {
@@ -208,29 +216,12 @@ func uploadToRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, deleteSour
 	if transfer == nil {
 		return fmt.Errorf("transfer service unavailable on remote server")
 	}
-	f, err := os.Open(localPath)
+
+	jobs, err := buildUploadJobs(localPath, remotePath, dst.ExpectDirectory, info)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-
-	internal.Info("streaming file to server", internal.Fields{
-		"remote_path": remotePath,
-		"bytes":       info.Size(),
-	})
-	if err := transfer.Put(cmd.Context(), remotePath, f, info.Size(), backend.ALWAYS); err != nil {
-		return err
-	}
-	internal.Info("upload complete", internal.Fields{
-		"remote_path": remotePath,
-		"bytes":       info.Size(),
-	})
-	if deleteSource {
-		if err := os.Remove(localPath); err != nil {
-			return fmt.Errorf("remove source %q: %w", localPath, err)
-		}
-	}
-	return nil
+	return runUploadJobs(cmd.Context(), transfer, jobs, opts.effectiveConcurrency(), backend.ALWAYS, opts.DeleteSource)
 }
 
 func remotePathString(ref RemoteRef) string {
@@ -266,50 +257,217 @@ func expandUserPath(p string) (string, error) {
 	return abs, nil
 }
 
-func prepareLocalDestination(dst RemoteRef, remotePath string) (string, error) {
-	if strings.TrimSpace(dst.Path) == "" {
-		return "", fmt.Errorf("destination path is required")
-	}
-	localPath, err := expandUserPath(dst.Path)
-	if err != nil {
-		return "", err
-	}
-
-	wantDir := dst.ExpectDirectory
-	info, statErr := os.Stat(localPath)
-	switch {
-	case statErr == nil && info.IsDir():
-		wantDir = true
-	case statErr == nil:
-		wantDir = false
-	case os.IsNotExist(statErr):
-		if dst.ExpectDirectory {
-			if err := os.MkdirAll(localPath, 0o755); err != nil {
-				return "", err
-			}
-			wantDir = true
-		}
-	default:
-		return "", statErr
-	}
-
-	if wantDir {
-		filename := path.Base(remotePath)
-		if filename == "" || filename == "." || filename == "/" {
-			return "", fmt.Errorf("remote path %q does not include a file name; specify a destination file", remotePath)
-		}
-		return filepath.Join(localPath, filename), nil
-	}
-
-	return localPath, nil
-}
-
 func ensureParentDir(p string) error {
 	dir := filepath.Dir(p)
 	if dir == "" || dir == "." || dir == "/" {
 		return nil
 	}
 	return os.MkdirAll(dir, 0o755)
+}
+
+type uploadJob struct {
+	localPath  string
+	remotePath string
+	size       int64
+}
+
+type downloadJob struct {
+	remotePath string
+	localPath  string
+}
+
+func (opts CopyOptions) effectiveConcurrency() int {
+	if opts.Concurrency <= 0 {
+		return 1
+	}
+	return opts.Concurrency
+}
+
+func buildUploadJobs(localRoot string, remoteBase string, destIsDir bool, info os.FileInfo) ([]uploadJob, error) {
+	if info.IsDir() {
+		jobs := []uploadJob{}
+		err := filepath.WalkDir(localRoot, func(p string, d fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if d.IsDir() {
+				return nil
+			}
+			entryInfo, err := d.Info()
+			if err != nil {
+				return err
+			}
+			rel, err := filepath.Rel(localRoot, p)
+			if err != nil {
+				return err
+			}
+			remotePath := path.Join(remoteBase, filepath.ToSlash(rel))
+			if strings.TrimSpace(remotePath) == "" {
+				return fmt.Errorf("unable to derive remote path for %s", p)
+			}
+			jobs = append(jobs, uploadJob{
+				localPath:  p,
+				remotePath: remotePath,
+				size:       entryInfo.Size(),
+			})
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		if len(jobs) == 0 {
+			return nil, fmt.Errorf("no files found under %s", localRoot)
+		}
+		return jobs, nil
+	}
+
+	target := strings.TrimSpace(remoteBase)
+	if destIsDir || target == "" || target == "." {
+		target = path.Join(remoteBase, filepath.Base(localRoot))
+	}
+	if strings.TrimSpace(target) == "" || target == "." {
+		return nil, fmt.Errorf("remote destination is missing a path")
+	}
+	return []uploadJob{{
+		localPath:  localRoot,
+		remotePath: target,
+		size:       info.Size(),
+	}}, nil
+}
+
+func runUploadJobs(ctx context.Context, transfer gclient.TransferAPI, jobs []uploadJob, concurrency int, overwrite backend.OverwritePolicy, deleteSource bool) error {
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	sem := make(chan struct{}, concurrency)
+	errCh := make(chan error, len(jobs))
+	var wg sync.WaitGroup
+
+	for _, job := range jobs {
+		job := job
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				errCh <- ctx.Err()
+				return
+			}
+			defer func() { <-sem }()
+
+			f, err := os.Open(job.localPath)
+			if err != nil {
+				errCh <- fmt.Errorf("open %s: %w", job.localPath, err)
+				return
+			}
+			defer f.Close()
+
+			if err := transfer.Put(ctx, job.remotePath, f, job.size, overwrite); err != nil {
+				errCh <- fmt.Errorf("upload %s -> %s: %w", job.localPath, job.remotePath, err)
+				return
+			}
+			if deleteSource {
+				if err := os.Remove(job.localPath); err != nil {
+					errCh <- fmt.Errorf("remove source %s: %w", job.localPath, err)
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
+}
+
+func runDownloadJobs(ctx context.Context, transfer gclient.TransferAPI, jobs []downloadJob, concurrency int) error {
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	sem := make(chan struct{}, concurrency)
+	errCh := make(chan error, len(jobs))
+	var wg sync.WaitGroup
+
+	for _, job := range jobs {
+		job := job
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				errCh <- ctx.Err()
+				return
+			}
+			defer func() { <-sem }()
+
+			if err := ensureParentDir(job.localPath); err != nil {
+				errCh <- err
+				return
+			}
+			out, err := os.Create(job.localPath)
+			if err != nil {
+				errCh <- fmt.Errorf("create %s: %w", job.localPath, err)
+				return
+			}
+			defer out.Close()
+
+			if err := transfer.Get(ctx, job.remotePath, out); err != nil {
+				errCh <- fmt.Errorf("download %s -> %s: %w", job.remotePath, job.localPath, err)
+				return
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
+}
+
+func resolveDownloadDestination(dst RemoteRef, multi bool) (string, bool, error) {
+	localPath := strings.TrimSpace(dst.Path)
+	if localPath == "" {
+		return "", false, fmt.Errorf("destination path is required")
+	}
+	localPath, err := expandUserPath(localPath)
+	if err != nil {
+		return "", false, err
+	}
+
+	info, statErr := os.Stat(localPath)
+	switch {
+	case statErr == nil && info.IsDir():
+		return localPath, true, nil
+	case statErr == nil:
+		if multi || dst.ExpectDirectory {
+			return "", false, fmt.Errorf("destination %q must be a directory", localPath)
+		}
+		return localPath, false, nil
+	case os.IsNotExist(statErr):
+		if multi || dst.ExpectDirectory {
+			if err := os.MkdirAll(localPath, 0o755); err != nil {
+				return "", false, err
+			}
+			return localPath, true, nil
+		}
+		if err := ensureParentDir(localPath); err != nil {
+			return "", false, err
+		}
+		return localPath, false, nil
+	default:
+		return "", false, statErr
+	}
 }
 
 func newTransferClientForRemote(cmd *cobra.Command, ref RemoteRef) (*gclient.Client, error) {
@@ -347,4 +505,34 @@ func newTransferClientForRemote(cmd *cobra.Command, ref RemoteRef) (*gclient.Cli
 		return nil, fmt.Errorf("transfer API not available on remote server")
 	}
 	return client, nil
+}
+
+func DownloadCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:          "download <remote_source> <local_path>",
+		Short:        "Download a single file from a grover server",
+		Args:         cobra.ExactArgs(2),
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			src, err := parseLocation(args[0])
+			if err != nil {
+				return err
+			}
+			if !src.isRemote {
+				return fmt.Errorf("source %q is not a remote reference (remote:path)", args[0])
+			}
+
+			dst, err := parseLocation(args[1])
+			if err != nil {
+				return err
+			}
+			if dst.isRemote {
+				return fmt.Errorf("destination must be a local path when downloading")
+			}
+
+			opts := CopyOptions{Concurrency: 1}
+			return downloadFromRemote(cmd, src, dst, opts)
+		},
+	}
+	return cmd
 }

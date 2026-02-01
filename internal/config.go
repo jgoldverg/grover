@@ -32,6 +32,8 @@ type UdpClientConfig struct {
 	QueueSize          int  `mapstructure:"queue_size"`
 	MaxInFlightPackets int  `mapstructure:"max_in_flight_packets"`
 	RateLimitMbps      int  `mapstructure:"rate_limit_mbps"`
+	LinkBandwidthMbps  int  `mapstructure:"link_bandwidth_mbps"`
+	TargetLossPercent  int  `mapstructure:"target_loss_percent"`
 	MaxRetries         int  `mapstructure:"max_retries"`
 	EnableSack         bool `mapstructure:"enable_sack"`
 	MtuSize            int  `mapstructure:"mtu_size"`
@@ -57,6 +59,8 @@ func LoadUdpClientConfig(configPath string) (*UdpClientConfig, error) {
 	v.SetDefault("queue_size", 65536)
 	v.SetDefault("max_in_flight_packets", 4096)
 	v.SetDefault("rate_limit_mbps", 0)
+	v.SetDefault("link_bandwidth_mbps", 0)
+	v.SetDefault("target_loss_percent", 1)
 	v.SetDefault("max_retries", 5)
 	v.SetDefault("enable_sack", true)
 	v.SetDefault("mtu_size", 1500)
@@ -275,6 +279,8 @@ func (cfg *UdpClientConfig) Save(path string) (string, error) {
 	v.SetDefault("queue_size", cfg.QueueSize)
 	v.SetDefault("max_in_flight_packets", cfg.MaxInFlightPackets)
 	v.SetDefault("rate_limit_mbps", cfg.RateLimitMbps)
+	v.SetDefault("link_bandwidth_mbps", cfg.LinkBandwidthMbps)
+	v.SetDefault("target_loss_percent", cfg.TargetLossPercent)
 	v.SetDefault("max_retries", cfg.MaxRetries)
 	v.SetDefault("enable_sack", cfg.EnableSack)
 	v.SetDefault("mtu_size", cfg.MtuSize)

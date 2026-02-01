@@ -30,7 +30,8 @@ type TransferAPI interface {
 	ReadAt(ctx context.Context, path string, offset int64, p []byte) (int, error)
 	WriteAt(ctx context.Context, path string, offset int64, p []byte) (int, error)
 
-	OpenSession(ctx context.Context, path string, size int64, mode Mode) (Session, error)
+	OpenSession(ctx context.Context, path string, size int64, mode Mode, overwrite backend.OverwritePolicy) (Session, error)
+	Enumerate(ctx context.Context, path string, recursive bool) ([]RemoteFile, error)
 }
 
 // Session represents a prepared data connection for a specific path/object.

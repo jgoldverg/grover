@@ -14,6 +14,7 @@ const (
 	DataHeaderLen        = 26
 	StatusHeaderLen      = 15
 	SackBlockLen         = 8 // two uint32 values
+	MaxSackRanges        = 255
 
 	HelloMagic   = "GRVR"
 	HelloVersion = 1
@@ -106,7 +107,7 @@ type StatusPacket struct {
 }
 
 func (sp *StatusPacket) Encode(dst []byte) (int, error) {
-	if len(sp.Sacks) > 255 {
+	if len(sp.Sacks) > MaxSackRanges {
 		return 0, errors.New("too many SACK ranges")
 	}
 	need := StatusHeaderLen + len(sp.Sacks)*SackBlockLen

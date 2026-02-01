@@ -21,6 +21,12 @@ const (
 	DOWNLOAD
 )
 
+type RemoteFile struct {
+	FullPath     string
+	RelativePath string
+	Size         uint64
+}
+
 type GroverTransferClient struct {
 	cfg            *internal.UdpClientConfig
 	ClientSessions *ClientSessions
@@ -39,7 +45,7 @@ func NewTransferAPI(cfg *internal.UdpClientConfig, cc pb.TransferControlClient, 
 
 // Get we assume a number of things at this point. 1. The file path exists, 2. the remoteURI is working correctly ip:port is valid and server is ready
 func (t *GroverTransferClient) Get(ctx context.Context, path string, w io.Writer) error {
-	sess, err := t.OpenSession(ctx, path, -1, DOWNLOAD)
+	sess, err := t.OpenSession(ctx, path, -1, DOWNLOAD, backend.UNSPECIFIED)
 	if err != nil {
 		return err
 	}
@@ -51,8 +57,19 @@ func (t *GroverTransferClient) Get(ctx context.Context, path string, w io.Writer
 	}
 	defer rc.Close()
 
-	_, err = io.Copy(w, rc)
-	return err
+	copyErr := func() error {
+		_, err := io.Copy(w, rc)
+		return err
+	}()
+	if us, ok := sess.(*udpSession); ok {
+		releaseCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		releaseErr := us.release(releaseCtx, copyErr == nil, 0)
+		cancel()
+		if copyErr == nil && releaseErr != nil {
+			copyErr = releaseErr
+		}
+	}
+	return copyErr
 }
 
 func (t *GroverTransferClient) Put(ctx context.Context, path string, r io.Reader, size int64, overwrite backend.OverwritePolicy) error {
@@ -63,14 +80,27 @@ func (t *GroverTransferClient) Put(ctx context.Context, path string, r io.Reader
 		"parallel_streams":  1,
 		"checksum_verified": true,
 	})
-	sess, err := t.OpenSession(ctx, path, size, UPLOAD)
+	sess, err := t.OpenSession(ctx, path, size, UPLOAD, overwrite)
 	if err != nil {
 		return err
 	}
 	defer sess.Close()
 
-	if err := sess.Write(ctx, r, size, overwrite); err != nil {
-		return err
+	writeErr := sess.Write(ctx, r, size, overwrite)
+	if us, ok := sess.(*udpSession); ok {
+		bytes := uint64(0)
+		if size > 0 {
+			bytes = uint64(size)
+		}
+		releaseCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		releaseErr := us.release(releaseCtx, writeErr == nil, bytes)
+		cancel()
+		if writeErr == nil && releaseErr != nil {
+			writeErr = releaseErr
+		}
+	}
+	if writeErr != nil {
+		return writeErr
 	}
 	internal.Info("udp upload finished", internal.Fields{
 		"path":       path,
@@ -80,7 +110,7 @@ func (t *GroverTransferClient) Put(ctx context.Context, path string, r io.Reader
 }
 
 func (t *GroverTransferClient) ReadAt(ctx context.Context, path string, offset int64, p []byte) (int, error) {
-	sess, err := t.OpenSession(ctx, path, -1, DOWNLOAD)
+	sess, err := t.OpenSession(ctx, path, -1, DOWNLOAD, backend.UNSPECIFIED)
 	if err != nil {
 		return -1, err
 	}
@@ -94,7 +124,7 @@ func (t *GroverTransferClient) ReadAt(ctx context.Context, path string, offset i
 }
 
 func (t *GroverTransferClient) WriteAt(ctx context.Context, path string, offset int64, p []byte) (int, error) {
-	sess, err := t.OpenSession(ctx, path, -1, UPLOAD)
+	sess, err := t.OpenSession(ctx, path, -1, UPLOAD, backend.UNSPECIFIED)
 	if err != nil {
 		return -1, err
 	}
@@ -107,11 +137,36 @@ func (t *GroverTransferClient) WriteAt(ctx context.Context, path string, offset 
 	return wa, nil
 }
 
+func (t *GroverTransferClient) Enumerate(ctx context.Context, path string, recursive bool) ([]RemoteFile, error) {
+	if t.controlPb == nil {
+		return nil, fmt.Errorf("transfer control client unavailable")
+	}
+	req := &pb.EnumeratePathRequest{
+		Path:      path,
+		Recursive: recursive,
+	}
+	resp, err := t.controlPb.EnumeratePath(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	files := resp.GetFiles()
+	out := make([]RemoteFile, 0, len(files))
+	for _, f := range files {
+		out = append(out, RemoteFile{
+			FullPath:     f.GetFullPath(),
+			RelativePath: f.GetRelativePath(),
+			Size:         f.GetSize(),
+		})
+	}
+	return out, nil
+}
+
 func (t *GroverTransferClient) OpenSession(
 	ctx context.Context,
 	path string,
 	size int64,
 	mode Mode,
+	overwrite backend.OverwritePolicy,
 ) (Session, error) {
 	// 1) Map local Mode → gRPC enum.
 	var m pb.OpenSessionRequest_Mode
@@ -178,14 +233,17 @@ func (t *GroverTransferClient) OpenSession(
 	})
 
 	params := SessionParams{
-		SessionID:    sessionIDStr,
-		SessionIDRaw: sessionIDBytes,
-		Token:        string(resp.GetToken()),
-		UDPHost:      udpHost,
-		UDPPort:      resp.GetServerPort(),
-		MTU:          int(resp.GetMtuHint()),
-		BufferSize:   uint64(t.cfg.SocketBufferSize),
-		StreamIDs:    streamIDs,
+		SessionID:         sessionIDStr,
+		SessionIDRaw:      sessionIDBytes,
+		Token:             string(resp.GetToken()),
+		UDPHost:           udpHost,
+		UDPPort:           resp.GetServerPort(),
+		MTU:               int(resp.GetMtuHint()),
+		BufferSize:        uint64(t.cfg.SocketBufferSize),
+		StreamIDs:         streamIDs,
+		MaxInFlightBytes:  t.cfg.SocketBufferSize,
+		LinkBandwidthMbps: t.cfg.LinkBandwidthMbps,
+		TargetLossPercent: t.cfg.TargetLossPercent,
 	}
 
 	// 4) Let ClientSessions handle UDP and session lifecycle.
@@ -194,16 +252,40 @@ func (t *GroverTransferClient) OpenSession(
 		return nil, err
 	}
 
-	// For now, we bind one logical Session to the first streamID.
-	// Multi-stream (striping, etc.) can be added later.
+	leaseReq := &pb.LeaseStreamRequest{
+		SessionId:         sessionIDBytes,
+		Mode:              m,
+		Path:              path,
+		Size:              size,
+		VerifyChecksum:    true,
+		Overwrite:         toProtoOverwrite(overwrite),
+		PreferredStreamId: 0,
+	}
+	leaseResp, err := t.controlPb.LeaseStream(ctx, leaseReq)
+	if err != nil {
+		t.ClientSessions.Release(conn)
+		return nil, fmt.Errorf("lease stream: %w", err)
+	}
+	streamID := leaseResp.GetStreamId()
+	if streamID == 0 && len(streamIDs) > 0 {
+		streamID = streamIDs[0]
+	}
+
+	// For now, we bind one logical Session to the leased stream.
 	sess := &udpSession{
-		conn:     conn,
-		streamID: streamIDs[0],
+		conn:      conn,
+		streamID:  streamID,
+		sessionID: append([]byte(nil), sessionIDBytes...),
+		leaseID:   append([]byte(nil), leaseResp.GetLeaseId()...),
+		control:   t.controlPb,
+	}
+	sess.onClose = func() {
+		t.ClientSessions.Release(conn)
 	}
 
 	internal.Info("udp session ready", internal.Fields{
 		"session_id": sessionIDStr,
-		"stream_id":  streamIDs[0],
+		"stream_id":  streamID,
 		"udp_host":   udpHost,
 		"udp_port":   params.UDPPort,
 		"mtu":        params.MTU,
@@ -239,5 +321,20 @@ func describeOverwrite(p backend.OverwritePolicy) string {
 		return "unspecified"
 	default:
 		return fmt.Sprintf("unknown(%d)", int(p))
+	}
+}
+
+func toProtoOverwrite(p backend.OverwritePolicy) pb.OverwritePolicy {
+	switch p {
+	case backend.ALWAYS:
+		return pb.OverwritePolicy_OVERWRITE_ALWAYS
+	case backend.IF_NEWER:
+		return pb.OverwritePolicy_OVERWRITE_IF_NEWER
+	case backend.NEVER:
+		return pb.OverwritePolicy_OVERWRITE_NEVER
+	case backend.IF_DIFFERENT:
+		return pb.OverwritePolicy_OVERWRITE_IF_DIFFERENT
+	default:
+		return pb.OverwritePolicy_OVERWRITE_UNSPECIFIED
 	}
 }

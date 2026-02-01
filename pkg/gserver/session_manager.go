@@ -47,9 +47,6 @@ type sessionRuntime struct {
 	conn      *net.UDPConn
 	localAddr *net.UDPAddr
 
-	file     *os.File
-	fileSize int64
-
 	remoteMu   sync.RWMutex
 	remoteAddr *net.UDPAddr
 }
@@ -59,6 +56,9 @@ type sessionRuntime struct {
 type ServerSession struct {
 	SessionDescriptor
 	runtime sessionRuntime
+
+	mu      sync.RWMutex
+	streams map[uint32]*streamBinding
 }
 
 func (s *ServerSession) Conn() *net.UDPConn {
@@ -67,18 +67,6 @@ func (s *ServerSession) Conn() *net.UDPConn {
 
 func (s *ServerSession) LocalAddr() *net.UDPAddr {
 	return s.runtime.localAddr
-}
-
-func (s *ServerSession) File() *os.File {
-	return s.runtime.file
-}
-
-func (s *ServerSession) FileSize() int64 {
-	return s.runtime.fileSize
-}
-
-func (s *ServerSession) SetFileSize(size int64) {
-	s.runtime.fileSize = size
 }
 
 func (s *ServerSession) RemoteAddr() *net.UDPAddr {
@@ -97,9 +85,14 @@ func (s *ServerSession) CloseRuntime() {
 	if s.runtime.conn != nil {
 		_ = s.runtime.conn.Close()
 	}
-	if s.runtime.file != nil {
-		_ = s.runtime.file.Close()
+	s.mu.Lock()
+	for id, binding := range s.streams {
+		if binding != nil && binding.file != nil {
+			_ = binding.file.Close()
+		}
+		delete(s.streams, id)
 	}
+	s.mu.Unlock()
 }
 
 const (
@@ -142,18 +135,9 @@ func (sm *ServerSessions) CreateSession(req *pb.OpenSessionRequest) (*ServerSess
 		return nil, fmt.Errorf("allocate udp socket: %w", err)
 	}
 
-	dataFile, fileSize, err := sm.prepareDataFile(req)
-	if err != nil {
-		_ = conn.Close()
-		return nil, err
-	}
-
 	token, err := sm.generateSessionToken()
 	if err != nil {
 		_ = conn.Close()
-		if dataFile != nil {
-			_ = dataFile.Close()
-		}
 		return nil, fmt.Errorf("generate session token: %w", err)
 	}
 
@@ -161,13 +145,12 @@ func (sm *ServerSessions) CreateSession(req *pb.OpenSessionRequest) (*ServerSess
 	sessionID := uuid.New()
 
 	session := &ServerSession{
-		SessionDescriptor: sm.buildDescriptor(req, sessionID, token, streamIDs, fileSize),
+		SessionDescriptor: sm.buildDescriptor(req, sessionID, token, streamIDs, 0),
 		runtime: sessionRuntime{
 			conn:      conn,
 			localAddr: laddr,
-			file:      dataFile,
-			fileSize:  fileSize,
 		},
+		streams: make(map[uint32]*streamBinding),
 	}
 
 	sm.storeSession(session)
@@ -179,9 +162,6 @@ func (sm *ServerSessions) CreateSession(req *pb.OpenSessionRequest) (*ServerSess
 func (sm *ServerSessions) validateOpenRequest(req *pb.OpenSessionRequest) error {
 	if req.GetMode() == pb.OpenSessionRequest_MODE_UNSPECIFIED {
 		return errors.New("session mode is required")
-	}
-	if req.GetPath() == "" {
-		return errors.New("path is required")
 	}
 	return nil
 }
@@ -263,24 +243,97 @@ func (sm *ServerSessions) storeSession(session *ServerSession) {
 	sm.mu.Unlock()
 }
 
+func (sm *ServerSessions) LeaseStream(sessionID string, req *pb.LeaseStreamRequest) (*ServerSession, *streamBinding, error) {
+	if req == nil {
+		return nil, nil, errors.New("lease request is required")
+	}
+	sm.mu.RLock()
+	session, ok := sm.sessions[sessionID]
+	sm.mu.RUnlock()
+	if !ok {
+		return nil, nil, fmt.Errorf("session %s not found", sessionID)
+	}
+	if req.GetPath() == "" {
+		return nil, nil, errors.New("path is required to lease a stream")
+	}
+	if req.GetMode() != session.Mode {
+		return nil, nil, fmt.Errorf("mode %s does not match session mode %s", req.GetMode(), session.Mode)
+	}
+
+	streamID, ok := session.nextIdleStream()
+	if !ok {
+		return nil, nil, fmt.Errorf("no streams available for session %s", sessionID)
+	}
+
+	binding := newStreamBinding(
+		streamID,
+		req.GetMode(),
+		req.GetPath(),
+		req.GetSize(),
+		req.GetVerifyChecksum(),
+		req.GetOverwrite(),
+	)
+
+	var (
+		file *os.File
+		size int64
+		err  error
+	)
+	switch req.GetMode() {
+	case pb.OpenSessionRequest_READ:
+		file, size, err = sm.openFileForRead(binding.path)
+	case pb.OpenSessionRequest_WRITE:
+		file, err = sm.openFileForWrite(binding.path)
+	default:
+		err = fmt.Errorf("unsupported mode %s", req.GetMode())
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	binding.file = file
+	binding.fileSize = size
+
+	session.addBinding(binding)
+	return session, binding, nil
+}
+
+func (sm *ServerSessions) ReleaseStream(sessionID string, streamID uint32, leaseID uuid.UUID, commit bool) (*streamBinding, error) {
+	sm.mu.RLock()
+	session, ok := sm.sessions[sessionID]
+	sm.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("session %s not found", sessionID)
+	}
+	binding := session.removeBinding(streamID)
+	if binding == nil {
+		return nil, fmt.Errorf("stream %d is not leased", streamID)
+	}
+	if binding.leaseID != leaseID {
+		return nil, fmt.Errorf("lease mismatch for stream %d", streamID)
+	}
+
+	if binding.mode == pb.OpenSessionRequest_WRITE {
+		if commit && binding.file != nil {
+			_ = binding.file.Sync()
+		} else if !commit {
+			path := binding.path
+			binding.closeFile()
+			_ = os.Remove(path)
+			return binding, nil
+		}
+	}
+	binding.closeFile()
+	return binding, nil
+}
+
 func (sm *ServerSessions) launchSession(meta *ServerSession) {
 	if meta == nil {
 		return
 	}
 
-	switch meta.Mode {
-	case pb.OpenSessionRequest_READ:
-		go sm.runDownload(meta)
-	case pb.OpenSessionRequest_WRITE:
-		go sm.runUpload(meta)
-	default:
-		internal.Debug("session mode not implemented yet", internal.Fields{
-			internal.FieldMsg: "mode not supported for udp transfer",
-			"action":          "noop",
-			"mode":            meta.Mode.String(),
-			"session_id":      meta.ID.String(),
-		})
-	}
+	runner := newUDPSessionRunner(sm, meta)
+	go runner.run()
 }
 
 // CloseSession tears down the UDP socket and removes all metadata for the
