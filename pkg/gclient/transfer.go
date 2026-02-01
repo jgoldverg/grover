@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,8 +20,9 @@ import (
 )
 
 const (
-	defaultReadTimeout  = 2 * time.Second
-	defaultWriteTimeout = 2 * time.Second
+	defaultReadTimeout   = 2 * time.Second
+	defaultWriteTimeout  = 2 * time.Second
+	enobufsRetryInterval = 5 * time.Millisecond
 )
 
 type Mode int
@@ -317,6 +319,10 @@ func (t *GroverTransferClient) dialSession(ctx context.Context, info *sessionInf
 	if err != nil {
 		return nil, err
 	}
+	if t.cfg != nil && t.cfg.SocketBufferSize > 0 {
+		_ = conn.SetWriteBuffer(t.cfg.SocketBufferSize)
+		_ = conn.SetReadBuffer(t.cfg.SocketBufferSize)
+	}
 
 	if err := sendHello(ctx, conn, info.idRaw, info.token); err != nil {
 		conn.Close()
@@ -354,12 +360,7 @@ func sendHello(ctx context.Context, conn *net.UDPConn, sessionID []byte, token [
 	}
 
 	internal.Info("sending udp hello", fields)
-	if err := setWriteDeadline(ctx, conn); err != nil {
-		return err
-	}
-	defer conn.SetWriteDeadline(time.Time{})
-
-	if _, err := conn.Write(tmp[:n]); err != nil {
+	if err := writePacketWithRetry(ctx, conn, tmp[:n]); err != nil {
 		internal.Error("failed to send udp hello", internal.Fields{
 			internal.FieldError: err.Error(),
 			"session_id":        fields["session_id"],
@@ -400,10 +401,7 @@ func streamUpload(ctx context.Context, conn *net.UDPConn, info *sessionInfo, str
 			if err != nil {
 				return offset, fmt.Errorf("encode data packet: %w", err)
 			}
-			if err := setWriteDeadline(ctx, conn); err != nil {
-				return offset, err
-			}
-			if _, err := conn.Write(packetBuf[:pktLen]); err != nil {
+			if err := writePacketWithRetry(ctx, conn, packetBuf[:pktLen]); err != nil {
 				return offset, err
 			}
 			internal.Debug("client udp data tx", internal.Fields{
@@ -564,4 +562,58 @@ func toProtoOverwrite(p backend.OverwritePolicy) pb.OverwritePolicy {
 	default:
 		return pb.OverwritePolicy_OVERWRITE_UNSPECIFIED
 	}
+}
+func writePacketWithRetry(ctx context.Context, conn *net.UDPConn, packet []byte) error {
+	for {
+		if err := setWriteDeadline(ctx, conn); err != nil {
+			return err
+		}
+		if _, err := conn.Write(packet); err != nil {
+			if isNoBufferSpaceErr(err) {
+				internal.Debug("udp write hit ENOBUFS, backing off", internal.Fields{
+					internal.FieldError: err.Error(),
+				})
+				if err := waitForRetry(ctx, enobufsRetryInterval); err != nil {
+					return err
+				}
+				continue
+			}
+			return err
+		}
+		return nil
+	}
+}
+
+func waitForRetry(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		d = time.Millisecond
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func isNoBufferSpaceErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.ENOBUFS) {
+		return true
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		if errors.Is(opErr.Err, syscall.ENOBUFS) {
+			return true
+		}
+		var sysErr *os.SyscallError
+		if errors.As(opErr.Err, &sysErr) {
+			return errors.Is(sysErr.Err, syscall.ENOBUFS)
+		}
+	}
+	return false
 }
