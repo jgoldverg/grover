@@ -70,7 +70,7 @@ func (gc *GudpControl) OpenSession(ctx context.Context, req *pb.OpenSessionReque
 			}
 			return 0
 		}(),
-		StreamIds:  append([]uint32(nil), meta.StreamIDs...),
+		StreamIds:  []uint32{meta.StreamID},
 		MtuHint:    meta.MTU,
 		TotalSize:  meta.TotalSize,
 		TtlSeconds: meta.TTLSeconds,
@@ -106,15 +106,14 @@ func (gc *GudpControl) LeaseStream(ctx context.Context, req *pb.LeaseStreamReque
 		return nil, status.Errorf(codes.InvalidArgument, "invalid session id: %v", err)
 	}
 
-	_, binding, err := gc.sm.LeaseStream(sessionUUID.String(), req)
+	session, leaseID, err := gc.sm.LeaseStream(sessionUUID.String(), req)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "lease stream: %v", err)
 	}
 
-	leaseBytes := append([]byte(nil), binding.leaseID[:]...)
 	return &pb.LeaseStreamResponse{
-		StreamId: binding.streamID,
-		LeaseId:  leaseBytes,
+		StreamId: session.StreamID,
+		LeaseId:  leaseID[:],
 	}, nil
 }
 
@@ -134,7 +133,7 @@ func (gc *GudpControl) ReleaseStream(ctx context.Context, req *pb.ReleaseStreamR
 		return nil, status.Errorf(codes.InvalidArgument, "invalid lease id: %v", err)
 	}
 
-	if _, err := gc.sm.ReleaseStream(sessionUUID.String(), req.GetStreamId(), leaseUUID, req.GetCommit()); err != nil {
+	if err := gc.sm.ReleaseStream(sessionUUID.String(), req.GetStreamId(), leaseUUID, req.GetCommit()); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "release stream: %v", err)
 	}
 

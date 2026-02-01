@@ -153,13 +153,8 @@ func (r *udpSessionRunner) receiveFile() error {
 	if conn == nil {
 		return errors.New("nil udp connection for session")
 	}
-	if len(r.session.StreamIDs) == 0 {
-		return errors.New("no stream IDs configured for upload session")
-	}
-
-	validStreams := make(map[uint32]struct{}, len(r.session.StreamIDs))
-	for _, sid := range r.session.StreamIDs {
-		validStreams[sid] = struct{}{}
+	if r.session.file == nil {
+		return errors.New("session missing destination file")
 	}
 
 	buf := make([]byte, r.recvBufferSize())
@@ -167,6 +162,7 @@ func (r *udpSessionRunner) receiveFile() error {
 	var sackScratch []udpwire.SackRange
 	var packet udpwire.DataPacket
 	sessionKey := binary.BigEndian.Uint32(r.session.ID[:4])
+	streamID := r.session.StreamID
 
 	for {
 		n, addr, err := conn.ReadFromUDP(buf)
@@ -188,39 +184,34 @@ func (r *udpSessionRunner) receiveFile() error {
 		if _, err := packet.Decode(buf[:n]); err != nil {
 			continue
 		}
-		binding := r.session.binding(packet.StreamID)
-		if binding == nil {
+		if packet.StreamID != streamID {
 			continue
 		}
-		file := binding.file
-		if file == nil {
-			continue
-		}
+		file := r.session.file
 		internal.Info("server udp data rx", internal.Fields{
 			"session": r.session.ID.String(),
-			"stream":  binding.streamID,
+			"stream":  streamID,
 			"seq":     packet.Seq,
 			"bytes":   len(packet.Payload),
 		})
 
-		if packet.Offset != binding.offset {
-			if packet.Offset < binding.offset {
+		if packet.Offset != r.session.TotalSize {
+			if packet.Offset < r.session.TotalSize {
 				continue
 			}
 			if _, err := file.Seek(int64(packet.Offset), io.SeekStart); err != nil {
 				return fmt.Errorf("seek file: %w", err)
 			}
-			binding.offset = packet.Offset
+			r.session.TotalSize = packet.Offset
 		}
 
 		if _, err := file.Write(packet.Payload); err != nil {
 			return fmt.Errorf("write file: %w", err)
 		}
-		binding.offset += uint64(len(packet.Payload))
-		binding.fileSize = int64(binding.offset)
+		r.session.TotalSize += uint64(len(packet.Payload))
 
-		if st := binding.tracker; st != nil && st.OnPacket(packet.Seq) {
-			sackScratch = r.emitStatusPacket(conn, addr, st, packet.StreamID, sessionKey, sackScratch, statusBuf)
+		if st := r.session.tracker; st != nil && st.OnPacket(packet.Seq) {
+			sackScratch = r.emitStatusPacket(conn, addr, st, streamID, sessionKey, sackScratch, statusBuf)
 		}
 	}
 }
@@ -230,8 +221,8 @@ func (r *udpSessionRunner) sendFile(addr *net.UDPAddr) error {
 	if conn == nil {
 		return errors.New("nil udp connection for session")
 	}
-	if len(r.session.StreamIDs) == 0 {
-		return errors.New("no stream IDs configured for session")
+	if r.session.StreamID == 0 {
+		return errors.New("no stream ID configured for session")
 	}
 	if addr == nil {
 		return errors.New("nil remote address for session")
@@ -247,12 +238,11 @@ func (r *udpSessionRunner) sendFile(addr *net.UDPAddr) error {
 	statusBuf := make([]byte, r.recvBufferSize())
 	var statusPkt udpwire.StatusPacket
 	sessionID32 := binary.BigEndian.Uint32(r.session.ID[:4])
-	streamID := r.session.StreamIDs[0]
-	binding := r.session.binding(streamID)
-	if binding == nil || binding.file == nil {
+	streamID := r.session.StreamID
+	file := r.session.file
+	if file == nil {
 		return fmt.Errorf("stream %d has no bound file", streamID)
 	}
-	file := binding.file
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("seek file: %w", err)
 	}
