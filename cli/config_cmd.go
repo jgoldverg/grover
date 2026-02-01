@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -103,6 +104,11 @@ func updateServerConfig(cmd *cobra.Command, cfgPathPtr *string, flagSet *pflag.F
 	if path == "" {
 		path = defaultServerConfigPath()
 	}
+
+	if err := ensureServerConfigFile(path); err != nil {
+		return err
+	}
+
 	cfg, err := internal.LoadServerConfig(path)
 	if err != nil {
 		return fmt.Errorf("load server config: %w", err)
@@ -142,4 +148,21 @@ func defaultServerConfigPath() string {
 		return "server_config.toml"
 	}
 	return filepath.Join(home, ".grover", "server_config.toml")
+}
+
+func ensureServerConfigFile(path string) error {
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("stat server config: %w", err)
+	}
+
+	defaultCfg, err := internal.LoadServerConfig("")
+	if err != nil {
+		return fmt.Errorf("load default server config: %w", err)
+	}
+	if _, err := defaultCfg.Save(path); err != nil {
+		return fmt.Errorf("create server config: %w", err)
+	}
+	return nil
 }
