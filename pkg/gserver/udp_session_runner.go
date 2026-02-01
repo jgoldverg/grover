@@ -178,7 +178,11 @@ func (r *udpSessionRunner) receiveFile() error {
 		if n == 0 {
 			continue
 		}
+		internal.Info("recieved some kind of packet", internal.Fields{
+			"packet_length": len(buf),
+		})
 		if !udpwire.IsDataPacket(buf[:n]) {
+			internal.Info("We recieved something other than a data packet", nil)
 			continue
 		}
 		if _, err := packet.Decode(buf[:n]); err != nil {
