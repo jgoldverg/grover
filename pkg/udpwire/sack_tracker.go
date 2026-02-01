@@ -61,7 +61,7 @@ func (st *SackTracker) OnPacket(seq uint32) bool {
 			return false
 		case seq == g.End+1:
 			gaps[i].End++
-			if i+1 <= len(gaps) {
+			if i+1 < len(gaps) {
 				next := gaps[i+1]
 				if gaps[i].End+1 >= next.Start {
 					if next.End > gaps[i].End {
@@ -69,9 +69,9 @@ func (st *SackTracker) OnPacket(seq uint32) bool {
 					}
 					gaps = append(gaps[:i+1], gaps[i+2:]...)
 				}
-				st.gaps = gaps
-				return true
 			}
+			st.gaps = gaps
+			return true
 		}
 	}
 	st.gaps = append(st.gaps, SackRange{Start: seq, End: seq})
