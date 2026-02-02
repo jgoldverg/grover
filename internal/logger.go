@@ -91,6 +91,11 @@ func getLevel() Level {
 	return currentLevel
 }
 
+// CurrentLogLevel returns the currently configured log level.
+func CurrentLogLevel() Level {
+	return getLevel()
+}
+
 func shouldLog(level Level) bool {
 	return level >= getLevel()
 }

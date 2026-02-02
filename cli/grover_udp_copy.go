@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -13,8 +14,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jgoldverg/grover/backend"
+	"github.com/jgoldverg/grover/cli/output"
 	"github.com/jgoldverg/grover/internal"
 	"github.com/jgoldverg/grover/pkg/gclient"
+	"github.com/jgoldverg/grover/pkg/metrics"
 	"github.com/jgoldverg/grover/pkg/util"
 	"github.com/spf13/cobra"
 )
@@ -43,6 +46,7 @@ func SimpleCopy() *cobra.Command {
 		Args:         cobra.ExactArgs(2),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			printer := output.NewPrinter()
 			src, err := parseLocation(args[0])
 			if err != nil {
 				return err
@@ -60,9 +64,9 @@ func SimpleCopy() *cobra.Command {
 				if opts.DeleteSource {
 					return fmt.Errorf("--delete-source is only supported for local sources")
 				}
-				return downloadFromRemote(cmd, src, dst, opts)
+				return downloadFromRemote(cmd, src, dst, opts, printer)
 			default:
-				return uploadToRemote(cmd, src, dst, opts)
+				return uploadToRemote(cmd, src, dst, opts, printer)
 			}
 		},
 	}
@@ -123,7 +127,7 @@ func parseLocation(input string) (RemoteRef, error) {
 	return ref, nil
 }
 
-func downloadFromRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts CopyOptions) error {
+func downloadFromRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts CopyOptions, printer *output.Printer) error {
 	if dst.isRemote {
 		return fmt.Errorf("destination must be local when downloading")
 	}
@@ -132,6 +136,15 @@ func downloadFromRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts C
 	if strings.TrimSpace(remoteRoot) == "" {
 		return fmt.Errorf("remote source %q is missing a path", src.Raw)
 	}
+
+	prevLevel := internal.CurrentLogLevel()
+	internal.SetLogLevel(internal.LevelWarn)
+	defer internal.SetLogLevel(prevLevel)
+
+	internal.Debug("starting download", internal.Fields{
+		"source":      src.Raw,
+		"destination": dst.Raw,
+	})
 
 	client, err := newTransferClientForRemote(cmd, src)
 	if err != nil {
@@ -142,6 +155,11 @@ func downloadFromRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts C
 	transfer := client.Transfer()
 	if transfer == nil {
 		return fmt.Errorf("transfer service unavailable on remote server")
+	}
+
+	collector := metrics.NewTransferCollector("grover")
+	if aware, ok := transfer.(*gclient.GroverTransferClient); ok {
+		aware.SetMetricsCollector(collector)
 	}
 
 	files, err := transfer.Enumerate(cmd.Context(), remoteRoot, true)
@@ -167,16 +185,70 @@ func downloadFromRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts C
 		if treatAsDir {
 			localTarget = filepath.Join(localBase, filepath.FromSlash(rel))
 		}
+		label := rel
+		if strings.TrimSpace(label) == "" {
+			label = filepath.Base(localTarget)
+		}
+		if strings.TrimSpace(label) == "" {
+			label = filepath.Base(rf.FullPath)
+		}
 		jobs = append(jobs, downloadJob{
 			remotePath: rf.FullPath,
 			localPath:  localTarget,
+			label:      label,
+			size:       rf.Size,
 		})
 	}
+
+	var (
+		progress *output.FileProgressManager
+		display  *output.MetricsDisplay
+	)
+	if len(jobs) > 0 {
+		fp := output.NewFileProgressManager("Downloads")
+		if err := fp.Start(); err != nil {
+			internal.Debug("unable to start download progress", internal.Fields{
+				internal.FieldError: err.Error(),
+			})
+		} else {
+			progress = fp
+		}
+	}
+
+	display = output.NewMetricsDisplay("Network Telemetry", collector)
+	if progress != nil {
+		if writer := progress.NewSection(); writer != nil {
+			display = display.WithWriter(writer)
+		}
+	}
+	var (
+		stopDisplay  = func() {}
+		stopProgress = func() {}
+	)
+	if err := display.Start(cmd.Context()); err != nil {
+		internal.Debug("unable to start metrics dashboard", internal.Fields{
+			internal.FieldError: err.Error(),
+		})
+	} else {
+		stopDisplay = func() { display.Stop() }
+	}
+	if progress != nil {
+		stopProgress = func() { progress.Stop() }
+	}
+	cleanup := func() {
+		stopDisplay()
+		stopProgress()
+	}
+	defer cleanup()
 
 	jobFns := make([]jobFunc, 0, len(jobs))
 	for _, job := range jobs {
 		job := job
 		jobFns = append(jobFns, func(ctx context.Context) error {
+			internal.Debug("downloading file", internal.Fields{
+				"remote": job.remotePath,
+				"local":  job.localPath,
+			})
 			if err := ensureParentDir(job.localPath); err != nil {
 				return err
 			}
@@ -186,24 +258,41 @@ func downloadFromRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts C
 			}
 			defer out.Close()
 
-			if err := transfer.Get(ctx, job.remotePath, out); err != nil {
+			writer := io.Writer(out)
+			writer = wrapWriterWithDiskMetrics(writer, collector)
+			if progress != nil {
+				writer = progress.WrapWriter(job.label, job.size, writer)
+			}
+			if err := transfer.Get(ctx, job.remotePath, writer); err != nil {
 				return fmt.Errorf("download %s -> %s: %w", job.remotePath, job.localPath, err)
 			}
+			internal.Debug("download complete", internal.Fields{
+				"remote": job.remotePath,
+				"local":  job.localPath,
+			})
 			return nil
 		})
 	}
 
-	return runJobs(cmd.Context(), opts.effectiveConcurrency(), jobFns)
+	err = runJobs(cmd.Context(), opts.effectiveConcurrency(), jobFns)
+	cleanup()
+	cleanup = func() {}
+	return err
 }
 
-func uploadToRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts CopyOptions) error {
+func uploadToRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts CopyOptions, printer *output.Printer) error {
 	if !dst.isRemote {
 		return fmt.Errorf("destination must be remote when uploading")
 	}
 	if src.isRemote {
 		return fmt.Errorf("source must be local when uploading")
 	}
-	internal.Info("starting upload", internal.Fields{
+
+	prevLevel := internal.CurrentLogLevel()
+	internal.SetLogLevel(internal.LevelWarn)
+	defer internal.SetLogLevel(prevLevel)
+
+	internal.Debug("starting upload", internal.Fields{
 		"source":      src.Raw,
 		"destination": dst.Raw,
 	})
@@ -221,11 +310,6 @@ func uploadToRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts CopyO
 		return fmt.Errorf("destination %q must end with / when uploading a directory", dst.Raw)
 	}
 
-	internal.Debug("resolved transfer paths", internal.Fields{
-		"local_path":    localPath,
-		"remote_path":   remotePath,
-		"delete_source": opts.DeleteSource,
-	})
 	client, err := newTransferClientForRemote(cmd, dst)
 	if err != nil {
 		return err
@@ -237,21 +321,86 @@ func uploadToRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts CopyO
 		return fmt.Errorf("transfer service unavailable on remote server")
 	}
 
+	collector := metrics.NewTransferCollector("grover")
+	if aware, ok := transfer.(*gclient.GroverTransferClient); ok {
+		aware.SetMetricsCollector(collector)
+	}
+
 	jobs, err := buildUploadJobs(localPath, remotePath, dst.ExpectDirectory, info)
 	if err != nil {
 		return err
 	}
+
+	var (
+		progress *output.FileProgressManager
+		display  *output.MetricsDisplay
+	)
+	if len(jobs) > 0 {
+		fp := output.NewFileProgressManager("Uploads")
+		if err := fp.Start(); err != nil {
+			internal.Debug("unable to start upload progress", internal.Fields{
+				internal.FieldError: err.Error(),
+			})
+		} else {
+			progress = fp
+		}
+	}
+
+	display = output.NewMetricsDisplay("Network Telemetry", collector)
+	if progress != nil {
+		if writer := progress.NewSection(); writer != nil {
+			display = display.WithWriter(writer)
+		}
+	}
+	var (
+		stopDisplay  = func() {}
+		stopProgress = func() {}
+	)
+	if err := display.Start(cmd.Context()); err != nil {
+		internal.Debug("unable to start metrics dashboard", internal.Fields{
+			internal.FieldError: err.Error(),
+		})
+	} else {
+		stopDisplay = func() { display.Stop() }
+	}
+	if progress != nil {
+		stopProgress = func() { progress.Stop() }
+	}
+	cleanup := func() {
+		stopDisplay()
+		stopProgress()
+	}
+	defer cleanup()
+
 	jobFns := make([]jobFunc, 0, len(jobs))
 	for _, job := range jobs {
 		job := job
 		jobFns = append(jobFns, func(ctx context.Context) error {
+			internal.Debug("uploading file", internal.Fields{
+				"local":  job.localPath,
+				"remote": job.remotePath,
+			})
 			f, err := os.Open(job.localPath)
 			if err != nil {
 				return fmt.Errorf("open %s: %w", job.localPath, err)
 			}
 			defer f.Close()
 
-			if err := transfer.Put(ctx, job.remotePath, f, job.size, backend.ALWAYS); err != nil {
+			reader := io.Reader(f)
+			reader = wrapReaderWithDiskMetrics(reader, collector)
+			if progress != nil {
+				total := uint64(0)
+				if job.size > 0 {
+					total = uint64(job.size)
+				}
+				label := filepath.Base(job.localPath)
+				if strings.TrimSpace(label) == "" {
+					label = job.localPath
+				}
+				reader = progress.WrapReader(label, total, reader)
+			}
+
+			if err := transfer.Put(ctx, job.remotePath, reader, job.size, backend.ALWAYS); err != nil {
 				return fmt.Errorf("upload %s -> %s: %w", job.localPath, job.remotePath, err)
 			}
 			if opts.DeleteSource {
@@ -259,11 +408,18 @@ func uploadToRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts CopyO
 					return fmt.Errorf("remove source %s: %w", job.localPath, err)
 				}
 			}
+			internal.Debug("upload complete", internal.Fields{
+				"local":  job.localPath,
+				"remote": job.remotePath,
+			})
 			return nil
 		})
 	}
 
-	return runJobs(cmd.Context(), opts.effectiveConcurrency(), jobFns)
+	err = runJobs(cmd.Context(), opts.effectiveConcurrency(), jobFns)
+	cleanup()
+	cleanup = func() {}
+	return err
 }
 
 func remotePathString(ref RemoteRef) string {
@@ -316,6 +472,58 @@ type uploadJob struct {
 type downloadJob struct {
 	remotePath string
 	localPath  string
+	label      string
+	size       uint64
+}
+
+func wrapReaderWithDiskMetrics(r io.Reader, collector *metrics.TransferCollector) io.Reader {
+	if collector == nil || r == nil {
+		return r
+	}
+	return &metricReader{
+		reader: r,
+		hook: func(n int) {
+			collector.ObserveDiskRead(n)
+		},
+	}
+}
+
+func wrapWriterWithDiskMetrics(w io.Writer, collector *metrics.TransferCollector) io.Writer {
+	if collector == nil || w == nil {
+		return w
+	}
+	return &metricWriter{
+		writer: w,
+		hook: func(n int) {
+			collector.ObserveDiskWrite(n)
+		},
+	}
+}
+
+type metricReader struct {
+	reader io.Reader
+	hook   func(int)
+}
+
+func (mr *metricReader) Read(p []byte) (int, error) {
+	n, err := mr.reader.Read(p)
+	if n > 0 && mr.hook != nil {
+		mr.hook(n)
+	}
+	return n, err
+}
+
+type metricWriter struct {
+	writer io.Writer
+	hook   func(int)
+}
+
+func (mw *metricWriter) Write(p []byte) (int, error) {
+	n, err := mw.writer.Write(p)
+	if n > 0 && mw.hook != nil {
+		mw.hook(n)
+	}
+	return n, err
 }
 
 func (opts CopyOptions) effectiveConcurrency() int {
@@ -351,10 +559,6 @@ func buildUploadJobs(localRoot string, remoteBase string, destIsDir bool, info o
 				localPath:  p,
 				remotePath: remotePath,
 				size:       entryInfo.Size(),
-			})
-			internal.Info("file for job\n", internal.Fields{
-				"file_path": remotePath,
-				"size":      entryInfo.Size(),
 			})
 			return nil
 		})
@@ -522,7 +726,8 @@ func DownloadCommand() *cobra.Command {
 			}
 
 			opts := CopyOptions{Concurrency: 1}
-			return downloadFromRemote(cmd, src, dst, opts)
+			printer := output.NewPrinter()
+			return downloadFromRemote(cmd, src, dst, opts, printer)
 		},
 	}
 	return cmd

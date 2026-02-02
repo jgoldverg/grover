@@ -16,6 +16,7 @@ import (
 	"github.com/jgoldverg/grover/backend"
 	"github.com/jgoldverg/grover/internal"
 	pb "github.com/jgoldverg/grover/pkg/groverpb/groverudpv1"
+	"github.com/jgoldverg/grover/pkg/metrics"
 	"github.com/jgoldverg/grover/pkg/udpwire"
 )
 
@@ -39,10 +40,18 @@ type RemoteFile struct {
 	Size         uint64
 }
 
+type pendingPacket struct {
+	seq        uint32
+	payloadLen int
+	data       []byte
+	sentAt     time.Time
+}
+
 type GroverTransferClient struct {
 	cfg          *internal.UdpClientConfig
 	controlPb    pb.TransferControlClient
 	fallbackHost string
+	collector    *metrics.TransferCollector
 }
 
 func NewTransferAPI(cfg *internal.UdpClientConfig, cc pb.TransferControlClient, fallbackHost string) *GroverTransferClient {
@@ -51,6 +60,16 @@ func NewTransferAPI(cfg *internal.UdpClientConfig, cc pb.TransferControlClient, 
 		controlPb:    cc,
 		fallbackHost: strings.TrimSpace(fallbackHost),
 	}
+}
+
+// SetMetricsCollector installs a collector that will be updated as transfers run.
+func (t *GroverTransferClient) SetMetricsCollector(col *metrics.TransferCollector) {
+	t.collector = col
+}
+
+// MetricsCollector exposes the current collector (if any).
+func (t *GroverTransferClient) MetricsCollector() *metrics.TransferCollector {
+	return t.collector
 }
 
 func (t *GroverTransferClient) Get(ctx context.Context, path string, w io.Writer) error {
@@ -70,7 +89,7 @@ func (t *GroverTransferClient) Get(ctx context.Context, path string, w io.Writer
 		return err
 	}
 
-	bytesRead, readErr := streamDownload(ctx, conn, info, lease.streamID, w, t.recvBufferSize())
+	bytesRead, readErr := streamDownload(ctx, conn, info, lease.streamID, w, t.recvBufferSize(), t.collector)
 	releaseErr := t.releaseStream(ctx, info, lease, readErr == nil, bytesRead)
 	if readErr != nil {
 		return readErr
@@ -103,7 +122,7 @@ func (t *GroverTransferClient) Put(ctx context.Context, path string, r io.Reader
 		return err
 	}
 
-	bytesWritten, writeErr := streamUpload(ctx, conn, info, lease.streamID, r)
+	bytesWritten, writeErr := streamUpload(ctx, conn, info, lease.streamID, r, t.collector)
 	releaseErr := t.releaseStream(ctx, info, lease, writeErr == nil, bytesWritten)
 	if writeErr != nil {
 		return writeErr
@@ -376,7 +395,7 @@ func sendHello(ctx context.Context, conn *net.UDPConn, sessionID []byte, token [
 	return nil
 }
 
-func streamUpload(ctx context.Context, conn *net.UDPConn, info *sessionInfo, streamID uint32, src io.Reader) (uint64, error) {
+func streamUpload(ctx context.Context, conn *net.UDPConn, info *sessionInfo, streamID uint32, src io.Reader, collector *metrics.TransferCollector) (uint64, error) {
 	payloadSize := payloadSizeFromMTU(info.mtu)
 	payloadBuf := make([]byte, payloadSize)
 	packetBuf := make([]byte, udpwire.DataHeaderLen+payloadSize+4)
@@ -384,8 +403,11 @@ func streamUpload(ctx context.Context, conn *net.UDPConn, info *sessionInfo, str
 	var ackPkt udpwire.StatusPacket
 	sessionKey := binary.BigEndian.Uint32(info.idRaw[:4])
 
-	var seq uint32
-	var offset uint64
+	var (
+		seq     uint32
+		offset  uint64
+		pending = make([]pendingPacket, 0, 256)
+	)
 
 	defer conn.SetWriteDeadline(time.Time{})
 
@@ -407,14 +429,13 @@ func streamUpload(ctx context.Context, conn *net.UDPConn, info *sessionInfo, str
 			if err != nil {
 				return offset, fmt.Errorf("encode data packet: %w", err)
 			}
-			if err := writePacketWithRetry(ctx, conn, packetBuf[:pktLen]); err != nil {
+			packetCopy := make([]byte, pktLen)
+			copy(packetCopy, packetBuf[:pktLen])
+			if err := writePacketWithRetry(ctx, conn, packetCopy); err != nil {
 				return offset, err
 			}
-			if err := waitForAck(ctx, conn, streamID, seq, ackBuf, &ackPkt); err != nil {
-				if err := retrySendPacket(ctx, conn, packetBuf[:pktLen], streamID, seq, ackBuf, &ackPkt); err != nil {
-					return offset, err
-				}
-			}
+			recordPacketSend(collector)
+			recordSendMetric(collector, n, false)
 			internal.Debug("client udp data tx", internal.Fields{
 				"session": info.id,
 				"stream":  streamID,
@@ -422,6 +443,15 @@ func streamUpload(ctx context.Context, conn *net.UDPConn, info *sessionInfo, str
 				"bytes":   n,
 			})
 			offset += uint64(n)
+			pending = append(pending, pendingPacket{
+				seq:        seq,
+				payloadLen: n,
+				data:       packetCopy,
+				sentAt:     time.Now(),
+			})
+			if err := drainStatusPackets(ctx, conn, streamID, ackBuf, &ackPkt, &pending, collector, true); err != nil {
+				return offset, err
+			}
 		}
 
 		if errors.Is(readErr, io.EOF) {
@@ -431,10 +461,13 @@ func streamUpload(ctx context.Context, conn *net.UDPConn, info *sessionInfo, str
 			return offset, readErr
 		}
 	}
+	if err := drainStatusPackets(ctx, conn, streamID, ackBuf, &ackPkt, &pending, collector, false); err != nil {
+		return offset, err
+	}
 	return offset, nil
 }
 
-func streamDownload(ctx context.Context, conn *net.UDPConn, info *sessionInfo, streamID uint32, dst io.Writer, bufSize int) (uint64, error) {
+func streamDownload(ctx context.Context, conn *net.UDPConn, info *sessionInfo, streamID uint32, dst io.Writer, bufSize int, collector *metrics.TransferCollector) (uint64, error) {
 	if bufSize <= 0 {
 		bufSize = 64 * 1024
 	}
@@ -478,6 +511,8 @@ func streamDownload(ctx context.Context, conn *net.UDPConn, info *sessionInfo, s
 			if _, err := dst.Write(dp.Payload); err != nil {
 				return total, err
 			}
+			recordPacketReceive(collector)
+			recordReceiveMetric(collector, len(dp.Payload))
 			total += uint64(len(dp.Payload))
 			internal.Debug("client udp data rx", internal.Fields{
 				"session": info.id,
@@ -573,6 +608,157 @@ func toProtoOverwrite(p backend.OverwritePolicy) pb.OverwritePolicy {
 	default:
 		return pb.OverwritePolicy_OVERWRITE_UNSPECIFIED
 	}
+}
+
+func recordSendMetric(col *metrics.TransferCollector, bytes int, retrans bool) {
+	if col == nil || bytes <= 0 {
+		return
+	}
+	col.ObserveSend(bytes, retrans)
+}
+
+func recordReceiveMetric(col *metrics.TransferCollector, bytes int) {
+	if col == nil || bytes <= 0 {
+		return
+	}
+	col.ObserveReceive(bytes)
+}
+
+func recordPacketSend(col *metrics.TransferCollector) {
+	if col == nil {
+		return
+	}
+	col.ObservePacketSend()
+}
+
+func recordPacketReceive(col *metrics.TransferCollector) {
+	if col == nil {
+		return
+	}
+	col.ObservePacketReceive()
+}
+
+func recordAckMetric(col *metrics.TransferCollector, d time.Duration) {
+	if col == nil || d <= 0 {
+		return
+	}
+	col.ObserveAck(d)
+}
+
+func drainStatusPackets(
+	ctx context.Context,
+	conn *net.UDPConn,
+	streamID uint32,
+	ackBuf []byte,
+	ackPkt *udpwire.StatusPacket,
+	pending *[]pendingPacket,
+	collector *metrics.TransferCollector,
+	nonBlocking bool,
+) error {
+	if len(*pending) == 0 {
+		return nil
+	}
+	attempts := 0
+	for len(*pending) > 0 {
+		if nonBlocking {
+			if err := conn.SetReadDeadline(time.Now()); err != nil {
+				return err
+			}
+		} else {
+			if err := setReadDeadline(ctx, conn); err != nil {
+				return err
+			}
+		}
+		readStart := time.Now()
+		n, err := conn.Read(ackBuf)
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				if nonBlocking {
+					return nil
+				}
+				attempts++
+				if attempts >= maxAckRetries {
+					lastSeq := (*pending)[len(*pending)-1].seq
+					return fmt.Errorf("failed to receive ack for seq %d after %d attempts", lastSeq, maxAckRetries)
+				}
+				if err := retransmitPending(ctx, conn, pending, collector); err != nil {
+					return err
+				}
+				continue
+			}
+			return err
+		}
+		if n == 0 || !udpwire.IsStatusPacket(ackBuf[:n]) {
+			continue
+		}
+		if _, err := ackPkt.Decode(ackBuf[:n]); err != nil {
+			continue
+		}
+		if ackPkt.StreamID != streamID {
+			continue
+		}
+		attempts = 0
+		advancePendingWithAck(ackPkt, pending, collector, readStart)
+		if nonBlocking && len(*pending) == 0 {
+			return nil
+		}
+	}
+	return nil
+}
+
+func advancePendingWithAck(pkt *udpwire.StatusPacket, pending *[]pendingPacket, collector *metrics.TransferCollector, ackReceived time.Time) {
+	if len(*pending) == 0 {
+		return
+	}
+	p := *pending
+	idx := 0
+	var ackSample time.Duration
+	for idx < len(p) && p[idx].seq <= pkt.AckSeq {
+		if !p[idx].sentAt.IsZero() {
+			if sample := ackReceived.Sub(p[idx].sentAt); sample > 0 {
+				ackSample = sample
+			}
+		}
+		idx++
+	}
+	if ackSample > 0 {
+		recordAckMetric(collector, ackSample)
+	}
+	p = p[idx:]
+	if len(pkt.Sacks) > 0 && len(p) > 0 {
+		keep := p[:0]
+		for _, cur := range p {
+			acked := false
+			for _, sack := range pkt.Sacks {
+				if cur.seq >= sack.Start && cur.seq <= sack.End {
+					acked = true
+					break
+				}
+			}
+			if !acked {
+				keep = append(keep, cur)
+			} else if !cur.sentAt.IsZero() {
+				if sample := ackReceived.Sub(cur.sentAt); sample > 0 {
+					recordAckMetric(collector, sample)
+				}
+			}
+		}
+		p = keep
+	}
+	*pending = p
+}
+
+func retransmitPending(ctx context.Context, conn *net.UDPConn, pending *[]pendingPacket, collector *metrics.TransferCollector) error {
+	for i := range *pending {
+		pkt := &(*pending)[i]
+		if err := writePacketWithRetry(ctx, conn, pkt.data); err != nil {
+			return err
+		}
+		recordSendMetric(collector, pkt.payloadLen, true)
+		recordPacketSend(collector)
+		pkt.sentAt = time.Now()
+	}
+	return nil
 }
 
 func writePacketWithRetry(ctx context.Context, conn *net.UDPConn, packet []byte) error {
@@ -678,12 +864,18 @@ func retrySendPacket(
 	seq uint32,
 	buf []byte,
 	pkt *udpwire.StatusPacket,
+	payloadBytes int,
+	collector *metrics.TransferCollector,
 ) error {
 	for attempt := 0; attempt < maxAckRetries; attempt++ {
 		if err := writePacketWithRetry(ctx, conn, packet); err != nil {
 			return err
 		}
+		recordPacketSend(collector)
+		recordSendMetric(collector, payloadBytes, true)
+		ackStart := time.Now()
 		if err := waitForAck(ctx, conn, streamID, seq, buf, pkt); err == nil {
+			recordAckMetric(collector, time.Since(ackStart))
 			return nil
 		}
 		if err := waitForRetry(ctx, 5*time.Millisecond*(1<<attempt)); err != nil {
