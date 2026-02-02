@@ -23,6 +23,7 @@ const (
 	defaultReadTimeout   = 2 * time.Second
 	defaultWriteTimeout  = 2 * time.Second
 	enobufsRetryInterval = 5 * time.Millisecond
+	maxAckRetries        = 5
 )
 
 type Mode int
@@ -142,13 +143,13 @@ func (t *GroverTransferClient) Enumerate(ctx context.Context, path string, recur
 }
 
 type sessionInfo struct {
-	id      string
-	idRaw   []byte
-	token   []byte
-	host    string
-	port    uint32
-	mtu     int
-	streams []uint32
+	id       string
+	idRaw    []byte
+	token    []byte
+	host     string
+	port     uint32
+	mtu      int
+	streamID uint32
 }
 
 type leasedStream struct {
@@ -223,15 +224,18 @@ func (t *GroverTransferClient) openSession(ctx context.Context, path string, siz
 		"parallel_stream": len(streamIDs),
 	})
 
-	return &sessionInfo{
-		id:      sessionUUID.String(),
-		idRaw:   sessionIDRaw,
-		token:   append([]byte(nil), resp.GetToken()...),
-		host:    udpHost,
-		port:    resp.GetServerPort(),
-		mtu:     int(resp.GetMtuHint()),
-		streams: append([]uint32(nil), streamIDs...),
-	}, nil
+	info := &sessionInfo{
+		id:    sessionUUID.String(),
+		idRaw: sessionIDRaw,
+		token: append([]byte(nil), resp.GetToken()...),
+		host:  udpHost,
+		port:  resp.GetServerPort(),
+		mtu:   int(resp.GetMtuHint()),
+	}
+	if len(streamIDs) > 0 {
+		info.streamID = streamIDs[0]
+	}
+	return info, nil
 }
 
 func (t *GroverTransferClient) leaseStream(
@@ -278,10 +282,10 @@ func (t *GroverTransferClient) leaseStream(
 
 	streamID := resp.GetStreamId()
 	if streamID == 0 {
-		if len(info.streams) == 0 {
-			return nil, fmt.Errorf("no streams available for session %s", info.id)
-		}
-		streamID = info.streams[0]
+		streamID = info.streamID
+	}
+	if streamID == 0 {
+		return nil, fmt.Errorf("no stream available for session %s", info.id)
 	}
 
 	return &leasedStream{
@@ -376,6 +380,8 @@ func streamUpload(ctx context.Context, conn *net.UDPConn, info *sessionInfo, str
 	payloadSize := payloadSizeFromMTU(info.mtu)
 	payloadBuf := make([]byte, payloadSize)
 	packetBuf := make([]byte, udpwire.DataHeaderLen+payloadSize+4)
+	ackBuf := make([]byte, udpwire.StatusHeaderLen+udpwire.MaxSackRanges*udpwire.SackBlockLen)
+	var ackPkt udpwire.StatusPacket
 	sessionKey := binary.BigEndian.Uint32(info.idRaw[:4])
 
 	var seq uint32
@@ -403,6 +409,11 @@ func streamUpload(ctx context.Context, conn *net.UDPConn, info *sessionInfo, str
 			}
 			if err := writePacketWithRetry(ctx, conn, packetBuf[:pktLen]); err != nil {
 				return offset, err
+			}
+			if err := waitForAck(ctx, conn, streamID, seq, ackBuf, &ackPkt); err != nil {
+				if err := retrySendPacket(ctx, conn, packetBuf[:pktLen], streamID, seq, ackBuf, &ackPkt); err != nil {
+					return offset, err
+				}
 			}
 			internal.Debug("client udp data tx", internal.Fields{
 				"session": info.id,
@@ -617,4 +628,67 @@ func isNoBufferSpaceErr(err error) bool {
 		}
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "no buffer space")
+}
+
+func waitForAck(
+	ctx context.Context,
+	conn *net.UDPConn,
+	streamID uint32,
+	seq uint32,
+	buf []byte,
+	pkt *udpwire.StatusPacket,
+) error {
+	if conn == nil || len(buf) == 0 || pkt == nil {
+		return fmt.Errorf("invalid ack buffer")
+	}
+
+	if err := setReadDeadline(ctx, conn); err != nil {
+		return err
+	}
+	n, err := conn.Read(buf)
+	if err != nil {
+		if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			return ne
+		}
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("empty ack packet")
+	}
+	if !udpwire.IsStatusPacket(buf[:n]) {
+		return fmt.Errorf("unexpected packet while waiting for ack")
+	}
+	if _, err := pkt.Decode(buf[:n]); err != nil {
+		return err
+	}
+	if pkt.StreamID != streamID {
+		return fmt.Errorf("ack for wrong stream %d (want %d)", pkt.StreamID, streamID)
+	}
+	if pkt.AckSeq < seq {
+		return fmt.Errorf("stale ack seq %d (want >= %d)", pkt.AckSeq, seq)
+	}
+	return nil
+}
+
+func retrySendPacket(
+	ctx context.Context,
+	conn *net.UDPConn,
+	packet []byte,
+	streamID uint32,
+	seq uint32,
+	buf []byte,
+	pkt *udpwire.StatusPacket,
+) error {
+	for attempt := 0; attempt < maxAckRetries; attempt++ {
+		if err := writePacketWithRetry(ctx, conn, packet); err != nil {
+			return err
+		}
+		if err := waitForAck(ctx, conn, streamID, seq, buf, pkt); err == nil {
+			return nil
+		}
+		if err := waitForRetry(ctx, 5*time.Millisecond*(1<<attempt)); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("failed to receive ack for seq %d after %d attempts", seq, maxAckRetries)
 }

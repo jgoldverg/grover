@@ -150,6 +150,7 @@ func (r *udpSessionRunner) awaitHello() (*net.UDPAddr, error) {
 
 func (r *udpSessionRunner) receiveFile() error {
 	conn := r.session.Conn()
+
 	if conn == nil {
 		return errors.New("nil udp connection for session")
 	}
@@ -199,20 +200,20 @@ func (r *udpSessionRunner) receiveFile() error {
 			"bytes":   len(packet.Payload),
 		})
 
-		if packet.Offset != r.session.TotalSize {
-			if packet.Offset < r.session.TotalSize {
+		if packet.Offset != r.session.writeOffset {
+			if packet.Offset < r.session.writeOffset {
 				continue
 			}
 			if _, err := file.Seek(int64(packet.Offset), io.SeekStart); err != nil {
 				return fmt.Errorf("seek file: %w", err)
 			}
-			r.session.TotalSize = packet.Offset
+			r.session.writeOffset = packet.Offset
 		}
 
 		if _, err := file.Write(packet.Payload); err != nil {
 			return fmt.Errorf("write file: %w", err)
 		}
-		r.session.TotalSize += uint64(len(packet.Payload))
+		r.session.writeOffset += uint64(len(packet.Payload))
 
 		if st := r.session.tracker; st != nil && st.OnPacket(packet.Seq) {
 			sackScratch = r.emitStatusPacket(conn, addr, st, streamID, sessionKey, sackScratch, statusBuf)

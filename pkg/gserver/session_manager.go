@@ -43,8 +43,9 @@ type ServerSession struct {
 	remoteMu   sync.RWMutex
 	remoteAddr *net.UDPAddr
 
-	file    *os.File
-	tracker *udpwire.SackTracker
+	file        *os.File
+	tracker     *udpwire.SackTracker
+	writeOffset uint64
 }
 
 func NewServerSessions(cfg *internal.ServerConfig) *ServerSessions {
@@ -123,42 +124,56 @@ func (sm *ServerSessions) CreateSession(req *pb.OpenSessionRequest) (*ServerSess
 		err = fmt.Errorf("unsupported mode %s", req.GetMode())
 	}
 	if err != nil {
+		internal.Error("failed to create file", internal.Fields{
+			"error": err.Error(),
+		})
 		conn.Close()
 		return nil, err
 	}
 
 	sessionID := uuid.New()
 	streamID := sm.nextStreamID()
-	session := &ServerSession{
-		ID:         sessionID,
-		Token:      token,
-		Mode:       req.GetMode(),
-		Path:       req.GetPath(),
-		Size:       req.GetSize(),
-		StreamID:   streamID,
-		LeaseID:    uuid.New(),
-		MTU:        sm.mtuHint(),
-		TTLSeconds: sm.ttlSeconds(),
-		TotalSize: func() uint64 {
+	totalSize := func() uint64 {
+		switch req.GetMode() {
+		case pb.OpenSessionRequest_READ:
 			if size > 0 {
 				return uint64(size)
 			}
+		case pb.OpenSessionRequest_WRITE:
 			if req.GetSize() > 0 {
 				return uint64(req.GetSize())
 			}
-			return 0
-		}(),
-		CreatedAt: time.Now(),
-		conn:      conn,
-		localAddr: laddr,
-		file:      file,
-		tracker:   udpwire.NewSackTracker(),
+		}
+		return 0
+	}()
+	session := &ServerSession{
+		ID:          sessionID,
+		Token:       token,
+		Mode:        req.GetMode(),
+		Path:        req.GetPath(),
+		Size:        req.GetSize(),
+		StreamID:    streamID,
+		LeaseID:     uuid.New(),
+		MTU:         sm.mtuHint(),
+		TTLSeconds:  sm.ttlSeconds(),
+		TotalSize:   totalSize,
+		CreatedAt:   time.Now(),
+		conn:        conn,
+		localAddr:   laddr,
+		file:        file,
+		tracker:     udpwire.NewSackTracker(),
+		writeOffset: 0,
 	}
 
 	sm.mu.Lock()
 	sm.sessions[sessionID.String()] = session
 	sm.mu.Unlock()
-
+	internal.Info("created session for file transfer", internal.Fields{
+		"session_id": sessionID.String(),
+		"path":       session.Path,
+		"mode":       session.Mode.String(),
+		"stream_id":  session.StreamID,
+	})
 	go newUDPSessionRunner(sm, session).run()
 
 	return session, nil
@@ -202,7 +217,7 @@ func (sm *ServerSessions) ReleaseStream(sessionID string, streamID uint32, lease
 			_ = session.file.Sync()
 		} else {
 			path := session.Path
-			session.file.Close()
+			_ = session.file.Close()
 			session.file = nil
 			_ = os.Remove(path)
 			return nil
@@ -277,15 +292,9 @@ func (sm *ServerSessions) nextStreamID() uint32 {
 }
 
 func (sm *ServerSessions) ttlSeconds() uint32 {
-	if sm.cfg != nil && sm.cfg.UDPQueueDepth > 0 {
-		return uint32(sm.cfg.UDPQueueDepth)
-	}
 	return 10
 }
 
 func (sm *ServerSessions) mtuHint() uint32 {
-	if sm.cfg != nil && sm.cfg.UDPReadBufferSize > 0 {
-		return uint32(sm.cfg.UDPReadBufferSize)
-	}
 	return defaultMTU
 }
