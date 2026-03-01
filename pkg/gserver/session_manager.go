@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jgoldverg/grover/internal"
 	pb "github.com/jgoldverg/grover/pkg/groverpb/groverudpv1"
-	"github.com/jgoldverg/grover/pkg/udpwire"
 )
 
 type ServerSessions struct {
@@ -43,9 +42,7 @@ type ServerSession struct {
 	remoteMu   sync.RWMutex
 	remoteAddr *net.UDPAddr
 
-	file        *os.File
-	tracker     *udpwire.SackTracker
-	writeOffset uint64
+	file *os.File
 }
 
 func NewServerSessions(cfg *internal.ServerConfig) *ServerSessions {
@@ -147,22 +144,20 @@ func (sm *ServerSessions) CreateSession(req *pb.OpenSessionRequest) (*ServerSess
 		return 0
 	}()
 	session := &ServerSession{
-		ID:          sessionID,
-		Token:       token,
-		Mode:        req.GetMode(),
-		Path:        req.GetPath(),
-		Size:        req.GetSize(),
-		StreamID:    streamID,
-		LeaseID:     uuid.New(),
-		MTU:         sm.mtuHint(),
-		TTLSeconds:  sm.ttlSeconds(),
-		TotalSize:   totalSize,
-		CreatedAt:   time.Now(),
-		conn:        conn,
-		localAddr:   laddr,
-		file:        file,
-		tracker:     udpwire.NewSackTracker(),
-		writeOffset: 0,
+		ID:         sessionID,
+		Token:      token,
+		Mode:       req.GetMode(),
+		Path:       req.GetPath(),
+		Size:       req.GetSize(),
+		StreamID:   streamID,
+		LeaseID:    uuid.New(),
+		MTU:        sm.mtuHint(),
+		TTLSeconds: sm.ttlSeconds(),
+		TotalSize:  totalSize,
+		CreatedAt:  time.Now(),
+		conn:       conn,
+		localAddr:  laddr,
+		file:       file,
 	}
 
 	sm.mu.Lock()

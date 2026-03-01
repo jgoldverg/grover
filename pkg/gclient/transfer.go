@@ -17,14 +17,13 @@ import (
 	"github.com/jgoldverg/grover/internal"
 	pb "github.com/jgoldverg/grover/pkg/groverpb/groverudpv1"
 	"github.com/jgoldverg/grover/pkg/metrics"
+	"github.com/jgoldverg/grover/pkg/udpdataplane"
 	"github.com/jgoldverg/grover/pkg/udpwire"
 )
 
 const (
-	defaultReadTimeout   = 2 * time.Second
 	defaultWriteTimeout  = 2 * time.Second
 	enobufsRetryInterval = 5 * time.Millisecond
-	maxAckRetries        = 5
 )
 
 type Mode int
@@ -38,13 +37,6 @@ type RemoteFile struct {
 	FullPath     string
 	RelativePath string
 	Size         uint64
-}
-
-type pendingPacket struct {
-	seq        uint32
-	payloadLen int
-	data       []byte
-	sentAt     time.Time
 }
 
 type GroverTransferClient struct {
@@ -89,7 +81,15 @@ func (t *GroverTransferClient) Get(ctx context.Context, path string, w io.Writer
 		return err
 	}
 
-	bytesRead, readErr := streamDownload(ctx, conn, info, lease.streamID, w, t.recvBufferSize(), t.collector)
+	transport := udpdataplane.NewUDPConnTransport(conn)
+	bytesRead, readErr := udpdataplane.Receive(ctx, udpdataplane.ReceiveConfig{
+		Transport:  transport,
+		SessionID:  info.id,
+		SessionKey: info.sessionKey,
+		StreamID:   lease.streamID,
+		BufferSize: t.recvBufferSize(),
+		Collector:  t.collector,
+	}, udpdataplane.NewSequentialWriter(w))
 	releaseErr := t.releaseStream(ctx, info, lease, readErr == nil, bytesRead)
 	if readErr != nil {
 		return readErr
@@ -122,7 +122,15 @@ func (t *GroverTransferClient) Put(ctx context.Context, path string, r io.Reader
 		return err
 	}
 
-	bytesWritten, writeErr := streamUpload(ctx, conn, info, lease.streamID, r, t.collector)
+	transport := udpdataplane.NewUDPConnTransport(conn)
+	bytesWritten, writeErr := udpdataplane.Send(ctx, udpdataplane.SendConfig{
+		Transport:  transport,
+		SessionID:  info.id,
+		SessionKey: info.sessionKey,
+		StreamID:   lease.streamID,
+		MTU:        info.mtu,
+		Collector:  t.collector,
+	}, r)
 	releaseErr := t.releaseStream(ctx, info, lease, writeErr == nil, bytesWritten)
 	if writeErr != nil {
 		return writeErr
@@ -162,13 +170,14 @@ func (t *GroverTransferClient) Enumerate(ctx context.Context, path string, recur
 }
 
 type sessionInfo struct {
-	id       string
-	idRaw    []byte
-	token    []byte
-	host     string
-	port     uint32
-	mtu      int
-	streamID uint32
+	id         string
+	idRaw      []byte
+	sessionKey uint32
+	token      []byte
+	host       string
+	port       uint32
+	mtu        int
+	streamID   uint32
 }
 
 type leasedStream struct {
@@ -244,12 +253,13 @@ func (t *GroverTransferClient) openSession(ctx context.Context, path string, siz
 	})
 
 	info := &sessionInfo{
-		id:    sessionUUID.String(),
-		idRaw: sessionIDRaw,
-		token: append([]byte(nil), resp.GetToken()...),
-		host:  udpHost,
-		port:  resp.GetServerPort(),
-		mtu:   int(resp.GetMtuHint()),
+		id:         sessionUUID.String(),
+		idRaw:      sessionIDRaw,
+		sessionKey: binary.BigEndian.Uint32(sessionIDRaw[:4]),
+		token:      append([]byte(nil), resp.GetToken()...),
+		host:       udpHost,
+		port:       resp.GetServerPort(),
+		mtu:        int(resp.GetMtuHint()),
 	}
 	if len(streamIDs) > 0 {
 		info.streamID = streamIDs[0]
@@ -395,145 +405,6 @@ func sendHello(ctx context.Context, conn *net.UDPConn, sessionID []byte, token [
 	return nil
 }
 
-func streamUpload(ctx context.Context, conn *net.UDPConn, info *sessionInfo, streamID uint32, src io.Reader, collector *metrics.TransferCollector) (uint64, error) {
-	payloadSize := payloadSizeFromMTU(info.mtu)
-	payloadBuf := make([]byte, payloadSize)
-	packetBuf := make([]byte, udpwire.DataHeaderLen+payloadSize+4)
-	ackBuf := make([]byte, udpwire.StatusHeaderLen+udpwire.MaxSackRanges*udpwire.SackBlockLen)
-	var ackPkt udpwire.StatusPacket
-	sessionKey := binary.BigEndian.Uint32(info.idRaw[:4])
-
-	var (
-		seq     uint32
-		offset  uint64
-		pending = make([]pendingPacket, 0, 256)
-	)
-
-	defer conn.SetWriteDeadline(time.Time{})
-
-	for {
-		if err := ctx.Err(); err != nil {
-			return offset, err
-		}
-		n, readErr := src.Read(payloadBuf)
-		if n > 0 {
-			seq++
-			dp := udpwire.DataPacket{
-				SessionID: sessionKey,
-				StreamID:  streamID,
-				Seq:       seq,
-				Offset:    offset,
-				Payload:   payloadBuf[:n],
-			}
-			pktLen, err := dp.Encode(packetBuf)
-			if err != nil {
-				return offset, fmt.Errorf("encode data packet: %w", err)
-			}
-			packetCopy := make([]byte, pktLen)
-			copy(packetCopy, packetBuf[:pktLen])
-			if err := writePacketWithRetry(ctx, conn, packetCopy); err != nil {
-				return offset, err
-			}
-			recordPacketSend(collector)
-			recordSendMetric(collector, n, false)
-			internal.Debug("client udp data tx", internal.Fields{
-				"session": info.id,
-				"stream":  streamID,
-				"seq":     seq,
-				"bytes":   n,
-			})
-			offset += uint64(n)
-			pending = append(pending, pendingPacket{
-				seq:        seq,
-				payloadLen: n,
-				data:       packetCopy,
-				sentAt:     time.Now(),
-			})
-			if err := drainStatusPackets(ctx, conn, streamID, ackBuf, &ackPkt, &pending, collector, true); err != nil {
-				return offset, err
-			}
-		}
-
-		if errors.Is(readErr, io.EOF) {
-			break
-		}
-		if readErr != nil {
-			return offset, readErr
-		}
-	}
-	if err := drainStatusPackets(ctx, conn, streamID, ackBuf, &ackPkt, &pending, collector, false); err != nil {
-		return offset, err
-	}
-	return offset, nil
-}
-
-func streamDownload(ctx context.Context, conn *net.UDPConn, info *sessionInfo, streamID uint32, dst io.Writer, bufSize int, collector *metrics.TransferCollector) (uint64, error) {
-	if bufSize <= 0 {
-		bufSize = 64 * 1024
-	}
-	buf := make([]byte, bufSize)
-	var dp udpwire.DataPacket
-	var total uint64
-
-	defer conn.SetReadDeadline(time.Time{})
-
-	for {
-		if err := ctx.Err(); err != nil {
-			return total, err
-		}
-		if err := setReadDeadline(ctx, conn); err != nil {
-			return total, err
-		}
-		n, err := conn.Read(buf)
-		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				continue
-			}
-			if isClosedNetworkError(err) || errors.Is(err, io.EOF) {
-				return total, nil
-			}
-			return total, err
-		}
-		if n == 0 {
-			continue
-		}
-		packet := buf[:n]
-		if !udpwire.IsDataPacket(packet) {
-			continue
-		}
-		if _, err := dp.Decode(packet); err != nil {
-			continue
-		}
-		if dp.StreamID != streamID {
-			continue
-		}
-		if len(dp.Payload) > 0 {
-			if _, err := dst.Write(dp.Payload); err != nil {
-				return total, err
-			}
-			recordPacketReceive(collector)
-			recordReceiveMetric(collector, len(dp.Payload))
-			total += uint64(len(dp.Payload))
-			internal.Debug("client udp data rx", internal.Fields{
-				"session": info.id,
-				"stream":  streamID,
-				"seq":     dp.Seq,
-				"bytes":   len(dp.Payload),
-			})
-		}
-	}
-}
-
-func setReadDeadline(ctx context.Context, conn *net.UDPConn) error {
-	if conn == nil {
-		return nil
-	}
-	if deadline, ok := ctx.Deadline(); ok {
-		return conn.SetReadDeadline(deadline)
-	}
-	return conn.SetReadDeadline(time.Now().Add(defaultReadTimeout))
-}
-
 func setWriteDeadline(ctx context.Context, conn *net.UDPConn) error {
 	if conn == nil {
 		return nil
@@ -542,223 +413,6 @@ func setWriteDeadline(ctx context.Context, conn *net.UDPConn) error {
 		return conn.SetWriteDeadline(deadline)
 	}
 	return conn.SetWriteDeadline(time.Now().Add(defaultWriteTimeout))
-}
-
-func payloadSizeFromMTU(mtu int) int {
-	if mtu <= 0 {
-		mtu = 1500
-	}
-	payload := mtu - udpwire.DataHeaderLen - 4
-	if payload < 256 {
-		payload = 256
-	}
-	return payload
-}
-
-func isClosedNetworkError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, net.ErrClosed) || errors.Is(err, os.ErrClosed) {
-		return true
-	}
-	return strings.Contains(err.Error(), "use of closed network connection")
-}
-
-func isLoopbackHost(host string) bool {
-	if strings.TrimSpace(host) == "" {
-		return true
-	}
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return ip.IsLoopback()
-	}
-	return false
-}
-
-func describeOverwrite(p backend.OverwritePolicy) string {
-	switch p {
-	case backend.ALWAYS:
-		return "always"
-	case backend.IF_NEWER:
-		return "if_newer"
-	case backend.NEVER:
-		return "never"
-	case backend.IF_DIFFERENT:
-		return "if_different"
-	case backend.UNSPECIFIED:
-		return "unspecified"
-	default:
-		return fmt.Sprintf("unknown(%d)", int(p))
-	}
-}
-
-func toProtoOverwrite(p backend.OverwritePolicy) pb.OverwritePolicy {
-	switch p {
-	case backend.ALWAYS:
-		return pb.OverwritePolicy_OVERWRITE_ALWAYS
-	case backend.IF_NEWER:
-		return pb.OverwritePolicy_OVERWRITE_IF_NEWER
-	case backend.NEVER:
-		return pb.OverwritePolicy_OVERWRITE_NEVER
-	case backend.IF_DIFFERENT:
-		return pb.OverwritePolicy_OVERWRITE_IF_DIFFERENT
-	default:
-		return pb.OverwritePolicy_OVERWRITE_UNSPECIFIED
-	}
-}
-
-func recordSendMetric(col *metrics.TransferCollector, bytes int, retrans bool) {
-	if col == nil || bytes <= 0 {
-		return
-	}
-	col.ObserveSend(bytes, retrans)
-}
-
-func recordReceiveMetric(col *metrics.TransferCollector, bytes int) {
-	if col == nil || bytes <= 0 {
-		return
-	}
-	col.ObserveReceive(bytes)
-}
-
-func recordPacketSend(col *metrics.TransferCollector) {
-	if col == nil {
-		return
-	}
-	col.ObservePacketSend()
-}
-
-func recordPacketReceive(col *metrics.TransferCollector) {
-	if col == nil {
-		return
-	}
-	col.ObservePacketReceive()
-}
-
-func recordAckMetric(col *metrics.TransferCollector, d time.Duration) {
-	if col == nil || d <= 0 {
-		return
-	}
-	col.ObserveAck(d)
-}
-
-func drainStatusPackets(
-	ctx context.Context,
-	conn *net.UDPConn,
-	streamID uint32,
-	ackBuf []byte,
-	ackPkt *udpwire.StatusPacket,
-	pending *[]pendingPacket,
-	collector *metrics.TransferCollector,
-	nonBlocking bool,
-) error {
-	if len(*pending) == 0 {
-		return nil
-	}
-	attempts := 0
-	for len(*pending) > 0 {
-		if nonBlocking {
-			if err := conn.SetReadDeadline(time.Now()); err != nil {
-				return err
-			}
-		} else {
-			if err := setReadDeadline(ctx, conn); err != nil {
-				return err
-			}
-		}
-		readStart := time.Now()
-		n, err := conn.Read(ackBuf)
-		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				if nonBlocking {
-					return nil
-				}
-				attempts++
-				if attempts >= maxAckRetries {
-					lastSeq := (*pending)[len(*pending)-1].seq
-					return fmt.Errorf("failed to receive ack for seq %d after %d attempts", lastSeq, maxAckRetries)
-				}
-				if err := retransmitPending(ctx, conn, pending, collector); err != nil {
-					return err
-				}
-				continue
-			}
-			return err
-		}
-		if n == 0 || !udpwire.IsStatusPacket(ackBuf[:n]) {
-			continue
-		}
-		if _, err := ackPkt.Decode(ackBuf[:n]); err != nil {
-			continue
-		}
-		if ackPkt.StreamID != streamID {
-			continue
-		}
-		attempts = 0
-		advancePendingWithAck(ackPkt, pending, collector, readStart)
-		if nonBlocking && len(*pending) == 0 {
-			return nil
-		}
-	}
-	return nil
-}
-
-func advancePendingWithAck(pkt *udpwire.StatusPacket, pending *[]pendingPacket, collector *metrics.TransferCollector, ackReceived time.Time) {
-	if len(*pending) == 0 {
-		return
-	}
-	p := *pending
-	idx := 0
-	var ackSample time.Duration
-	for idx < len(p) && p[idx].seq <= pkt.AckSeq {
-		if !p[idx].sentAt.IsZero() {
-			if sample := ackReceived.Sub(p[idx].sentAt); sample > 0 {
-				ackSample = sample
-			}
-		}
-		idx++
-	}
-	if ackSample > 0 {
-		recordAckMetric(collector, ackSample)
-	}
-	p = p[idx:]
-	if len(pkt.Sacks) > 0 && len(p) > 0 {
-		keep := p[:0]
-		for _, cur := range p {
-			acked := false
-			for _, sack := range pkt.Sacks {
-				if cur.seq >= sack.Start && cur.seq <= sack.End {
-					acked = true
-					break
-				}
-			}
-			if !acked {
-				keep = append(keep, cur)
-			} else if !cur.sentAt.IsZero() {
-				if sample := ackReceived.Sub(cur.sentAt); sample > 0 {
-					recordAckMetric(collector, sample)
-				}
-			}
-		}
-		p = keep
-	}
-	*pending = p
-}
-
-func retransmitPending(ctx context.Context, conn *net.UDPConn, pending *[]pendingPacket, collector *metrics.TransferCollector) error {
-	for i := range *pending {
-		pkt := &(*pending)[i]
-		if err := writePacketWithRetry(ctx, conn, pkt.data); err != nil {
-			return err
-		}
-		recordSendMetric(collector, pkt.payloadLen, true)
-		recordPacketSend(collector)
-		pkt.sentAt = time.Now()
-	}
-	return nil
 }
 
 func writePacketWithRetry(ctx context.Context, conn *net.UDPConn, packet []byte) error {
@@ -816,71 +470,47 @@ func isNoBufferSpaceErr(err error) bool {
 	return strings.Contains(strings.ToLower(err.Error()), "no buffer space")
 }
 
-func waitForAck(
-	ctx context.Context,
-	conn *net.UDPConn,
-	streamID uint32,
-	seq uint32,
-	buf []byte,
-	pkt *udpwire.StatusPacket,
-) error {
-	if conn == nil || len(buf) == 0 || pkt == nil {
-		return fmt.Errorf("invalid ack buffer")
+func isLoopbackHost(host string) bool {
+	if strings.TrimSpace(host) == "" {
+		return true
 	}
-
-	if err := setReadDeadline(ctx, conn); err != nil {
-		return err
+	if strings.EqualFold(host, "localhost") {
+		return true
 	}
-	n, err := conn.Read(buf)
-	if err != nil {
-		if ne, ok := err.(net.Error); ok && ne.Timeout() {
-			return ne
-		}
-		return err
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
 	}
-	if n == 0 {
-		return fmt.Errorf("empty ack packet")
-	}
-	if !udpwire.IsStatusPacket(buf[:n]) {
-		return fmt.Errorf("unexpected packet while waiting for ack")
-	}
-	if _, err := pkt.Decode(buf[:n]); err != nil {
-		return err
-	}
-	if pkt.StreamID != streamID {
-		return fmt.Errorf("ack for wrong stream %d (want %d)", pkt.StreamID, streamID)
-	}
-	if pkt.AckSeq < seq {
-		return fmt.Errorf("stale ack seq %d (want >= %d)", pkt.AckSeq, seq)
-	}
-	return nil
+	return false
 }
 
-func retrySendPacket(
-	ctx context.Context,
-	conn *net.UDPConn,
-	packet []byte,
-	streamID uint32,
-	seq uint32,
-	buf []byte,
-	pkt *udpwire.StatusPacket,
-	payloadBytes int,
-	collector *metrics.TransferCollector,
-) error {
-	for attempt := 0; attempt < maxAckRetries; attempt++ {
-		if err := writePacketWithRetry(ctx, conn, packet); err != nil {
-			return err
-		}
-		recordPacketSend(collector)
-		recordSendMetric(collector, payloadBytes, true)
-		ackStart := time.Now()
-		if err := waitForAck(ctx, conn, streamID, seq, buf, pkt); err == nil {
-			recordAckMetric(collector, time.Since(ackStart))
-			return nil
-		}
-		if err := waitForRetry(ctx, 5*time.Millisecond*(1<<attempt)); err != nil {
-			return err
-		}
+func describeOverwrite(p backend.OverwritePolicy) string {
+	switch p {
+	case backend.ALWAYS:
+		return "always"
+	case backend.IF_NEWER:
+		return "if_newer"
+	case backend.NEVER:
+		return "never"
+	case backend.IF_DIFFERENT:
+		return "if_different"
+	case backend.UNSPECIFIED:
+		return "unspecified"
+	default:
+		return fmt.Sprintf("unknown(%d)", int(p))
 	}
-	return fmt.Errorf("failed to receive ack for seq %d after %d attempts", seq, maxAckRetries)
+}
+
+func toProtoOverwrite(p backend.OverwritePolicy) pb.OverwritePolicy {
+	switch p {
+	case backend.ALWAYS:
+		return pb.OverwritePolicy_OVERWRITE_ALWAYS
+	case backend.IF_NEWER:
+		return pb.OverwritePolicy_OVERWRITE_IF_NEWER
+	case backend.NEVER:
+		return pb.OverwritePolicy_OVERWRITE_NEVER
+	case backend.IF_DIFFERENT:
+		return pb.OverwritePolicy_OVERWRITE_IF_DIFFERENT
+	default:
+		return pb.OverwritePolicy_OVERWRITE_UNSPECIFIED
+	}
 }

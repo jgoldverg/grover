@@ -2,6 +2,7 @@ package gserver
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/jgoldverg/grover/internal"
 	pb "github.com/jgoldverg/grover/pkg/groverpb/groverudpv1"
+	"github.com/jgoldverg/grover/pkg/udpdataplane"
 	"github.com/jgoldverg/grover/pkg/udpwire"
 )
 
@@ -23,8 +25,6 @@ type udpSessionRunner struct {
 	server  *ServerSessions
 	session *ServerSession
 }
-
-const maxStatusSackRanges = udpwire.MaxSackRanges
 
 func newUDPSessionRunner(sm *ServerSessions, session *ServerSession) *udpSessionRunner {
 	return &udpSessionRunner{
@@ -53,8 +53,8 @@ func (r *udpSessionRunner) runDownload() {
 	r.runSession(
 		"completed udp file stream",
 		"failed to stream file over udp",
-		func(addr *net.UDPAddr) error {
-			return r.sendFile(addr)
+		func(ctx context.Context, addr *net.UDPAddr) error {
+			return r.sendFile(ctx, addr)
 		},
 	)
 }
@@ -63,8 +63,8 @@ func (r *udpSessionRunner) runUpload() {
 	r.runSession(
 		"completed udp file upload",
 		"failed to receive file over udp",
-		func(_ *net.UDPAddr) error {
-			return r.receiveFile()
+		func(ctx context.Context, addr *net.UDPAddr) error {
+			return r.receiveFile(ctx, addr)
 		},
 	)
 }
@@ -72,8 +72,11 @@ func (r *udpSessionRunner) runUpload() {
 func (r *udpSessionRunner) runSession(
 	successMsg string,
 	failureMsg string,
-	handler func(*net.UDPAddr) error,
+	handler func(context.Context, *net.UDPAddr) error,
 ) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	sessionID := r.session.ID.String()
 	defer r.server.CloseSession(sessionID)
 
@@ -86,7 +89,7 @@ func (r *udpSessionRunner) runSession(
 		return
 	}
 
-	if err := handler(addr); err != nil {
+	if err := handler(ctx, addr); err != nil {
 		fields := internal.Fields{
 			internal.FieldError: err.Error(),
 			"session_id":        sessionID,
@@ -148,80 +151,39 @@ func (r *udpSessionRunner) awaitHello() (*net.UDPAddr, error) {
 	}
 }
 
-func (r *udpSessionRunner) receiveFile() error {
+func (r *udpSessionRunner) receiveFile(ctx context.Context, addr *net.UDPAddr) error {
 	conn := r.session.Conn()
-
 	if conn == nil {
 		return errors.New("nil udp connection for session")
 	}
-	if r.session.file == nil {
+	file := r.session.file
+	if file == nil {
 		return errors.New("session missing destination file")
 	}
-
-	buf := make([]byte, r.recvBufferSize())
-	statusBuf := make([]byte, udpwire.StatusHeaderLen+maxStatusSackRanges*udpwire.SackBlockLen)
-	var sackScratch []udpwire.SackRange
-	var packet udpwire.DataPacket
-	sessionKey := binary.BigEndian.Uint32(r.session.ID[:4])
-	streamID := r.session.StreamID
-
-	for {
-		n, addr, err := conn.ReadFromUDP(buf)
-		if err != nil {
-			if isClosedNetworkError(err) {
-				return nil
-			}
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				continue
-			}
-			return err
-		}
-		if n == 0 {
-			continue
-		}
-		internal.Info("recieved some kind of packet", internal.Fields{
-			"packet_length": len(buf),
-		})
-		if !udpwire.IsDataPacket(buf[:n]) {
-			internal.Info("We recieved something other than a data packet", nil)
-			continue
-		}
-		if _, err := packet.Decode(buf[:n]); err != nil {
-			continue
-		}
-		if packet.StreamID != streamID {
-			continue
-		}
-		file := r.session.file
-		internal.Info("server udp data rx", internal.Fields{
-			"session": r.session.ID.String(),
-			"stream":  streamID,
-			"seq":     packet.Seq,
-			"bytes":   len(packet.Payload),
-		})
-
-		if packet.Offset != r.session.writeOffset {
-			if packet.Offset < r.session.writeOffset {
-				continue
-			}
-			if _, err := file.Seek(int64(packet.Offset), io.SeekStart); err != nil {
-				return fmt.Errorf("seek file: %w", err)
-			}
-			r.session.writeOffset = packet.Offset
-		}
-
-		if _, err := file.Write(packet.Payload); err != nil {
-			return fmt.Errorf("write file: %w", err)
-		}
-		r.session.writeOffset += uint64(len(packet.Payload))
-
-		if st := r.session.tracker; st != nil && st.OnPacket(packet.Seq) {
-			sackScratch = r.emitStatusPacket(conn, addr, st, streamID, sessionKey, sackScratch, statusBuf)
-		}
+	remote := addr
+	if remote == nil {
+		remote = r.session.RemoteAddr()
 	}
+	sessionKey := binary.BigEndian.Uint32(r.session.ID[:4])
+	cfg := udpdataplane.ReceiveConfig{
+		Transport:  udpdataplane.NewUDPConnTransport(conn),
+		RemoteAddr: remote,
+		SessionID:  r.session.ID.String(),
+		SessionKey: sessionKey,
+		StreamID:   r.session.StreamID,
+		BufferSize: r.recvBufferSize(),
+		Collector:  nil,
+		OnRemoteAddr: func(a *net.UDPAddr) {
+			if a != nil {
+				r.session.SetRemoteAddr(a)
+			}
+		},
+	}
+	_, err := udpdataplane.Receive(ctx, cfg, file)
+	return err
 }
 
-func (r *udpSessionRunner) sendFile(addr *net.UDPAddr) error {
+func (r *udpSessionRunner) sendFile(ctx context.Context, addr *net.UDPAddr) error {
 	conn := r.session.Conn()
 	if conn == nil {
 		return errors.New("nil udp connection for session")
@@ -229,192 +191,31 @@ func (r *udpSessionRunner) sendFile(addr *net.UDPAddr) error {
 	if r.session.StreamID == 0 {
 		return errors.New("no stream ID configured for session")
 	}
-	if addr == nil {
-		return errors.New("nil remote address for session")
+	remote := addr
+	if remote == nil {
+		remote = r.session.RemoteAddr()
 	}
-
-	payloadSize := r.payloadSize()
-	if payloadSize <= 0 {
-		payloadSize = 1024
+	if remote == nil {
+		return errors.New("missing remote address for session")
 	}
-
-	payloadBuf := make([]byte, payloadSize)
-	packetBuf := make([]byte, udpwire.DataHeaderLen+payloadSize+4)
-	statusBuf := make([]byte, r.recvBufferSize())
-	var statusPkt udpwire.StatusPacket
-	sessionID32 := binary.BigEndian.Uint32(r.session.ID[:4])
-	streamID := r.session.StreamID
 	file := r.session.file
 	if file == nil {
-		return fmt.Errorf("stream %d has no bound file", streamID)
+		return fmt.Errorf("stream %d has no bound file", r.session.StreamID)
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("seek file: %w", err)
 	}
-
-	var seq uint32
-	var offset uint64
-
-	for {
-		n, readErr := file.Read(payloadBuf)
-		if n > 0 {
-			seq++
-			dp := udpwire.DataPacket{
-				SessionID: sessionID32,
-				StreamID:  streamID,
-				Seq:       seq,
-				Offset:    offset,
-				Payload:   payloadBuf[:n],
-			}
-			pktLen, err := dp.Encode(packetBuf)
-			if err != nil {
-				return fmt.Errorf("encode data packet: %w", err)
-			}
-			if _, err := conn.WriteToUDP(packetBuf[:pktLen], addr); err != nil {
-				return fmt.Errorf("write udp packet: %w", err)
-			}
-			internal.Info("server udp data tx", internal.Fields{
-				"session": r.session.ID.String(),
-				"stream":  streamID,
-				"seq":     seq,
-				"bytes":   n,
-			})
-			offset += uint64(n)
-
-			r.drainStatusPackets(conn, statusBuf, &statusPkt)
-		}
-
-		if readErr != nil {
-			if errors.Is(readErr, io.EOF) {
-				break
-			}
-			return fmt.Errorf("read file: %w", readErr)
-		}
-	}
-	return nil
-}
-
-func (r *udpSessionRunner) payloadSize() int {
-	mtu := int(r.session.MTU)
-	if mtu <= 0 {
-		mtu = defaultMTU
-	}
-	payload := mtu - udpwire.DataHeaderLen - 4 // checksum trailer
-	if payload < 256 {
-		payload = 256
-	}
-	return payload
-}
-
-func (r *udpSessionRunner) recvBufferSize() int {
-	if r.server != nil && r.server.cfg != nil && r.server.cfg.UDPReadBufferSize > 0 {
-		return r.server.cfg.UDPReadBufferSize
-	}
-	return 64 * 1024
-}
-
-func (r *udpSessionRunner) emitStatusPacket(
-	conn *net.UDPConn,
-	addr *net.UDPAddr,
-	st *udpwire.SackTracker,
-	streamID uint32,
-	sessionKey uint32,
-	scratch []udpwire.SackRange,
-	statusBuf []byte,
-) []udpwire.SackRange {
-	if st == nil || conn == nil || len(statusBuf) < udpwire.StatusHeaderLen {
-		if scratch == nil {
-			return nil
-		}
-		return scratch[:0]
-	}
-
-	ackSeq, sacks := st.Snapshot(maxStatusSackRanges, scratch)
-	sp := udpwire.StatusPacket{
-		SessionID: sessionKey,
-		StreamID:  streamID,
-		AckSeq:    ackSeq,
-		Sacks:     sacks,
-	}
-
-	n, err := sp.Encode(statusBuf)
-	if err != nil {
-		return sacks[:0]
-	}
-
-	target := addr
-	if target == nil {
-		target = r.session.RemoteAddr()
-	} else {
-		r.session.SetRemoteAddr(target)
-	}
-	if target == nil {
-		return sacks[:0]
-	}
-
-	if _, err := conn.WriteToUDP(statusBuf[:n], target); err != nil {
-		internal.Info("failed to send udp status", internal.Fields{
-			internal.FieldError: err.Error(),
-			"session_id":        r.session.ID.String(),
-			"stream_id":         streamID,
-		})
-	} else {
-		fields := internal.Fields{
-			"session": r.session.ID.String(),
-			"stream":  streamID,
-			"ack":     ackSeq,
-		}
-		if desc := describeSackRanges(sacks); desc != "" {
-			fields["sacks"] = desc
-		}
-		internal.Info("server udp status tx", fields)
-	}
-	return sacks[:0]
-}
-
-func (r *udpSessionRunner) drainStatusPackets(conn *net.UDPConn, buf []byte, sp *udpwire.StatusPacket) {
-	if conn == nil || len(buf) == 0 || sp == nil {
-		return
-	}
-
-	for {
-		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Millisecond))
-		n, _, err := conn.ReadFromUDP(buf)
-		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				break
-			}
-			if isClosedNetworkError(err) {
-				break
-			}
-			internal.Info("failed reading udp status", internal.Fields{
-				internal.FieldError: err.Error(),
-				"session":           r.session.ID.String(),
-			})
-			break
-		}
-		if n == 0 {
-			continue
-		}
-
-		kind, ok := udpwire.PeekKind(buf[:n])
-		if !ok || kind != udpwire.KindStatus {
-			continue
-		}
-		if _, err := sp.Decode(buf[:n]); err != nil {
-			continue
-		}
-		fields := internal.Fields{
-			"session": r.session.ID.String(),
-			"stream":  sp.StreamID,
-			"ack":     sp.AckSeq,
-		}
-		if desc := describeSackRanges(sp.Sacks); desc != "" {
-			fields["sacks"] = desc
-		}
-		internal.Info("server udp status rx", fields)
-	}
-	_ = conn.SetReadDeadline(time.Time{})
+	sessionKey := binary.BigEndian.Uint32(r.session.ID[:4])
+	_, err := udpdataplane.Send(ctx, udpdataplane.SendConfig{
+		Transport:  udpdataplane.NewUDPConnTransport(conn),
+		RemoteAddr: remote,
+		SessionID:  r.session.ID.String(),
+		SessionKey: sessionKey,
+		StreamID:   r.session.StreamID,
+		MTU:        int(r.session.MTU),
+		Collector:  nil,
+	}, file)
+	return err
 }
 
 func isClosedNetworkError(err error) bool {
@@ -444,4 +245,11 @@ func describeSackRanges(r []udpwire.SackRange) string {
 		fmt.Fprintf(&b, "%d-%d", rng.Start, rng.End)
 	}
 	return b.String()
+}
+
+func (r *udpSessionRunner) recvBufferSize() int {
+	if r.server != nil && r.server.cfg != nil && r.server.cfg.UDPReadBufferSize > 0 {
+		return r.server.cfg.UDPReadBufferSize
+	}
+	return 64 * 1024
 }
