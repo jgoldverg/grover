@@ -83,12 +83,13 @@ func (t *GroverTransferClient) Get(ctx context.Context, path string, w io.Writer
 
 	transport := udpdataplane.NewUDPConnTransport(conn)
 	bytesRead, readErr := udpdataplane.Receive(ctx, udpdataplane.ReceiveConfig{
-		Transport:  transport,
-		SessionID:  info.id,
-		SessionKey: info.sessionKey,
-		StreamID:   lease.streamID,
-		BufferSize: t.recvBufferSize(),
-		Collector:  t.collector,
+		Transport:    transport,
+		SessionID:    info.id,
+		SessionKey:   info.sessionKey,
+		StreamID:     lease.streamID,
+		BufferSize:   t.recvBufferSize(),
+		Collector:    t.collector,
+		ExpectedSize: info.totalSize,
 	}, udpdataplane.NewSequentialWriter(w))
 	releaseErr := t.releaseStream(ctx, info, lease, readErr == nil, bytesRead)
 	if readErr != nil {
@@ -178,6 +179,7 @@ type sessionInfo struct {
 	port       uint32
 	mtu        int
 	streamID   uint32
+	totalSize  uint64
 }
 
 type leasedStream struct {
@@ -260,6 +262,7 @@ func (t *GroverTransferClient) openSession(ctx context.Context, path string, siz
 		host:       udpHost,
 		port:       resp.GetServerPort(),
 		mtu:        int(resp.GetMtuHint()),
+		totalSize:  resp.GetTotalSize(),
 	}
 	if len(streamIDs) > 0 {
 		info.streamID = streamIDs[0]

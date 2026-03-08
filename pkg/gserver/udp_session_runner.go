@@ -166,13 +166,14 @@ func (r *udpSessionRunner) receiveFile(ctx context.Context, addr *net.UDPAddr) e
 	}
 	sessionKey := binary.BigEndian.Uint32(r.session.ID[:4])
 	cfg := udpdataplane.ReceiveConfig{
-		Transport:  udpdataplane.NewUDPConnTransport(conn),
-		RemoteAddr: remote,
-		SessionID:  r.session.ID.String(),
-		SessionKey: sessionKey,
-		StreamID:   r.session.StreamID,
-		BufferSize: r.recvBufferSize(),
-		Collector:  nil,
+		Transport:    udpdataplane.NewUDPConnTransport(conn),
+		RemoteAddr:   remote,
+		SessionID:    r.session.ID.String(),
+		SessionKey:   sessionKey,
+		StreamID:     r.session.StreamID,
+		BufferSize:   r.recvBufferSize(),
+		Collector:    nil,
+		ExpectedSize: r.session.TotalSize,
 		OnRemoteAddr: func(a *net.UDPAddr) {
 			if a != nil {
 				r.session.SetRemoteAddr(a)

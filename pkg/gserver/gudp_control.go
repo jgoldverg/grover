@@ -160,6 +160,11 @@ func (gc *GudpControl) EnumeratePath(ctx context.Context, req *pb.EnumeratePathR
 			return nil, status.Errorf(codes.Internal, "enumerate path: %v", err)
 		}
 	}
+	internal.Info("enumerated path", internal.Fields{
+		"path":       path,
+		"recursive":  req.GetRecursive(),
+		"file_count": len(files),
+	})
 
 	return &pb.EnumeratePathResponse{Files: files}, nil
 }

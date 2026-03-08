@@ -36,13 +36,14 @@ type SendConfig struct {
 
 // ReceiveConfig controls how UDP payloads are ingested.
 type ReceiveConfig struct {
-	Transport  Transport
-	RemoteAddr *net.UDPAddr
-	SessionID  string
-	SessionKey uint32
-	StreamID   uint32
-	BufferSize int
-	Collector  *metrics.TransferCollector
+	Transport    Transport
+	RemoteAddr   *net.UDPAddr
+	SessionID    string
+	SessionKey   uint32
+	StreamID     uint32
+	BufferSize   int
+	Collector    *metrics.TransferCollector
+	ExpectedSize uint64
 	// OnRemoteAddr is called the first time we learn the peer address (for unconnected sockets).
 	OnRemoteAddr func(*net.UDPAddr)
 }
@@ -52,6 +53,92 @@ type pendingPacket struct {
 	payloadLen int
 	data       []byte
 	sentAt     time.Time
+}
+
+type interval struct {
+	start uint64
+	end   uint64
+}
+
+type rangeTracker struct {
+	expected   uint64
+	contiguous uint64
+	pending    []interval
+}
+
+func newRangeTracker(expected uint64) *rangeTracker {
+	if expected == 0 {
+		return nil
+	}
+	return &rangeTracker{
+		expected: expected,
+		pending:  make([]interval, 0, 16),
+	}
+}
+
+func (rt *rangeTracker) add(start, end uint64) bool {
+	if rt == nil {
+		return false
+	}
+	if end <= start || end <= rt.contiguous {
+		return rt.contiguous >= rt.expected
+	}
+	if start <= rt.contiguous {
+		rt.contiguous = end
+		rt.absorbPending()
+	} else {
+		rt.insertPending(interval{start: start, end: end})
+	}
+	return rt.contiguous >= rt.expected
+}
+
+func (rt *rangeTracker) absorbPending() {
+	if len(rt.pending) == 0 {
+		return
+	}
+	idx := 0
+	for idx < len(rt.pending) && rt.pending[idx].start <= rt.contiguous {
+		if rt.pending[idx].end > rt.contiguous {
+			rt.contiguous = rt.pending[idx].end
+		}
+		idx++
+	}
+	if idx > 0 {
+		copy(rt.pending[0:], rt.pending[idx:])
+		rt.pending = rt.pending[:len(rt.pending)-idx]
+	}
+}
+
+func (rt *rangeTracker) insertPending(seg interval) {
+	if seg.end <= seg.start {
+		return
+	}
+	pos := 0
+	for pos < len(rt.pending) && rt.pending[pos].start < seg.start {
+		pos++
+	}
+	rt.pending = append(rt.pending, interval{})
+	copy(rt.pending[pos+1:], rt.pending[pos:])
+	rt.pending[pos] = seg
+	rt.mergeFrom(pos)
+}
+
+func (rt *rangeTracker) mergeFrom(idx int) {
+	if idx > 0 && rt.pending[idx-1].end >= rt.pending[idx].start {
+		if rt.pending[idx].end > rt.pending[idx-1].end {
+			rt.pending[idx-1].end = rt.pending[idx].end
+		}
+		copy(rt.pending[idx:], rt.pending[idx+1:])
+		rt.pending = rt.pending[:len(rt.pending)-1]
+		idx--
+	}
+	for idx+1 < len(rt.pending) && rt.pending[idx].end >= rt.pending[idx+1].start {
+		if rt.pending[idx+1].end > rt.pending[idx].end {
+			rt.pending[idx].end = rt.pending[idx+1].end
+		}
+		copy(rt.pending[idx+1:], rt.pending[idx+2:])
+		rt.pending = rt.pending[:len(rt.pending)-1]
+	}
 }
 
 // Sender defines the behavior for transmitting data over the UDP data plane.
@@ -87,6 +174,7 @@ func Receive(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint64, e
 	var sackScratch []udpwire.SackRange
 	var packet udpwire.DataPacket
 	var total uint64
+	progress := newRangeTracker(cfg.ExpectedSize)
 
 	defer cfg.Transport.SetReadDeadline(time.Time{})
 	remote := cfg.RemoteAddr
@@ -145,6 +233,17 @@ func Receive(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint64, e
 				"seq":     packet.Seq,
 				"bytes":   len(packet.Payload),
 			})
+			finished := false
+			if progress != nil {
+				finished = progress.add(packet.Offset, end)
+			}
+			if tracker.OnPacket(packet.Seq) {
+				emitStatusPacket(cfg.Transport, remote, cfg.SessionID, cfg.SessionKey, cfg.StreamID, tracker, statusBuf, &sackScratch)
+			}
+			if finished {
+				return total, nil
+			}
+			continue
 		}
 		if tracker.OnPacket(packet.Seq) {
 			emitStatusPacket(cfg.Transport, remote, cfg.SessionID, cfg.SessionKey, cfg.StreamID, tracker, statusBuf, &sackScratch)

@@ -34,6 +34,7 @@ type RemoteRef struct {
 type CopyOptions struct {
 	DeleteSource bool
 	Concurrency  int
+	NoUI         bool
 }
 
 func SimpleCopy() *cobra.Command {
@@ -72,6 +73,7 @@ func SimpleCopy() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&opts.DeleteSource, "delete-source", false, "Delete the local source file after a successful upload")
 	cmd.Flags().IntVar(&opts.Concurrency, "concurrency", 4, "Maximum number of files to transfer in parallel")
+	cmd.Flags().BoolVar(&opts.NoUI, "no-ui", false, "Disable live progress and metrics output")
 	return cmd
 }
 
@@ -166,6 +168,7 @@ func downloadFromRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts C
 	if err != nil {
 		return err
 	}
+	fmt.Fprintf(cmd.OutOrStdout(), "found %d remote files under %s\n", len(files), remoteRoot)
 	if len(files) == 0 {
 		return fmt.Errorf("no files found at remote path %q", remoteRoot)
 	}
@@ -204,36 +207,34 @@ func downloadFromRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts C
 		progress *output.FileProgressManager
 		display  *output.MetricsDisplay
 	)
-	if len(jobs) > 0 {
-		fp := output.NewFileProgressManager("Downloads")
-		if err := fp.Start(); err != nil {
-			internal.Debug("unable to start download progress", internal.Fields{
+	stopDisplay := func() {}
+	stopProgress := func() {}
+	if !opts.NoUI {
+		if len(jobs) > 0 {
+			fp := output.NewFileProgressManager("Downloads")
+			if err := fp.Start(); err != nil {
+				internal.Debug("unable to start download progress", internal.Fields{
+					internal.FieldError: err.Error(),
+				})
+			} else {
+				progress = fp
+				stopProgress = func() { progress.Stop() }
+			}
+		}
+
+		display = output.NewMetricsDisplay("Network Telemetry", collector)
+		if progress != nil {
+			if writer := progress.NewSection(); writer != nil {
+				display = display.WithWriter(writer)
+			}
+		}
+		if err := display.Start(cmd.Context()); err != nil {
+			internal.Debug("unable to start metrics dashboard", internal.Fields{
 				internal.FieldError: err.Error(),
 			})
 		} else {
-			progress = fp
+			stopDisplay = func() { display.Stop() }
 		}
-	}
-
-	display = output.NewMetricsDisplay("Network Telemetry", collector)
-	if progress != nil {
-		if writer := progress.NewSection(); writer != nil {
-			display = display.WithWriter(writer)
-		}
-	}
-	var (
-		stopDisplay  = func() {}
-		stopProgress = func() {}
-	)
-	if err := display.Start(cmd.Context()); err != nil {
-		internal.Debug("unable to start metrics dashboard", internal.Fields{
-			internal.FieldError: err.Error(),
-		})
-	} else {
-		stopDisplay = func() { display.Stop() }
-	}
-	if progress != nil {
-		stopProgress = func() { progress.Stop() }
 	}
 	cleanup := func() {
 		stopDisplay()
@@ -335,36 +336,34 @@ func uploadToRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts CopyO
 		progress *output.FileProgressManager
 		display  *output.MetricsDisplay
 	)
-	if len(jobs) > 0 {
-		fp := output.NewFileProgressManager("Uploads")
-		if err := fp.Start(); err != nil {
-			internal.Debug("unable to start upload progress", internal.Fields{
+	stopDisplay := func() {}
+	stopProgress := func() {}
+	if !opts.NoUI {
+		if len(jobs) > 0 {
+			fp := output.NewFileProgressManager("Uploads")
+			if err := fp.Start(); err != nil {
+				internal.Debug("unable to start upload progress", internal.Fields{
+					internal.FieldError: err.Error(),
+				})
+			} else {
+				progress = fp
+				stopProgress = func() { progress.Stop() }
+			}
+		}
+
+		display = output.NewMetricsDisplay("Network Telemetry", collector)
+		if progress != nil {
+			if writer := progress.NewSection(); writer != nil {
+				display = display.WithWriter(writer)
+			}
+		}
+		if err := display.Start(cmd.Context()); err != nil {
+			internal.Debug("unable to start metrics dashboard", internal.Fields{
 				internal.FieldError: err.Error(),
 			})
 		} else {
-			progress = fp
+			stopDisplay = func() { display.Stop() }
 		}
-	}
-
-	display = output.NewMetricsDisplay("Network Telemetry", collector)
-	if progress != nil {
-		if writer := progress.NewSection(); writer != nil {
-			display = display.WithWriter(writer)
-		}
-	}
-	var (
-		stopDisplay  = func() {}
-		stopProgress = func() {}
-	)
-	if err := display.Start(cmd.Context()); err != nil {
-		internal.Debug("unable to start metrics dashboard", internal.Fields{
-			internal.FieldError: err.Error(),
-		})
-	} else {
-		stopDisplay = func() { display.Stop() }
-	}
-	if progress != nil {
-		stopProgress = func() { progress.Stop() }
 	}
 	cleanup := func() {
 		stopDisplay()

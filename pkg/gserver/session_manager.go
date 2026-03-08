@@ -198,7 +198,10 @@ func (sm *ServerSessions) ReleaseStream(sessionID string, streamID uint32, lease
 	session := sm.sessions[sessionID]
 	sm.mu.RUnlock()
 	if session == nil {
-		return fmt.Errorf("session %s not found", sessionID)
+		internal.Debug("release stream ignored for missing session", internal.Fields{
+			"session_id": sessionID,
+		})
+		return nil
 	}
 	if streamID != 0 && streamID != session.StreamID {
 		return fmt.Errorf("unknown stream %d for session %s", streamID, sessionID)
