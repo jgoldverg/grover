@@ -137,9 +137,32 @@ build_project() {
 	log "build complete; binaries are in ${ROOT_DIR}/bin"
 }
 
+persist_path() {
+	local shell_path="${SHELL:-}"
+	local profile=""
+	case "$shell_path" in
+	*/zsh) profile="$HOME/.zshrc" ;;
+	*/bash) profile="$HOME/.bashrc" ;;
+	*) profile="$HOME/.profile" ;;
+	esac
+	local export_line="export PATH=\"${BIN_DIR}:\$PATH\""
+	if [[ -f "$profile" ]] && grep -Fqx "$export_line" "$profile"; then
+		log "PATH entry already present in ${profile}"
+		return
+	fi
+	log "appending PATH export to ${profile}"
+	{
+		echo ""
+		echo "# Added by grover install_deps on $(date)"
+		echo "$export_line"
+	} >> "$profile"
+	log "run 'source ${profile}' (or restart your shell) to pick up the new PATH"
+}
+
 install_go
 install_protoc
 install_protoc_plugins
 build_project
+persist_path
 
-log "done. add ${BIN_DIR} to your PATH to use the installed tools."
+log "installation complete."
