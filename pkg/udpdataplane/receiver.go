@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/jgoldverg/grover/internal"
-	"github.com/jgoldverg/grover/pkg/metrics"
 	"github.com/jgoldverg/grover/pkg/udpwire"
 )
 

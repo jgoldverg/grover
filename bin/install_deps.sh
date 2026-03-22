@@ -93,6 +93,7 @@ install_go() {
 	ln -sf "$GO_INSTALL_DIR/bin/gofmt" "$BIN_DIR/gofmt"
 	GO_CMD="$BIN_DIR/go"
 	log "go installed at ${GO_CMD}"
+	rm -rf "$tmpdir"
 	trap - EXIT
 }
 
@@ -103,7 +104,7 @@ install_protoc() {
 		if [[ "$current" == "$PROTOC_VERSION" ]]; then
 			log "found protoc ${PROTOC_VERSION} at $(command -v protoc)"
 			return
-		}
+		fi
 	fi
 
 	log "installing protoc ${PROTOC_VERSION} to ${PROTOC_INSTALL_DIR}"
@@ -117,6 +118,7 @@ install_protoc() {
 	unzip -q "${tmpdir}/${zip}" -d "$PROTOC_INSTALL_DIR"
 	ln -sf "$PROTOC_INSTALL_DIR/bin/protoc" "$BIN_DIR/protoc"
 	log "protoc installed at ${BIN_DIR}/protoc"
+	rm -rf "$tmpdir"
 	trap - EXIT
 }
 
