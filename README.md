@@ -50,7 +50,7 @@ To keep the readers and writers fully parallel we track progress in memory and t
 
 ### server
 This is far more complicated and writing is confusing hence I need to iron this out more.
-There are a few servers in reality: information channel to the server is for all operations like(transfer, ls, rm,,, etc) we want this over grpc as its by far the simplest thing to use. I am thinking that we actually implement the grpc server and a custom protocol server as well.
+There are two primary connections to the grover server: grpc for management operations, and then the udp session that enables uploads/downloads
 
 ### network focus
 
@@ -64,7 +64,7 @@ Decisions that we can consider:
 
 ### Transport roadmap (near-term)
 
-- Per-stream TX windows: keep a `txWindow` per stream on the client that tracks bytes in flight (sequence + payload length). Gate `udpSession.Write` enqueueing on that budget so we stop shoving data when the server stops ACKing. Start with a byte limit tied to `socket_buffer_size`, grow toward selective retransmits driven by SACK ranges.
+- Per-stream TX windows: keep a `txWindow` per stream on the client that tracks bytes in flight (sequence + payload length). Gate `udpSession.Write` enqueueing on that budget so we stop shoving data when the server stops ACKing. Start with a byte limit tied to `socket_buffer_size`, grow toward selective retransmits driven by SACK ranges. Currently done via BBR + Sack so its similar to TCP 
 - Error propagation + retries: treat fatal TX/RX errors as first-class signals (already started by surfacing `txLoop` failures). Next, wire status packets into the window logic and add bounded retries so slow links don’t silently drop uploads.
 - Portable batching interface: wrap the send/recv path behind an interface so Linux builds can use `sendmmsg`/`recvmmsg` (and later `io_uring` or zero-copy `SEND_ZC`) while macOS/BSD fall back to tight per-packet writes with `kqueue`. Same batching loop, OS-specific backend.
 - Future perf tracks: once single-stream reliability sticks, explore io_uring (multishot recv, batched send) and, if needed, userspace stacks (DPDK) or kernel hooks (XDP/eBPF). Keep the design flexible enough to slot these in without rewriting the client.

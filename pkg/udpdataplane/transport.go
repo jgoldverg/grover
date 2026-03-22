@@ -1,9 +1,17 @@
 package udpdataplane
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net"
+	"os"
+	"strings"
+	"syscall"
 	"time"
+
+	"github.com/jgoldverg/grover/internal"
+	"github.com/jgoldverg/grover/pkg/udpwire"
 )
 
 // Transport abstracts the underlying UDP connection mechanics so the data plane
@@ -69,4 +77,107 @@ func (t *UDPConnTransport) RemoteAddr() *net.UDPAddr {
 		return addr
 	}
 	return nil
+}
+
+func setReadDeadline(ctx context.Context, transport Transport) error {
+	if transport == nil {
+		return nil
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		return transport.SetReadDeadline(deadline)
+	}
+	return transport.SetReadDeadline(time.Now().Add(defaultReadTimeout))
+}
+
+func setWriteDeadline(ctx context.Context, transport Transport) error {
+	if transport == nil {
+		return nil
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		return transport.SetWriteDeadline(deadline)
+	}
+	return transport.SetWriteDeadline(time.Now().Add(defaultWriteTimeout))
+}
+
+func payloadSizeFromMTU(mtu int) int {
+	if mtu <= 0 {
+		mtu = 1500
+	}
+	payload := mtu - udpwire.DataHeaderLen - 4
+	if payload < 256 {
+		payload = 256
+	}
+	return payload
+}
+
+func isClosedNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, net.ErrClosed) || errors.Is(err, os.ErrClosed) {
+		return true
+	}
+	return strings.Contains(err.Error(), "use of closed network connection")
+}
+
+func writePacketWithRetry(ctx context.Context, transport Transport, remote *net.UDPAddr, packet []byte) error {
+	for {
+		if err := setWriteDeadline(ctx, transport); err != nil {
+			return err
+		}
+		if _, err := transport.WritePacket(packet, remote); err != nil {
+			if isNoBufferSpaceErr(err) {
+				internal.Debug("udp write hit ENOBUFS, backing off", internal.Fields{
+					internal.FieldError: err.Error(),
+				})
+				if err := waitForRetry(ctx, enobufsRetryInterval); err != nil {
+					return err
+				}
+				continue
+			}
+			return err
+		}
+		return nil
+	}
+}
+
+func waitForRetry(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		d = time.Millisecond
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func isNoBufferSpaceErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.ENOBUFS) {
+		return true
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		if errors.Is(opErr.Err, syscall.ENOBUFS) {
+			return true
+		}
+		var sysErr *os.SyscallError
+		if errors.As(opErr.Err, &sysErr) {
+			return errors.Is(sysErr.Err, syscall.ENOBUFS)
+		}
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "no buffer space")
+}
+
+func udpAddrEqual(a, b *net.UDPAddr) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	return a.IP.Equal(b.IP) && a.Port == b.Port
 }
