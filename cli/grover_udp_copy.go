@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,6 +38,7 @@ type CopyOptions struct {
 	Concurrency  int
 	NoUI         bool
 	Protocol     string
+	UIMode       string
 	UIIntervalMs int
 }
 
@@ -50,6 +52,9 @@ func SimpleCopy() *cobra.Command {
 		Args:         cobra.ExactArgs(2),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := opts.validate(); err != nil {
+				return err
+			}
 			printer := output.NewPrinter()
 			src, err := parseLocation(args[0])
 			if err != nil {
@@ -78,7 +83,8 @@ func SimpleCopy() *cobra.Command {
 	cmd.Flags().IntVar(&opts.Concurrency, "concurrency", 4, "Maximum number of files to transfer in parallel")
 	cmd.Flags().BoolVar(&opts.NoUI, "no-ui", false, "Disable live progress and metrics output")
 	cmd.Flags().StringVar(&opts.Protocol, "protocol", "", "Transfer data-plane protocol (udp|tcp)")
-	cmd.Flags().IntVar(&opts.UIIntervalMs, "ui-interval-ms", 500, "Live metrics UI refresh interval in milliseconds")
+	cmd.Flags().StringVar(&opts.UIMode, "ui", "summary", "Transfer UI mode (summary|live|none)")
+	cmd.Flags().IntVar(&opts.UIIntervalMs, "ui-interval-ms", 2000, "Live metrics UI refresh interval in milliseconds")
 	return cmd
 }
 
@@ -211,10 +217,12 @@ func downloadFromRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts C
 	var (
 		progress *output.FileProgressManager
 		display  *output.MetricsDisplay
+		summary  *output.TransferSummary
+		done     atomic.Uint64
 	)
 	stopDisplay := func() {}
 	stopProgress := func() {}
-	if !opts.NoUI {
+	if opts.uiMode() == "live" {
 		if len(jobs) > 0 {
 			fp := output.NewFileProgressManager("Downloads")
 			if err := fp.Start(); err != nil {
@@ -239,6 +247,17 @@ func downloadFromRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts C
 			})
 		} else {
 			stopDisplay = func() { display.Stop() }
+		}
+	} else if opts.uiMode() == "summary" {
+		summary = output.NewTransferSummary("download", collector, len(jobs), totalDownloadBytes(jobs), &done).
+			WithInterval(opts.uiInterval()).
+			WithWriter(cmd.OutOrStdout())
+		if err := summary.Start(cmd.Context()); err != nil {
+			internal.Debug("unable to start transfer summary", internal.Fields{
+				internal.FieldError: err.Error(),
+			})
+		} else {
+			stopDisplay = func() { summary.Stop() }
 		}
 	}
 	cleanup := func() {
@@ -272,6 +291,7 @@ func downloadFromRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts C
 			if err := transfer.Get(ctx, job.remotePath, writer); err != nil {
 				return fmt.Errorf("download %s -> %s: %w", job.remotePath, job.localPath, err)
 			}
+			done.Add(1)
 			internal.Debug("download complete", internal.Fields{
 				"remote": job.remotePath,
 				"local":  job.localPath,
@@ -340,10 +360,12 @@ func uploadToRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts CopyO
 	var (
 		progress *output.FileProgressManager
 		display  *output.MetricsDisplay
+		summary  *output.TransferSummary
+		done     atomic.Uint64
 	)
 	stopDisplay := func() {}
 	stopProgress := func() {}
-	if !opts.NoUI {
+	if opts.uiMode() == "live" {
 		if len(jobs) > 0 {
 			fp := output.NewFileProgressManager("Uploads")
 			if err := fp.Start(); err != nil {
@@ -368,6 +390,17 @@ func uploadToRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts CopyO
 			})
 		} else {
 			stopDisplay = func() { display.Stop() }
+		}
+	} else if opts.uiMode() == "summary" {
+		summary = output.NewTransferSummary("upload", collector, len(jobs), totalUploadBytes(jobs), &done).
+			WithInterval(opts.uiInterval()).
+			WithWriter(cmd.OutOrStdout())
+		if err := summary.Start(cmd.Context()); err != nil {
+			internal.Debug("unable to start transfer summary", internal.Fields{
+				internal.FieldError: err.Error(),
+			})
+		} else {
+			stopDisplay = func() { summary.Stop() }
 		}
 	}
 	cleanup := func() {
@@ -407,6 +440,7 @@ func uploadToRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts CopyO
 			if err := transfer.Put(ctx, job.remotePath, reader, job.size, backend.ALWAYS); err != nil {
 				return fmt.Errorf("upload %s -> %s: %w", job.localPath, job.remotePath, err)
 			}
+			done.Add(1)
 			if opts.DeleteSource {
 				if err := os.Remove(job.localPath); err != nil {
 					return fmt.Errorf("remove source %s: %w", job.localPath, err)
@@ -551,9 +585,47 @@ func (opts CopyOptions) effectiveConcurrency() int {
 
 func (opts CopyOptions) uiInterval() time.Duration {
 	if opts.UIIntervalMs <= 0 {
-		return 500 * time.Millisecond
+		return 2 * time.Second
 	}
 	return time.Duration(opts.UIIntervalMs) * time.Millisecond
+}
+
+func (opts CopyOptions) uiMode() string {
+	if opts.NoUI {
+		return "none"
+	}
+	mode := strings.ToLower(strings.TrimSpace(opts.UIMode))
+	if mode == "" {
+		return "summary"
+	}
+	return mode
+}
+
+func (opts CopyOptions) validate() error {
+	switch opts.uiMode() {
+	case "summary", "live", "none":
+		return nil
+	default:
+		return fmt.Errorf("invalid --ui %q: must be summary, live, or none", opts.UIMode)
+	}
+}
+
+func totalUploadBytes(jobs []uploadJob) uint64 {
+	var total uint64
+	for _, job := range jobs {
+		if job.size > 0 {
+			total += uint64(job.size)
+		}
+	}
+	return total
+}
+
+func totalDownloadBytes(jobs []downloadJob) uint64 {
+	var total uint64
+	for _, job := range jobs {
+		total += job.size
+	}
+	return total
 }
 
 func buildUploadJobs(localRoot string, remoteBase string, destIsDir bool, info os.FileInfo) ([]uploadJob, error) {
