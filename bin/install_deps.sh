@@ -27,13 +27,39 @@ require_tool() {
   fi
 }
 
-sudo apt-get install unzip -y
+OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+ARCH="$(uname -m)"
+
+install_system_deps() {
+  case "$OS" in
+  linux)
+    if command -v apt-get >/dev/null 2>&1; then
+      log "installing system dependencies with apt"
+      if ! sudo apt-get update; then
+        log "apt update failed; clearing package lists and retrying"
+        sudo apt-get clean
+        sudo rm -rf /var/lib/apt/lists/*
+        sudo apt-get update
+      fi
+      sudo apt-get install -y ca-certificates curl tar unzip make
+      return
+    fi
+    ;;
+  darwin)
+    if command -v brew >/dev/null 2>&1; then
+      log "installing system dependencies with brew"
+      brew install curl unzip make || true
+      return
+    fi
+    ;;
+  esac
+}
+
+install_system_deps
 require_tool curl
 require_tool tar
 require_tool unzip
-
-OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
-ARCH="$(uname -m)"
+require_tool make
 
 case "$OS" in
 darwin) GO_OS="darwin" ;;
@@ -132,6 +158,11 @@ install_protoc_plugins() {
   GOBIN="$BIN_DIR" "$GO_CMD" install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@${PROTOC_GEN_GO_GRPC_VERSION}"
 }
 
+sync_vendor() {
+  log "refreshing vendored Go dependencies"
+  (cd "$ROOT_DIR" && PATH="$BIN_DIR:$PATH" "$GO_CMD" mod vendor)
+}
+
 build_project() {
   log "building grover binaries"
   (cd "$ROOT_DIR" && PATH="$BIN_DIR:$PATH" make all)
@@ -163,6 +194,7 @@ persist_path() {
 install_go
 install_protoc
 install_protoc_plugins
+sync_vendor
 build_project
 persist_path
 
