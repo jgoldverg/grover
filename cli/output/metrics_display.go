@@ -37,6 +37,15 @@ func NewMetricsDisplay(title string, collector *metrics.TransferCollector) *Metr
 	}
 }
 
+// WithInterval controls how often the live dashboard redraws.
+func (d *MetricsDisplay) WithInterval(interval time.Duration) *MetricsDisplay {
+	if d == nil || interval <= 0 {
+		return d
+	}
+	d.interval = interval
+	return d
+}
+
 // WithWriter allows rendering into an existing writer (e.g. MultiPrinter section).
 func (d *MetricsDisplay) WithWriter(w io.Writer) *MetricsDisplay {
 	d.writer = w

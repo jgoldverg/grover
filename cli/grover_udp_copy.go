@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jgoldverg/grover/backend"
@@ -36,6 +37,7 @@ type CopyOptions struct {
 	Concurrency  int
 	NoUI         bool
 	Protocol     string
+	UIIntervalMs int
 }
 
 func SimpleCopy() *cobra.Command {
@@ -76,6 +78,7 @@ func SimpleCopy() *cobra.Command {
 	cmd.Flags().IntVar(&opts.Concurrency, "concurrency", 4, "Maximum number of files to transfer in parallel")
 	cmd.Flags().BoolVar(&opts.NoUI, "no-ui", false, "Disable live progress and metrics output")
 	cmd.Flags().StringVar(&opts.Protocol, "protocol", "", "Transfer data-plane protocol (udp|tcp)")
+	cmd.Flags().IntVar(&opts.UIIntervalMs, "ui-interval-ms", 500, "Live metrics UI refresh interval in milliseconds")
 	return cmd
 }
 
@@ -224,7 +227,7 @@ func downloadFromRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts C
 			}
 		}
 
-		display = output.NewMetricsDisplay("Network Telemetry", collector)
+		display = output.NewMetricsDisplay("Network Telemetry", collector).WithInterval(opts.uiInterval())
 		if progress != nil {
 			if writer := progress.NewSection(); writer != nil {
 				display = display.WithWriter(writer)
@@ -353,7 +356,7 @@ func uploadToRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts CopyO
 			}
 		}
 
-		display = output.NewMetricsDisplay("Network Telemetry", collector)
+		display = output.NewMetricsDisplay("Network Telemetry", collector).WithInterval(opts.uiInterval())
 		if progress != nil {
 			if writer := progress.NewSection(); writer != nil {
 				display = display.WithWriter(writer)
@@ -544,6 +547,13 @@ func (opts CopyOptions) effectiveConcurrency() int {
 		return 1
 	}
 	return opts.Concurrency
+}
+
+func (opts CopyOptions) uiInterval() time.Duration {
+	if opts.UIIntervalMs <= 0 {
+		return 500 * time.Millisecond
+	}
+	return time.Duration(opts.UIIntervalMs) * time.Millisecond
 }
 
 func buildUploadJobs(localRoot string, remoteBase string, destIsDir bool, info os.FileInfo) ([]uploadJob, error) {
