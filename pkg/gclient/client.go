@@ -21,6 +21,7 @@ import (
 	"github.com/jgoldverg/grover/pkg/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type TransferAPI interface {
@@ -96,7 +97,7 @@ func (c *Client) Initialize(ctx context.Context, policy util.RoutePolicy) error 
 			"server_url":   c.cfg.ServerURL,
 			"ca_cert_file": c.cfg.CACertFile,
 		})
-		cc, err = c.dialTLS(ctx, c.cfg.ServerURL, c.cfg.CACertFile)
+		cc, err = c.dialControl(ctx, c.cfg.ServerURL, c.cfg.CACertFile, c.cfg.InsecureControl)
 		if err != nil {
 			return err
 		}
@@ -130,7 +131,7 @@ func (c *Client) Initialize(ctx context.Context, policy util.RoutePolicy) error 
 	c.files = NewFileService(c, fileServiceClient, fileStore)
 	if wantRemote {
 		udpConfig, _ := internal.LoadUdpClientConfig("")
-		c.transfer = NewTransferAPI(udpConfig, pb.NewTransferControlClient(cc), hostFromTarget(c.cfg.ServerURL))
+		c.transfer = NewTransferAPI(udpConfig, pb.NewTransferControlClient(cc), hostFromTarget(c.cfg.ServerURL), c.cfg.TransferProtocol)
 	}
 	return nil
 }
@@ -142,7 +143,13 @@ func (c *Client) Close() error {
 	return nil
 }
 
-func (c *Client) dialTLS(ctx context.Context, target, caPath string) (*grpc.ClientConn, error) {
+func (c *Client) dialControl(ctx context.Context, target, caPath string, insecureControl bool) (*grpc.ClientConn, error) {
+	if insecureControl {
+		return grpc.NewClient(
+			target,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		)
+	}
 	// Build root pool: system roots by default; add custom CA if provided.
 	roots, _ := x509.SystemCertPool()
 	if caPath != "" {

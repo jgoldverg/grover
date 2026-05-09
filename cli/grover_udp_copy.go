@@ -35,6 +35,7 @@ type CopyOptions struct {
 	DeleteSource bool
 	Concurrency  int
 	NoUI         bool
+	Protocol     string
 }
 
 func SimpleCopy() *cobra.Command {
@@ -74,6 +75,7 @@ func SimpleCopy() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.DeleteSource, "delete-source", false, "Delete the local source file after a successful upload")
 	cmd.Flags().IntVar(&opts.Concurrency, "concurrency", 4, "Maximum number of files to transfer in parallel")
 	cmd.Flags().BoolVar(&opts.NoUI, "no-ui", false, "Disable live progress and metrics output")
+	cmd.Flags().StringVar(&opts.Protocol, "protocol", "", "Transfer data-plane protocol (udp|tcp)")
 	return cmd
 }
 
@@ -512,6 +514,18 @@ func (mr *metricReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
+func (mr *metricReader) ReadAt(p []byte, off int64) (int, error) {
+	ra, ok := mr.reader.(io.ReaderAt)
+	if !ok {
+		return 0, fmt.Errorf("reader does not support ReadAt")
+	}
+	n, err := ra.ReadAt(p, off)
+	if n > 0 && mr.hook != nil {
+		mr.hook(n)
+	}
+	return n, err
+}
+
 type metricWriter struct {
 	writer io.Writer
 	hook   func(int)
@@ -666,7 +680,14 @@ func resolveDownloadDestination(dst RemoteRef, multi bool) (string, bool, error)
 
 func newTransferClientForRemote(cmd *cobra.Command, ref RemoteRef) (*gclient.Client, error) {
 	cfg := GetAppConfig(cmd)
-	if name := strings.TrimSpace(ref.RemoteName); name != "" {
+	if protocol, _ := cmd.Flags().GetString("protocol"); strings.TrimSpace(protocol) != "" {
+		cfg.TransferProtocol = strings.ToLower(strings.TrimSpace(protocol))
+	}
+	if p := strings.ToLower(strings.TrimSpace(cfg.TransferProtocol)); p != "" && p != "udp" && p != "tcp" {
+		return nil, fmt.Errorf("invalid transfer protocol %q: must be udp or tcp", cfg.TransferProtocol)
+	}
+	serverURLFromFlag := cmd.Root().PersistentFlags().Changed("server-url")
+	if name := strings.TrimSpace(ref.RemoteName); name != "" && !serverURLFromFlag {
 		var (
 			cred backend.Credential
 			err  error

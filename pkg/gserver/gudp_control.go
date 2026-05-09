@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,18 +65,28 @@ func (gc *GudpControl) OpenSession(ctx context.Context, req *pb.OpenSessionReque
 		SessionId:  sessionID,
 		Token:      token,
 		ServerHost: gc.sm.UDPHost(meta),
-		ServerPort: func() uint32 {
-			if addr := meta.LocalAddr(); addr != nil {
-				return uint32(addr.Port)
-			}
-			return 0
-		}(),
-		StreamIds:  []uint32{meta.StreamID},
+		ServerPort: gc.serverPort(meta),
+		StreamIds:  append([]uint32(nil), meta.StreamIDs...),
 		MtuHint:    meta.MTU,
 		TotalSize:  meta.TotalSize,
 		TtlSeconds: meta.TTLSeconds,
 	}
 	return resp, nil
+}
+
+func (gc *GudpControl) serverPort(meta *ServerSession) uint32 {
+	if meta == nil {
+		return 0
+	}
+	if addr := meta.LocalAddr(); addr != nil {
+		return uint32(addr.Port)
+	}
+	if meta.tcpListener != nil {
+		if addr, ok := meta.tcpListener.Addr().(*net.TCPAddr); ok && addr != nil {
+			return uint32(addr.Port)
+		}
+	}
+	return 0
 }
 
 func (gc *GudpControl) CloseSession(ctx context.Context, req *pb.CloseSessionRequest) (*pb.CloseSessionResponse, error) {

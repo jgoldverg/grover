@@ -16,6 +16,8 @@ type AppConfig struct {
 	CredentialsFile     string `mapstructure:"credentials_file"`
 	ServerURL           string `mapstructure:"server_url"`
 	CACertFile          string `mapstructure:"ca_cert_file"`
+	TransferProtocol    string `mapstructure:"transfer_protocol"`
+	InsecureControl     bool   `mapstructure:"insecure_control"`
 	Route               string `mapstructure:"route"`
 	HeartBeatInterval   int    `mapstructure:"heart_beat_interval"`
 	HeartBeatErrorCount int    `mapstructure:"heart_beat_error_count"`
@@ -102,6 +104,8 @@ func LoadAppConfig(configPath string) (*AppConfig, error) {
 	v.SetDefault("credentials_file", filepath.Join(home, ".grover", "credentials_store.toml"))
 	v.SetDefault("server_url", "localhost:22444")
 	v.SetDefault("ca_cert_file", filepath.Join(home, ".grover", "certs", "public", "server.crt"))
+	v.SetDefault("transfer_protocol", "udp")
+	v.SetDefault("insecure_control", false)
 	v.SetDefault("route", "auto")
 	v.SetDefault("heart_beat_interval", 10)
 	v.SetDefault("heart_beat_error_count", 5)
@@ -118,6 +122,7 @@ func LoadAppConfig(configPath string) (*AppConfig, error) {
 	// expand paths
 	cfg.CredentialsFile = expandPath(cfg.CredentialsFile)
 	cfg.CACertFile = expandPath(cfg.CACertFile)
+	cfg.TransferProtocol = normalizeTransferProtocol(cfg.TransferProtocol)
 
 	// Create-on-first-run ONLY:
 	// If Viper didn't read any file, pick a path and write it if missing.
@@ -160,6 +165,8 @@ type ServerConfig struct {
 	ServerCertificatePath string `mapstructure:"server_certificate_path"`
 	ServerKeyPath         string `mapstructure:"server_key_path"`
 	CredentialsFile       string `mapstructure:"credentials_file"`
+	TransferProtocol      string `mapstructure:"transfer_protocol"`
+	InsecureControl       bool   `mapstructure:"insecure_control"`
 	HeartBeatInterval     int    `mapstructure:"heart_beat_interval"`
 	ServerId              string `mapstructure:"server_id"`
 	LogLevel              string `mapstructure:"log_level"`
@@ -181,9 +188,11 @@ func LoadServerConfig(configPath string) (*ServerConfig, error) {
 	}
 
 	v.SetDefault("port", 22444)
-	v.SetDefault("server_certificate_path", filepath.Join(home, ".grover", "certs", "public", "server.crt"))
-	v.SetDefault("server_key_path", filepath.Join(home, ".grover", "certs", "private", "server.key"))
+	v.SetDefault("server_certificate_path", filepath.Join(home, ".grover", "certs", "server.crt"))
+	v.SetDefault("server_key_path", filepath.Join(home, ".grover", "certs", "server.key"))
 	v.SetDefault("credentials_file", filepath.Join(home, ".grover", "credentials_store.toml"))
+	v.SetDefault("transfer_protocol", "udp")
+	v.SetDefault("insecure_control", false)
 	v.SetDefault("heart_beat_interval", 5000)
 	v.SetDefault("server_id", uuid.New().String())
 	v.SetDefault("log_level", "info")
@@ -201,6 +210,7 @@ func LoadServerConfig(configPath string) (*ServerConfig, error) {
 	cfg.ServerCertificatePath = expandPath(cfg.ServerCertificatePath)
 	cfg.ServerKeyPath = expandPath(cfg.ServerKeyPath)
 	cfg.CredentialsFile = expandPath(cfg.CredentialsFile)
+	cfg.TransferProtocol = normalizeTransferProtocol(cfg.TransferProtocol)
 
 	Info("TLS cert paths", Fields{
 		ServerCertificatePath: cfg.ServerCertificatePath,
@@ -312,6 +322,8 @@ func (cfg *AppConfig) Save(path string) (string, error) {
 	v.Set("credentials_file", cfg.CredentialsFile)
 	v.Set("server_url", cfg.ServerURL)
 	v.Set("ca_cert_file", cfg.CACertFile)
+	v.Set("transfer_protocol", cfg.TransferProtocol)
+	v.Set("insecure_control", cfg.InsecureControl)
 	v.Set("route", cfg.Route)
 	v.Set("heart_beat_interval", cfg.HeartBeatInterval)
 	v.Set("heart_beat_error_count", cfg.HeartBeatErrorCount)
@@ -345,6 +357,8 @@ func (cfg *ServerConfig) Save(path string) (string, error) {
 	v.Set("server_certificate_path", cfg.ServerCertificatePath)
 	v.Set("server_key_path", cfg.ServerKeyPath)
 	v.Set("credentials_file", cfg.CredentialsFile)
+	v.Set("transfer_protocol", cfg.TransferProtocol)
+	v.Set("insecure_control", cfg.InsecureControl)
 	v.Set("heart_beat_interval", cfg.HeartBeatInterval)
 	v.Set("server_id", cfg.ServerId)
 	v.Set("log_level", cfg.LogLevel)
@@ -372,4 +386,13 @@ func expandPath(p string) string {
 		}
 	}
 	return p
+}
+
+func normalizeTransferProtocol(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "tcp":
+		return "tcp"
+	default:
+		return "udp"
+	}
 }

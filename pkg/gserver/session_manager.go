@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,6 +21,7 @@ type ServerSessions struct {
 	sessions  map[string]*ServerSession
 	cfg       *internal.ServerConfig
 	host      string
+	transport string
 	streamSeq atomic.Uint32
 }
 
@@ -30,6 +32,7 @@ type ServerSession struct {
 	Path       string
 	Size       int64
 	StreamID   uint32
+	StreamIDs  []uint32
 	LeaseID    uuid.UUID
 	MTU        uint32
 	TTLSeconds uint32
@@ -43,6 +46,12 @@ type ServerSession struct {
 	remoteAddr *net.UDPAddr
 
 	file *os.File
+
+	tcpListener *net.TCPListener
+
+	dataDone chan struct{}
+	dataMu   sync.RWMutex
+	dataErr  error
 }
 
 func NewServerSessions(cfg *internal.ServerConfig) *ServerSessions {
@@ -50,10 +59,18 @@ func NewServerSessions(cfg *internal.ServerConfig) *ServerSessions {
 	if host == "" {
 		host = "127.0.0.1"
 	}
+	transport := "udp"
+	if cfg != nil && strings.EqualFold(strings.TrimSpace(cfg.TransferProtocol), "tcp") {
+		transport = "tcp"
+	}
+	if v := os.Getenv("GROVER_TRANSFER_PROTOCOL"); strings.EqualFold(strings.TrimSpace(v), "tcp") {
+		transport = "tcp"
+	}
 	return &ServerSessions{
-		sessions: make(map[string]*ServerSession),
-		cfg:      cfg,
-		host:     host,
+		sessions:  make(map[string]*ServerSession),
+		cfg:       cfg,
+		host:      host,
+		transport: transport,
 	}
 }
 
@@ -81,6 +98,9 @@ func (s *ServerSession) Close() {
 	if s.conn != nil {
 		_ = s.conn.Close()
 	}
+	if s.tcpListener != nil {
+		_ = s.tcpListener.Close()
+	}
 	if s.file != nil {
 		_ = s.file.Close()
 	}
@@ -97,14 +117,8 @@ func (sm *ServerSessions) CreateSession(req *pb.OpenSessionRequest) (*ServerSess
 		return nil, errors.New("path is required")
 	}
 
-	conn, laddr, err := sm.allocateUDPConn()
-	if err != nil {
-		return nil, fmt.Errorf("allocate udp socket: %w", err)
-	}
-
 	token, err := sm.generateSessionToken()
 	if err != nil {
-		conn.Close()
 		return nil, fmt.Errorf("generate session token: %w", err)
 	}
 
@@ -124,12 +138,32 @@ func (sm *ServerSessions) CreateSession(req *pb.OpenSessionRequest) (*ServerSess
 		internal.Error("failed to create file", internal.Fields{
 			"error": err.Error(),
 		})
-		conn.Close()
 		return nil, err
 	}
 
-	sessionID := uuid.New()
-	streamID := sm.nextStreamID()
+	var (
+		conn        *net.UDPConn
+		laddr       *net.UDPAddr
+		tcpListener *net.TCPListener
+	)
+	switch sm.transport {
+	case "tcp":
+		tcpListener, err = sm.allocateTCPListener()
+		if err != nil {
+			_ = file.Close()
+			return nil, fmt.Errorf("allocate tcp listener: %w", err)
+		}
+	case "udp":
+		conn, laddr, err = sm.allocateUDPConn()
+		if err != nil {
+			_ = file.Close()
+			return nil, fmt.Errorf("allocate udp socket: %w", err)
+		}
+	default:
+		_ = file.Close()
+		return nil, fmt.Errorf("unsupported transfer transport %q", sm.transport)
+	}
+
 	totalSize := func() uint64 {
 		switch req.GetMode() {
 		case pb.OpenSessionRequest_READ:
@@ -143,21 +177,37 @@ func (sm *ServerSessions) CreateSession(req *pb.OpenSessionRequest) (*ServerSess
 		}
 		return 0
 	}()
+	sessionID := uuid.New()
+	parallelStreams := req.GetParallelStreams()
+	if parallelStreams == 0 {
+		parallelStreams = 1
+	}
+	if totalSize > 0 && uint64(parallelStreams) > totalSize {
+		parallelStreams = uint32(totalSize)
+	}
+	streamIDs := make([]uint32, 0, parallelStreams)
+	for i := uint32(0); i < parallelStreams; i++ {
+		streamIDs = append(streamIDs, sm.nextStreamID())
+	}
+	streamID := streamIDs[0]
 	session := &ServerSession{
-		ID:         sessionID,
-		Token:      token,
-		Mode:       req.GetMode(),
-		Path:       req.GetPath(),
-		Size:       req.GetSize(),
-		StreamID:   streamID,
-		LeaseID:    uuid.New(),
-		MTU:        sm.mtuHint(),
-		TTLSeconds: sm.ttlSeconds(),
-		TotalSize:  totalSize,
-		CreatedAt:  time.Now(),
-		conn:       conn,
-		localAddr:  laddr,
-		file:       file,
+		ID:          sessionID,
+		Token:       token,
+		Mode:        req.GetMode(),
+		Path:        req.GetPath(),
+		Size:        req.GetSize(),
+		StreamID:    streamID,
+		StreamIDs:   streamIDs,
+		LeaseID:     uuid.New(),
+		MTU:         sm.mtuHint(),
+		TTLSeconds:  sm.ttlSeconds(),
+		TotalSize:   totalSize,
+		CreatedAt:   time.Now(),
+		conn:        conn,
+		localAddr:   laddr,
+		file:        file,
+		tcpListener: tcpListener,
+		dataDone:    make(chan struct{}),
 	}
 
 	sm.mu.Lock()
@@ -169,7 +219,12 @@ func (sm *ServerSessions) CreateSession(req *pb.OpenSessionRequest) (*ServerSess
 		"mode":       session.Mode.String(),
 		"stream_id":  session.StreamID,
 	})
-	go newUDPSessionRunner(sm, session).run()
+	switch sm.transport {
+	case "tcp":
+		go newTCPSessionRunner(sm, session).run()
+	default:
+		go newUDPSessionRunner(sm, session).run()
+	}
 
 	return session, nil
 }
@@ -212,14 +267,25 @@ func (sm *ServerSessions) ReleaseStream(sessionID string, streamID uint32, lease
 
 	if session.Mode == pb.OpenSessionRequest_WRITE && session.file != nil {
 		if commit {
+			if session.tcpListener != nil {
+				if err := session.WaitDataDone(sm.ttlSeconds()); err != nil {
+					return err
+				}
+			}
 			_ = session.file.Sync()
+			sm.CloseSession(sessionID)
 		} else {
 			path := session.Path
-			_ = session.file.Close()
-			session.file = nil
+			sm.CloseSession(sessionID)
 			_ = os.Remove(path)
 			return nil
 		}
+	}
+	if session.Mode == pb.OpenSessionRequest_READ && session.tcpListener != nil {
+		if err := session.WaitDataDone(sm.ttlSeconds()); err != nil {
+			return err
+		}
+		sm.CloseSession(sessionID)
 	}
 	return nil
 }
@@ -238,8 +304,37 @@ func (sm *ServerSessions) CloseSession(sessionID string) (*ServerSession, bool) 
 	return session, true
 }
 
+func (s *ServerSession) FinishData(err error) {
+	s.dataMu.Lock()
+	s.dataErr = err
+	s.dataMu.Unlock()
+	close(s.dataDone)
+}
+
+func (s *ServerSession) WaitDataDone(ttlSeconds uint32) error {
+	if s.dataDone == nil {
+		return nil
+	}
+	timeout := time.Duration(ttlSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	select {
+	case <-s.dataDone:
+	case <-time.After(timeout):
+		return fmt.Errorf("timed out waiting for session %s data plane to finish", s.ID.String())
+	}
+	s.dataMu.RLock()
+	defer s.dataMu.RUnlock()
+	return s.dataErr
+}
+
 func (sm *ServerSessions) UDPHost(*ServerSession) string {
 	return sm.host
+}
+
+func (sm *ServerSessions) Transport() string {
+	return sm.transport
 }
 
 func (sm *ServerSessions) generateSessionToken() ([]byte, error) {
@@ -261,6 +356,15 @@ func (sm *ServerSessions) allocateUDPConn() (*net.UDPConn, *net.UDPAddr, error) 
 		return nil, nil, errors.New("udp listener missing local address")
 	}
 	return conn, laddr, nil
+}
+
+func (sm *ServerSessions) allocateTCPListener() (*net.TCPListener, error) {
+	addr := &net.TCPAddr{IP: net.IPv4zero, Port: 0}
+	l, err := net.ListenTCP("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	return l, nil
 }
 
 func (sm *ServerSessions) newUDPConn() (*net.UDPConn, error) {

@@ -182,3 +182,15 @@ func (cr *countingReader) Read(p []byte) (int, error) {
 	}
 	return n, err
 }
+
+func (cr *countingReader) ReadAt(p []byte, off int64) (int, error) {
+	ra, ok := cr.reader.(io.ReaderAt)
+	if !ok {
+		return 0, io.ErrUnexpectedEOF
+	}
+	n, err := ra.ReadAt(p, off)
+	if n > 0 && cr.hook != nil {
+		cr.hook(n)
+	}
+	return n, err
+}

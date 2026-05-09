@@ -28,15 +28,23 @@ type GroverServer struct {
 }
 
 func NewGroverServer(ctx context.Context, serverConfig *internal.ServerConfig) *GroverServer {
-	certs, err := serverConfig.LoadTLSCredentials()
-	if err != nil {
-		internal.Error("failed to load grover certificates", internal.Fields{
-			internal.ServerCertificatePath: serverConfig.ServerCertificatePath,
-			internal.ServerKeyPath:         serverConfig.ServerKeyPath,
-			internal.FieldError:            err.Error(),
-		})
+	var opts []grpc.ServerOption
+	if !serverConfig.InsecureControl {
+		certs, err := serverConfig.LoadTLSCredentials()
+		if err != nil {
+			internal.Error("failed to load grover certificates", internal.Fields{
+				internal.ServerCertificatePath: serverConfig.ServerCertificatePath,
+				internal.ServerKeyPath:         serverConfig.ServerKeyPath,
+				internal.FieldError:            err.Error(),
+			})
+		}
+		if certs != nil {
+			opts = append(opts, grpc.Creds(certs))
+		}
+	} else {
+		internal.Warn("starting control-plane gRPC in insecure mode (no TLS)", nil)
 	}
-	server := grpc.NewServer(grpc.Creds(certs))
+	server := grpc.NewServer(opts...)
 	reflection.Register(server)
 	store, err := backend.NewTomlCredentialStorage(serverConfig.CredentialsFile)
 	if err != nil {

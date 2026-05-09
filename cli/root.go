@@ -21,6 +21,7 @@ const (
 func NewRootCommand() *cobra.Command {
 	var appConfigPath string
 	var serverURLFlag string
+	var insecureControlFlag bool
 
 	rootCmd := &cobra.Command{
 		Use:   "grover",
@@ -36,6 +37,9 @@ func NewRootCommand() *cobra.Command {
 			// Override ServerURL if flag is set
 			if serverURLFlag != "" {
 				cfg.ServerURL = serverURLFlag
+			}
+			if cmd.Flags().Changed("insecure-control") {
+				cfg.InsecureControl = insecureControlFlag
 			}
 			if err := internal.ConfigureLogger(cfg.LogLevel); err != nil {
 				internal.Warn("invalid log level in app config, defaulting to info", internal.Fields{
@@ -75,6 +79,7 @@ func NewRootCommand() *cobra.Command {
 
 	rootCmd.PersistentFlags().StringVar(&appConfigPath, "app-config", "", "Path to app config file (TOML)")
 	rootCmd.PersistentFlags().StringVar(&serverURLFlag, "server-url", "", "URL of the server to connect to")
+	rootCmd.PersistentFlags().BoolVar(&insecureControlFlag, "insecure-control", false, "Use insecure gRPC control-plane connection without TLS")
 
 	// Notice we pass no context or credentialStore here — subcommands get them from cmd.Context()
 	rootCmd.AddCommand(BackendCommand())
