@@ -51,6 +51,7 @@ func (s *BBRSender) Send(ctx context.Context, cfg SendConfig, src io.Reader) (ui
 		offset        uint64
 		pending       = make([]pendingPacket, 0, 1024)
 		bytesInflight int64
+		sentSincePoll int
 	)
 
 	defer cfg.Transport.SetWriteDeadline(time.Time{})
@@ -108,14 +109,18 @@ func (s *BBRSender) Send(ctx context.Context, cfg SendConfig, src io.Reader) (ui
 				data:       packetBuf,
 				sentAt:     time.Now(),
 			})
-			acked, err := drainStatusPackets(ctx, cfg.Transport, &sendRemote, cfg.StreamID, ackBuf, &ackPkt, &pending, cfg.Collector, s.pollTimeout(), true, s.observeAck)
-			if err != nil {
-				return offset, err
-			}
-			if acked > 0 {
-				bytesInflight -= int64(acked)
-				if bytesInflight < 0 {
-					bytesInflight = 0
+			sentSincePoll++
+			if shouldPollAcks(sentSincePoll, len(pending), windowPackets) {
+				sentSincePoll = 0
+				acked, err := drainStatusPackets(ctx, cfg.Transport, &sendRemote, cfg.StreamID, ackBuf, &ackPkt, &pending, cfg.Collector, 0, true, s.observeAck)
+				if err != nil {
+					return offset, err
+				}
+				if acked > 0 {
+					bytesInflight -= int64(acked)
+					if bytesInflight < 0 {
+						bytesInflight = 0
+					}
 				}
 			}
 		}
@@ -220,6 +225,19 @@ func (s *BBRSender) flowControlWindowBytes(cfg SendConfig, payloadSize int, wind
 		return int64(windowPackets * payloadSize)
 	}
 	return s.minWindowBytes
+}
+
+func shouldPollAcks(sentSincePoll int, pendingPackets int, windowPackets int) bool {
+	if pendingPackets <= 0 {
+		return false
+	}
+	if sentSincePoll >= defaultAckPollEvery {
+		return true
+	}
+	if windowPackets <= 0 {
+		return false
+	}
+	return pendingPackets >= windowPackets-(defaultAckPollEvery*2)
 }
 
 func (s *BBRSender) ackTimeout() time.Duration {

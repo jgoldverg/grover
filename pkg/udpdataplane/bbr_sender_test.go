@@ -15,3 +15,15 @@ func TestFlowControlWindowBytes(t *testing.T) {
 		t.Fatalf("bbr initial window = %d, want %d", got, s.minWindowBytes)
 	}
 }
+
+func TestShouldPollAcks(t *testing.T) {
+	if shouldPollAcks(1, 1, 4096) {
+		t.Fatal("should not poll immediately")
+	}
+	if !shouldPollAcks(defaultAckPollEvery, defaultAckPollEvery, 4096) {
+		t.Fatal("should poll after default poll interval")
+	}
+	if !shouldPollAcks(1, 4096, 4096) {
+		t.Fatal("should poll near full packet window")
+	}
+}

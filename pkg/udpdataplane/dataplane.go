@@ -15,6 +15,7 @@ const (
 	defaultWriteTimeout  = 2 * time.Second
 	maxAckRetries        = 5
 	enobufsRetryInterval = 5 * time.Millisecond
+	defaultAckPollEvery  = 64
 )
 
 // SendConfig captures the parameters needed to transmit data over UDP.

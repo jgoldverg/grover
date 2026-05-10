@@ -37,14 +37,10 @@ func drainStatusPackets(
 	totalAcked := 0
 	for len(*pending) > 0 {
 		if nonBlocking {
-			if timeout > 0 {
-				if err := transport.SetReadDeadline(time.Now().Add(timeout)); err != nil {
-					return totalAcked, err
-				}
-			} else {
-				if err := transport.SetReadDeadline(time.Now()); err != nil {
-					return totalAcked, err
-				}
+			// This path is a poll, not a wait. Waiting even a couple of
+			// milliseconds after every packet caps packet rate and throughput.
+			if err := transport.SetReadDeadline(time.Now()); err != nil {
+				return totalAcked, err
 			}
 		} else {
 			if timeout > 0 {
