@@ -37,6 +37,24 @@ func (a *ackCoalescer) OnPacket(gap bool) bool {
 	return time.Since(a.last) >= a.every
 }
 
+func (a *ackCoalescer) Pending() bool {
+	return a != nil && a.pending > 0
+}
+
+func (a *ackCoalescer) NextDeadline() time.Time {
+	if a == nil || a.pending == 0 {
+		return time.Time{}
+	}
+	return a.last.Add(a.every)
+}
+
+func (a *ackCoalescer) ShouldFlush() bool {
+	if a == nil || a.pending == 0 {
+		return false
+	}
+	return time.Now().After(a.NextDeadline()) || time.Now().Equal(a.NextDeadline())
+}
+
 func (a *ackCoalescer) MarkSent() {
 	if a == nil {
 		return

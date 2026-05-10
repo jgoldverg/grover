@@ -126,12 +126,16 @@ func Receive(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint64, e
 		if err := ctx.Err(); err != nil {
 			return total, err
 		}
-		if err := setReadDeadline(ctx, cfg.Transport); err != nil {
+		if err := setReceiveDeadline(ctx, cfg.Transport, acks); err != nil {
 			return total, err
 		}
 		n, addr, err := cfg.Transport.ReadPacket(buf)
 		if err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				if remote != nil && acks.ShouldFlush() {
+					emitStatusPacket(cfg.Transport, remote, cfg.SessionID, cfg.SessionKey, cfg.StreamID, tracker, statusBuf, &sackScratch)
+					acks.MarkSent()
+				}
 				continue
 			}
 			if isClosedNetworkError(err) || errors.Is(err, io.EOF) {
@@ -254,12 +258,13 @@ func ReceiveMany(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint6
 		if err := ctx.Err(); err != nil {
 			return total, err
 		}
-		if err := setReadDeadline(ctx, cfg.Transport); err != nil {
+		if err := setReceiveManyDeadline(ctx, cfg.Transport, states); err != nil {
 			return total, err
 		}
 		n, addr, err := cfg.Transport.ReadPacket(buf)
 		if err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				flushDueManyStatus(cfg, states, statusBuf)
 				continue
 			}
 			if isClosedNetworkError(err) || errors.Is(err, io.EOF) {
@@ -328,6 +333,51 @@ func ReceiveMany(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint6
 			lingerManyStatus(ctx, cfg, states, statusBuf, buf, &packet)
 			return total, nil
 		}
+	}
+}
+
+func setReceiveDeadline(ctx context.Context, transport Transport, acks *ackCoalescer) error {
+	if transport == nil {
+		return nil
+	}
+	deadline := time.Now().Add(defaultReadTimeout)
+	if acks != nil && acks.Pending() {
+		if next := acks.NextDeadline(); !next.IsZero() && next.Before(deadline) {
+			deadline = next
+		}
+	}
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	return transport.SetReadDeadline(deadline)
+}
+
+func setReceiveManyDeadline(ctx context.Context, transport Transport, states map[uint32]*receiveStreamState) error {
+	if transport == nil {
+		return nil
+	}
+	deadline := time.Now().Add(defaultReadTimeout)
+	for _, st := range states {
+		if st == nil || st.acks == nil || !st.acks.Pending() {
+			continue
+		}
+		if next := st.acks.NextDeadline(); !next.IsZero() && next.Before(deadline) {
+			deadline = next
+		}
+	}
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	return transport.SetReadDeadline(deadline)
+}
+
+func flushDueManyStatus(cfg ReceiveConfig, states map[uint32]*receiveStreamState, statusBuf []byte) {
+	for streamID, st := range states {
+		if st == nil || st.remote == nil || !st.acks.ShouldFlush() {
+			continue
+		}
+		emitStatusPacket(cfg.Transport, st.remote, cfg.SessionID, cfg.SessionKey, streamID, st.tracker, statusBuf, &st.sackScratch)
+		st.acks.MarkSent()
 	}
 }
 

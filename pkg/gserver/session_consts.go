@@ -7,7 +7,7 @@ import (
 
 const (
 	helloTimeout = 30 * time.Second
-	defaultMTU   = 1000
+	defaultMTU   = 1500
 )
 
 var errNotRegularFile = errors.New("path is not a regular file")
