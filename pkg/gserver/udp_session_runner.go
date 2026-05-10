@@ -177,8 +177,8 @@ func (r *udpSessionRunner) receiveFile(ctx context.Context, addr *net.UDPAddr) e
 		BufferSize:      r.recvBufferSize(),
 		Collector:       nil,
 		ExpectedSize:    r.session.TotalSize,
-		AckEveryPackets: 32,
-		AckEvery:        5 * time.Millisecond,
+		AckEveryPackets: r.ackEveryPackets(),
+		AckEvery:        r.ackEvery(),
 		OnRemoteAddr: func(a *net.UDPAddr) {
 			if a != nil {
 				r.session.SetRemoteAddr(a)
@@ -228,7 +228,7 @@ func (r *udpSessionRunner) sendFile(ctx context.Context, addr *net.UDPAddr) erro
 		MTU:             int(r.session.MTU),
 		Collector:       nil,
 		FlowControl:     "fixed",
-		WindowPackets:   4096,
+		WindowPackets:   r.windowPackets(),
 		RequireFinalAck: false,
 	}, file)
 	return err
@@ -272,7 +272,7 @@ func (r *udpSessionRunner) sendFileParallel(ctx context.Context, remote *net.UDP
 				MTU:             int(r.session.MTU),
 				Collector:       nil,
 				FlowControl:     "fixed",
-				WindowPackets:   4096,
+				WindowPackets:   r.windowPackets(),
 				RequireFinalAck: false,
 			}, sr)
 			if n > 0 {
@@ -330,4 +330,25 @@ func (r *udpSessionRunner) recvBufferSize() int {
 		return r.server.cfg.UDPReadBufferSize
 	}
 	return 64 * 1024
+}
+
+func (r *udpSessionRunner) windowPackets() int {
+	if r.server != nil && r.server.cfg != nil && r.server.cfg.UDPWindowPackets > 0 {
+		return r.server.cfg.UDPWindowPackets
+	}
+	return 4096
+}
+
+func (r *udpSessionRunner) ackEveryPackets() int {
+	if r.server != nil && r.server.cfg != nil && r.server.cfg.UDPAckEveryPackets > 0 {
+		return r.server.cfg.UDPAckEveryPackets
+	}
+	return 32
+}
+
+func (r *udpSessionRunner) ackEvery() time.Duration {
+	if r.server != nil && r.server.cfg != nil && r.server.cfg.UDPAckEveryMs > 0 {
+		return time.Duration(r.server.cfg.UDPAckEveryMs) * time.Millisecond
+	}
+	return 5 * time.Millisecond
 }

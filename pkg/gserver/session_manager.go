@@ -398,5 +398,8 @@ func (sm *ServerSessions) ttlSeconds() uint32 {
 }
 
 func (sm *ServerSessions) mtuHint() uint32 {
+	if sm != nil && sm.cfg != nil && sm.cfg.UDPMTUSize > 0 {
+		return uint32(sm.cfg.UDPMTUSize)
+	}
 	return defaultMTU
 }

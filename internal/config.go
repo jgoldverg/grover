@@ -194,6 +194,10 @@ type ServerConfig struct {
 	LogLevel              string `mapstructure:"log_level"`
 	UDPReadBufferSize     int    `mapstructure:"udp_read_buffer_size"`
 	UDPWriteBufferSize    int    `mapstructure:"udp_write_buffer_size"`
+	UDPMTUSize            int    `mapstructure:"udp_mtu_size"`
+	UDPWindowPackets      int    `mapstructure:"udp_window_packets"`
+	UDPAckEveryPackets    int    `mapstructure:"udp_ack_every_packets"`
+	UDPAckEveryMs         int    `mapstructure:"udp_ack_every_ms"`
 	UDPPacketWorkers      int    `mapstructure:"udp_packet_workers"`
 	UDPReadTimeoutMs      int    `mapstructure:"udp_read_timeout_ms"`
 	UDPQueueDepth         int    `mapstructure:"udp_queue_depth"`
@@ -218,8 +222,12 @@ func LoadServerConfig(configPath string) (*ServerConfig, error) {
 	v.SetDefault("heart_beat_interval", 5000)
 	v.SetDefault("server_id", uuid.New().String())
 	v.SetDefault("log_level", "info")
-	v.SetDefault("udp_read_buffer_size", 64*1024)
-	v.SetDefault("udp_write_buffer_size", 64*1024)
+	v.SetDefault("udp_read_buffer_size", 8<<20)
+	v.SetDefault("udp_write_buffer_size", 8<<20)
+	v.SetDefault("udp_mtu_size", 1500)
+	v.SetDefault("udp_window_packets", 4096)
+	v.SetDefault("udp_ack_every_packets", 32)
+	v.SetDefault("udp_ack_every_ms", 5)
 	v.SetDefault("udp_packet_workers", 10)
 	v.SetDefault("udp_read_timeout_ms", 10_000)
 	v.SetDefault("udp_queue_depth", 0)
@@ -392,6 +400,10 @@ func (cfg *ServerConfig) Save(path string) (string, error) {
 	v.Set("log_level", cfg.LogLevel)
 	v.Set("udp_read_buffer_size", cfg.UDPReadBufferSize)
 	v.Set("udp_write_buffer_size", cfg.UDPWriteBufferSize)
+	v.Set("udp_mtu_size", cfg.UDPMTUSize)
+	v.Set("udp_window_packets", cfg.UDPWindowPackets)
+	v.Set("udp_ack_every_packets", cfg.UDPAckEveryPackets)
+	v.Set("udp_ack_every_ms", cfg.UDPAckEveryMs)
 	v.Set("udp_packet_workers", cfg.UDPPacketWorkers)
 	v.Set("udp_read_timeout_ms", cfg.UDPReadTimeoutMs)
 	v.Set("udp_queue_depth", cfg.UDPQueueDepth)
