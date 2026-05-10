@@ -120,27 +120,41 @@ func (s *TransferSummary) print(state string) {
 	if s.completed != nil {
 		completed = s.completed.Load()
 	}
-	transferred := snap.BytesSent
-	if snap.BytesReceived > transferred {
-		transferred = snap.BytesReceived
+	goodBytes := snap.BytesSent
+	networkBytes := snap.BytesSent + snap.BytesRetransmit
+	if snap.Direction == "download" || snap.BytesReceived > goodBytes {
+		goodBytes = snap.BytesReceived
+		networkBytes = snap.NetworkReceived
+		if networkBytes < goodBytes {
+			networkBytes = goodBytes
+		}
 	}
 	fmt.Fprintf(
 		s.writer,
-		"%s %s elapsed=%s files=%d/%d data=%s/%s rate=%s goodput=%s disk_read=%s disk_write=%s retrans=%d retrans_bytes=%s\n",
+		"%s %s elapsed=%s files=%d/%d good=%s/%s net=%s net_rate=%s goodput=%s efficiency=%.1f%% disk_read=%s disk_write=%s retrans=%d retrans_bytes=%s\n",
 		s.direction,
 		state,
 		shortDuration(snap.Elapsed),
 		completed,
 		s.totalFiles,
-		humanBytes(transferred),
+		humanBytes(goodBytes),
 		humanBytes(s.totalBytes),
+		humanBytes(networkBytes),
 		humanMbps(snap.ThroughputMbps),
 		humanMbps(snap.GoodputMbps),
+		summaryRatioOrZero(snap.GoodputBps, snap.ThroughputBps)*100,
 		humanBytes(snap.DiskReadBytes),
 		humanBytes(snap.DiskWriteBytes),
 		snap.Retransmissions,
 		humanBytes(snap.BytesRetransmit),
 	)
+}
+
+func summaryRatioOrZero(num, den float64) float64 {
+	if den <= 0 {
+		return 0
+	}
+	return num / den
 }
 
 func humanBytes(b uint64) string {

@@ -81,6 +81,13 @@ func recordReceiveMetric(col *metrics.TransferCollector, bytes int) {
 	col.ObserveReceive(bytes)
 }
 
+func recordNetworkReceiveMetric(col *metrics.TransferCollector, bytes int) {
+	if col == nil || bytes <= 0 {
+		return
+	}
+	col.ObserveNetworkReceive(bytes)
+}
+
 func recordPacketSend(col *metrics.TransferCollector) {
 	if col == nil {
 		return

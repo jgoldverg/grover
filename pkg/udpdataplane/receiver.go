@@ -17,6 +17,7 @@ type rangeTracker struct {
 	expected   uint64
 	contiguous uint64
 	pending    []interval
+	covered    uint64
 }
 
 type interval struct {
@@ -35,11 +36,40 @@ func newRangeTracker(expected uint64) *rangeTracker {
 }
 
 func (rt *rangeTracker) add(start, end uint64) bool {
+	_ = rt.addCovered(start, end)
+	return rt.complete()
+}
+
+func (rt *rangeTracker) addCovered(start, end uint64) uint64 {
 	if rt == nil {
-		return false
+		return 0
 	}
-	if end <= start || end <= rt.contiguous {
-		return rt.contiguous >= rt.expected
+	if end <= start {
+		return 0
+	}
+	if rt.expected > 0 && end > rt.expected {
+		end = rt.expected
+	}
+	if end <= start {
+		return 0
+	}
+	added := end - start
+	if start < rt.contiguous {
+		overlapEnd := minUint64(end, rt.contiguous)
+		added -= overlapEnd - start
+	}
+	if end <= rt.contiguous {
+		return 0
+	}
+	for _, cur := range rt.pending {
+		if cur.end <= start || cur.start >= end {
+			continue
+		}
+		overlapStart := maxUint64(start, cur.start)
+		overlapEnd := minUint64(end, cur.end)
+		if overlapEnd > overlapStart {
+			added -= overlapEnd - overlapStart
+		}
 	}
 	if start <= rt.contiguous {
 		rt.contiguous = end
@@ -47,7 +77,15 @@ func (rt *rangeTracker) add(start, end uint64) bool {
 	} else {
 		rt.insertPending(interval{start: start, end: end})
 	}
-	return rt.contiguous >= rt.expected
+	rt.covered += added
+	return added
+}
+
+func (rt *rangeTracker) complete() bool {
+	if rt == nil {
+		return false
+	}
+	return rt.expected > 0 && rt.contiguous >= rt.expected
 }
 
 func (rt *rangeTracker) absorbPending() {
@@ -97,6 +135,20 @@ func (rt *rangeTracker) mergeFrom(idx int) {
 		copy(rt.pending[idx+1:], rt.pending[idx+2:])
 		rt.pending = rt.pending[:len(rt.pending)-1]
 	}
+}
+
+func minUint64(a, b uint64) uint64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxUint64(a, b uint64) uint64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // Receive streams UDP payloads into dst and emits ACK/SACK status packets.
@@ -165,25 +217,41 @@ func Receive(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint64, e
 			continue
 		}
 		if len(packet.Payload) > 0 {
-			if _, err := dst.WriteAt(packet.Payload, int64(packet.Offset)); err != nil {
-				return total, fmt.Errorf("write payload: %w", err)
+			recordNetworkReceiveMetric(cfg.Collector, len(packet.Payload))
+			payloadLen := len(packet.Payload)
+			if cfg.ExpectedSize > 0 {
+				if packet.Offset >= cfg.ExpectedSize {
+					payloadLen = 0
+				} else if packet.Offset+uint64(payloadLen) > cfg.ExpectedSize {
+					payloadLen = int(cfg.ExpectedSize - packet.Offset)
+				}
 			}
-			end := packet.Offset + uint64(len(packet.Payload))
-			if end > total {
+			if payloadLen > 0 {
+				if _, err := dst.WriteAt(packet.Payload[:payloadLen], int64(packet.Offset)); err != nil {
+					return total, fmt.Errorf("write payload: %w", err)
+				}
+			}
+			end := packet.Offset + uint64(payloadLen)
+			added := uint64(0)
+			finished := false
+			if progress != nil {
+				added = progress.addCovered(packet.Offset, end)
+				finished = progress.complete()
+				total = progress.covered
+			} else if end > total {
 				total = end
+				added = uint64(payloadLen)
 			}
-			recordPacketReceive(cfg.Collector)
-			recordReceiveMetric(cfg.Collector, len(packet.Payload))
+			if added > 0 {
+				recordPacketReceive(cfg.Collector)
+				recordReceiveMetric(cfg.Collector, int(added))
+			}
 			internal.Debug("udp data rx", internal.Fields{
 				"session": cfg.SessionID,
 				"stream":  cfg.StreamID,
 				"seq":     packet.Seq,
-				"bytes":   len(packet.Payload),
+				"bytes":   payloadLen,
 			})
-			finished := false
-			if progress != nil {
-				finished = progress.add(packet.Offset, end)
-			}
 			beforeAck, _ := tracker.Snapshot(0, nil)
 			changed := tracker.OnPacket(packet.Seq)
 			gap := packet.Seq > beforeAck+1
@@ -298,25 +366,41 @@ func ReceiveMany(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint6
 			continue
 		}
 
-		if _, err := dst.WriteAt(packet.Payload, int64(packet.Offset)); err != nil {
-			return total, fmt.Errorf("write payload: %w", err)
+		recordNetworkReceiveMetric(cfg.Collector, len(packet.Payload))
+		payloadLen := len(packet.Payload)
+		if cfg.ExpectedSize > 0 {
+			if packet.Offset >= cfg.ExpectedSize {
+				payloadLen = 0
+			} else if packet.Offset+uint64(payloadLen) > cfg.ExpectedSize {
+				payloadLen = int(cfg.ExpectedSize - packet.Offset)
+			}
 		}
-		end := packet.Offset + uint64(len(packet.Payload))
-		if end > total {
+		if payloadLen > 0 {
+			if _, err := dst.WriteAt(packet.Payload[:payloadLen], int64(packet.Offset)); err != nil {
+				return total, fmt.Errorf("write payload: %w", err)
+			}
+		}
+		end := packet.Offset + uint64(payloadLen)
+		added := uint64(0)
+		finished := false
+		if progress != nil {
+			added = progress.addCovered(packet.Offset, end)
+			finished = progress.complete()
+			total = progress.covered
+		} else if end > total {
 			total = end
+			added = uint64(payloadLen)
 		}
-		recordPacketReceive(cfg.Collector)
-		recordReceiveMetric(cfg.Collector, len(packet.Payload))
+		if added > 0 {
+			recordPacketReceive(cfg.Collector)
+			recordReceiveMetric(cfg.Collector, int(added))
+		}
 		internal.Debug("udp data rx", internal.Fields{
 			"session": cfg.SessionID,
 			"stream":  packet.StreamID,
 			"seq":     packet.Seq,
-			"bytes":   len(packet.Payload),
+			"bytes":   payloadLen,
 		})
-		finished := false
-		if progress != nil {
-			finished = progress.add(packet.Offset, end)
-		}
 		beforeAck, _ := state.tracker.Snapshot(0, nil)
 		changed := state.tracker.OnPacket(packet.Seq)
 		gap := packet.Seq > beforeAck+1

@@ -296,6 +296,11 @@ func downloadFromRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts C
 				return fmt.Errorf("create %s: %w", job.localPath, err)
 			}
 			defer out.Close()
+			if job.size > 0 {
+				if err := out.Truncate(int64(job.size)); err != nil {
+					return fmt.Errorf("preallocate %s: %w", job.localPath, err)
+				}
+			}
 
 			writer := io.Writer(out)
 			writer = wrapWriterWithDiskMetrics(writer, collector)
@@ -584,6 +589,18 @@ type metricWriter struct {
 
 func (mw *metricWriter) Write(p []byte) (int, error) {
 	n, err := mw.writer.Write(p)
+	if n > 0 && mw.hook != nil {
+		mw.hook(n)
+	}
+	return n, err
+}
+
+func (mw *metricWriter) WriteAt(p []byte, off int64) (int, error) {
+	wa, ok := mw.writer.(io.WriterAt)
+	if !ok {
+		return 0, fmt.Errorf("writer does not support WriteAt")
+	}
+	n, err := wa.WriteAt(p, off)
 	if n > 0 && mw.hook != nil {
 		mw.hook(n)
 	}

@@ -180,7 +180,8 @@ func (d *MetricsDisplay) tableString(snap metrics.TransferSnapshot) string {
 		{"Retransmissions", fmt.Sprintf("%d (%s)", snap.Retransmissions, formatPercent(snap.RetransmitRate))},
 		{"Retransmitted Bytes", formatBytes(snap.BytesRetransmit)},
 		{"Bytes Sent", formatBytes(snap.BytesSent)},
-		{"Bytes Received", formatBytes(snap.BytesReceived)},
+		{"Good Bytes Received", formatBytes(snap.BytesReceived)},
+		{"Network Bytes Received", formatBytes(snap.NetworkReceived)},
 		{"Disk Read Bytes", formatBytes(snap.DiskReadBytes)},
 		{"Disk Write Bytes", formatBytes(snap.DiskWriteBytes)},
 	}

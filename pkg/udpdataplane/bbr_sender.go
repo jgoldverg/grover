@@ -50,13 +50,44 @@ func (s *BBRSender) Send(ctx context.Context, cfg SendConfig, src io.Reader) (ui
 		seq           uint32
 		offset        uint64
 		pending       = make([]pendingPacket, 0, 1024)
+		batch         = make([]pendingPacket, 0, defaultAckPollEvery)
 		bytesInflight int64
+		batchBytes    int64
 		sentSincePoll int
 	)
 
 	defer cfg.Transport.SetWriteDeadline(time.Time{})
 
 	sendRemote := cfg.RemoteAddr
+	flushBatch := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		buffers := make([]PacketBuffer, len(batch))
+		for i := range batch {
+			buffers[i] = PacketBuffer{Bytes: batch[i].data}
+		}
+		if err := writeBatchWithRetry(ctx, cfg.Transport, sendRemote, buffers); err != nil {
+			return err
+		}
+		sentAt := time.Now()
+		for i := range batch {
+			batch[i].sentAt = sentAt
+			pending = append(pending, batch[i])
+			recordPacketSend(cfg.Collector)
+			recordSendMetric(cfg.Collector, batch[i].payloadLen, false)
+			internal.Debug("udp data tx", internal.Fields{
+				"session": cfg.SessionID,
+				"stream":  cfg.StreamID,
+				"seq":     batch[i].seq,
+				"bytes":   batch[i].payloadLen,
+			})
+		}
+		bytesInflight += batchBytes
+		batch = batch[:0]
+		batchBytes = 0
+		return nil
+	}
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -67,7 +98,10 @@ func (s *BBRSender) Send(ctx context.Context, cfg SendConfig, src io.Reader) (ui
 			windowPackets = 4096
 		}
 		target := s.flowControlWindowBytes(cfg, payloadSize, windowPackets)
-		if bytesInflight >= target || len(pending) >= windowPackets {
+		if bytesInflight+batchBytes >= target || len(pending)+len(batch) >= windowPackets {
+			if err := flushBatch(); err != nil {
+				return offset, err
+			}
 			acked, err := drainStatusPackets(ctx, cfg.Transport, &sendRemote, cfg.StreamID, ackBuf, &ackPkt, &pending, cfg.Collector, s.ackTimeout(), false, s.observeAck)
 			if err != nil {
 				return offset, err
@@ -90,28 +124,19 @@ func (s *BBRSender) Send(ctx context.Context, cfg SendConfig, src io.Reader) (ui
 				return offset, fmt.Errorf("encode data packet: %w", err)
 			}
 			packetBuf = packetBuf[:pktLen]
-			if err := writePacketWithRetry(ctx, cfg.Transport, sendRemote, packetBuf); err != nil {
-				return offset, err
-			}
-			recordPacketSend(cfg.Collector)
-			recordSendMetric(cfg.Collector, n, false)
-			internal.Debug("udp data tx", internal.Fields{
-				"session": cfg.SessionID,
-				"stream":  cfg.StreamID,
-				"seq":     seq,
-				"bytes":   n,
-			})
 			offset += uint64(n)
-			bytesInflight += int64(n)
-			pending = append(pending, pendingPacket{
+			batch = append(batch, pendingPacket{
 				seq:        seq,
 				payloadLen: n,
 				data:       packetBuf,
-				sentAt:     time.Now(),
 			})
+			batchBytes += int64(n)
 			sentSincePoll++
 			if shouldPollAcks(sentSincePoll, len(pending), windowPackets) {
 				sentSincePoll = 0
+				if err := flushBatch(); err != nil {
+					return offset, err
+				}
 				acked, err := drainStatusPackets(ctx, cfg.Transport, &sendRemote, cfg.StreamID, ackBuf, &ackPkt, &pending, cfg.Collector, 0, true, s.observeAck)
 				if err != nil {
 					return offset, err
@@ -123,6 +148,11 @@ func (s *BBRSender) Send(ctx context.Context, cfg SendConfig, src io.Reader) (ui
 					}
 				}
 			}
+			if len(batch) >= defaultAckPollEvery {
+				if err := flushBatch(); err != nil {
+					return offset, err
+				}
+			}
 		}
 
 		if errors.Is(readErr, io.EOF) {
@@ -131,6 +161,9 @@ func (s *BBRSender) Send(ctx context.Context, cfg SendConfig, src io.Reader) (ui
 		if readErr != nil {
 			return offset, readErr
 		}
+	}
+	if err := flushBatch(); err != nil {
+		return offset, err
 	}
 	for len(pending) > 0 {
 		acked, err := drainStatusPackets(ctx, cfg.Transport, &sendRemote, cfg.StreamID, ackBuf, &ackPkt, &pending, cfg.Collector, s.ackTimeout(), false, s.observeAck)

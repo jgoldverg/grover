@@ -282,7 +282,7 @@ func (t *GroverTransferClient) fetchTCPRange(ctx context.Context, info *sessionI
 	if err := writeChunkHeader(conn, uint64(offset), uint64(length)); err != nil {
 		return err
 	}
-	buf := make([]byte, 32*1024)
+	buf := make([]byte, 1<<20)
 	var written int64
 	for written < length {
 		toRead := len(buf)
@@ -293,6 +293,7 @@ func (t *GroverTransferClient) fetchTCPRange(ctx context.Context, info *sessionI
 		n, err := io.ReadFull(conn, buf[:toRead])
 		if n > 0 {
 			if t.collector != nil {
+				t.collector.ObserveNetworkReceive(n)
 				t.collector.ObserveReceive(n)
 				t.collector.ObservePacketReceive()
 			}
@@ -911,6 +912,7 @@ func newTCPMetricReader(r io.Reader, collector *metrics.TransferCollector) io.Re
 func (r *tcpMetricReader) Read(p []byte) (int, error) {
 	n, err := r.r.Read(p)
 	if n > 0 {
+		r.collector.ObserveNetworkReceive(n)
 		r.collector.ObserveReceive(n)
 		r.collector.ObservePacketReceive()
 	}
