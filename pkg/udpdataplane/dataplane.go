@@ -19,25 +19,33 @@ const (
 
 // SendConfig captures the parameters needed to transmit data over UDP.
 type SendConfig struct {
-	Transport  Transport
-	RemoteAddr *net.UDPAddr
-	SessionID  string
-	SessionKey uint32
-	StreamID   uint32
-	MTU        int
-	Collector  *metrics.TransferCollector
+	Transport       Transport
+	RemoteAddr      *net.UDPAddr
+	SessionID       string
+	SessionKey      uint32
+	StreamID        uint32
+	BaseOffset      uint64
+	MTU             int
+	Collector       *metrics.TransferCollector
+	FlowControl     string
+	WindowPackets   int
+	WindowBytes     int
+	RequireFinalAck bool
 }
 
 // ReceiveConfig controls how UDP payloads are ingested.
 type ReceiveConfig struct {
-	Transport    Transport
-	RemoteAddr   *net.UDPAddr
-	SessionID    string
-	SessionKey   uint32
-	StreamID     uint32
-	BufferSize   int
-	Collector    *metrics.TransferCollector
-	ExpectedSize uint64
+	Transport       Transport
+	RemoteAddr      *net.UDPAddr
+	SessionID       string
+	SessionKey      uint32
+	StreamID        uint32
+	StreamIDs       []uint32
+	BufferSize      int
+	Collector       *metrics.TransferCollector
+	ExpectedSize    uint64
+	AckEveryPackets int
+	AckEvery        time.Duration
 	// OnRemoteAddr is called the first time we learn the peer address (for unconnected sockets).
 	OnRemoteAddr func(*net.UDPAddr)
 }

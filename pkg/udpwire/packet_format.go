@@ -48,6 +48,23 @@ func (p *DataPacket) Encode(dst []byte) (int, error) {
 	return need, nil
 }
 
+func EncodeDataPacketInPlace(dst []byte, sessionID, streamID, seq uint32, offset uint64, payloadLen int) (int, error) {
+	need := DataHeaderLen + payloadLen + 4
+	if payloadLen < 0 || len(dst) < need {
+		return 0, errors.New("buffer too small")
+	}
+	dst[0] = Version
+	dst[1] = KindData
+	binary.BigEndian.PutUint32(dst[2:6], sessionID)
+	binary.BigEndian.PutUint32(dst[6:10], streamID)
+	binary.BigEndian.PutUint32(dst[10:14], seq)
+	binary.BigEndian.PutUint64(dst[14:22], offset)
+	binary.BigEndian.PutUint32(dst[22:26], uint32(payloadLen))
+	sum := crc32.ChecksumIEEE(dst[26 : 26+payloadLen])
+	binary.BigEndian.PutUint32(dst[26+payloadLen:need], sum)
+	return need, nil
+}
+
 func (p *DataPacket) Decode(src []byte) (int, error) {
 	if len(src) < DataHeaderLen+4 {
 		return 0, errors.New("packet length too short")

@@ -34,12 +34,19 @@ type RemoteRef struct {
 }
 
 type CopyOptions struct {
-	DeleteSource bool
-	Concurrency  int
-	NoUI         bool
-	Protocol     string
-	UIMode       string
-	UIIntervalMs int
+	DeleteSource       bool
+	Concurrency        int
+	NoUI               bool
+	Protocol           string
+	UIMode             string
+	UIIntervalMs       int
+	ParallelStreams    int
+	UDPFlowControl     string
+	UDPWindowPackets   int
+	UDPWindowBytes     int
+	UDPAckEveryPackets int
+	UDPAckEveryMs      int
+	MTU                string
 }
 
 func SimpleCopy() *cobra.Command {
@@ -83,6 +90,13 @@ func SimpleCopy() *cobra.Command {
 	cmd.Flags().IntVar(&opts.Concurrency, "concurrency", 4, "Maximum number of files to transfer in parallel")
 	cmd.Flags().BoolVar(&opts.NoUI, "no-ui", false, "Disable live progress and metrics output")
 	cmd.Flags().StringVar(&opts.Protocol, "protocol", "", "Transfer data-plane protocol (udp|tcp)")
+	cmd.Flags().IntVar(&opts.ParallelStreams, "parallel-streams", 0, "Per-file parallel streams/ranges (0 uses config)")
+	cmd.Flags().StringVar(&opts.UDPFlowControl, "udp-flow-control", "", "UDP flow control mode (fixed|aimd|bbr)")
+	cmd.Flags().IntVar(&opts.UDPWindowPackets, "udp-window-packets", 0, "UDP max in-flight packets per stream (0 uses config)")
+	cmd.Flags().IntVar(&opts.UDPWindowBytes, "udp-window-bytes", 0, "UDP max in-flight bytes per stream (0 derives from packets)")
+	cmd.Flags().IntVar(&opts.UDPAckEveryPackets, "udp-ack-every-packets", 0, "UDP ACK every N packets (0 uses config)")
+	cmd.Flags().IntVar(&opts.UDPAckEveryMs, "udp-ack-every-ms", 0, "UDP ACK interval in milliseconds (0 uses config)")
+	cmd.Flags().StringVar(&opts.MTU, "mtu", "", "UDP MTU override (auto|bytes)")
 	cmd.Flags().StringVar(&opts.UIMode, "ui", "summary", "Transfer UI mode (summary|live|none)")
 	cmd.Flags().IntVar(&opts.UIIntervalMs, "ui-interval-ms", 2000, "Live metrics UI refresh interval in milliseconds")
 	return cmd
@@ -159,7 +173,7 @@ func downloadFromRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts C
 		"destination": dst.Raw,
 	})
 
-	client, err := newTransferClientForRemote(cmd, src)
+	client, err := newTransferClientForRemote(cmd, src, opts)
 	if err != nil {
 		return err
 	}
@@ -336,7 +350,7 @@ func uploadToRemote(cmd *cobra.Command, src RemoteRef, dst RemoteRef, opts CopyO
 		return fmt.Errorf("destination %q must end with / when uploading a directory", dst.Raw)
 	}
 
-	client, err := newTransferClientForRemote(cmd, dst)
+	client, err := newTransferClientForRemote(cmd, dst, opts)
 	if err != nil {
 		return err
 	}
@@ -604,10 +618,27 @@ func (opts CopyOptions) uiMode() string {
 func (opts CopyOptions) validate() error {
 	switch opts.uiMode() {
 	case "summary", "live", "none":
-		return nil
 	default:
 		return fmt.Errorf("invalid --ui %q: must be summary, live, or none", opts.UIMode)
 	}
+	if opts.ParallelStreams < 0 {
+		return fmt.Errorf("--parallel-streams must be >= 0")
+	}
+	if opts.UDPWindowPackets < 0 || opts.UDPWindowBytes < 0 || opts.UDPAckEveryPackets < 0 || opts.UDPAckEveryMs < 0 {
+		return fmt.Errorf("udp tuning values must be >= 0")
+	}
+	switch strings.ToLower(strings.TrimSpace(opts.UDPFlowControl)) {
+	case "", "fixed", "aimd", "bbr":
+	default:
+		return fmt.Errorf("invalid --udp-flow-control %q: must be fixed, aimd, or bbr", opts.UDPFlowControl)
+	}
+	if mtu := strings.TrimSpace(opts.MTU); mtu != "" && !strings.EqualFold(mtu, "auto") {
+		var parsed int
+		if _, err := fmt.Sscanf(mtu, "%d", &parsed); err != nil || parsed <= 0 {
+			return fmt.Errorf("invalid --mtu %q: must be auto or a positive integer", opts.MTU)
+		}
+	}
+	return nil
 }
 
 func totalUploadBytes(jobs []uploadJob) uint64 {
@@ -760,7 +791,7 @@ func resolveDownloadDestination(dst RemoteRef, multi bool) (string, bool, error)
 	}
 }
 
-func newTransferClientForRemote(cmd *cobra.Command, ref RemoteRef) (*gclient.Client, error) {
+func newTransferClientForRemote(cmd *cobra.Command, ref RemoteRef, opts CopyOptions) (*gclient.Client, error) {
 	cfg := GetAppConfig(cmd)
 	if protocol, _ := cmd.Flags().GetString("protocol"); strings.TrimSpace(protocol) != "" {
 		cfg.TransferProtocol = strings.ToLower(strings.TrimSpace(protocol))
@@ -800,6 +831,17 @@ func newTransferClientForRemote(cmd *cobra.Command, ref RemoteRef) (*gclient.Cli
 	if client.Transfer() == nil {
 		_ = client.Close()
 		return nil, fmt.Errorf("transfer API not available on remote server")
+	}
+	if aware, ok := client.Transfer().(*gclient.GroverTransferClient); ok {
+		aware.ApplyTransferOptions(gclient.TransferOptions{
+			ParallelStreams:    opts.ParallelStreams,
+			UDPFlowControl:     opts.UDPFlowControl,
+			UDPWindowPackets:   opts.UDPWindowPackets,
+			UDPWindowBytes:     opts.UDPWindowBytes,
+			UDPAckEveryPackets: opts.UDPAckEveryPackets,
+			UDPAckEveryMs:      opts.UDPAckEveryMs,
+			MTU:                opts.MTU,
+		})
 	}
 	return client, nil
 }

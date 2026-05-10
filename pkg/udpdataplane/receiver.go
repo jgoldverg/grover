@@ -117,6 +117,7 @@ func Receive(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint64, e
 	var packet udpwire.DataPacket
 	var total uint64
 	progress := newRangeTracker(cfg.ExpectedSize)
+	acks := newAckCoalescer(cfg.AckEveryPackets, cfg.AckEvery)
 
 	defer cfg.Transport.SetReadDeadline(time.Time{})
 	remote := cfg.RemoteAddr
@@ -179,17 +180,239 @@ func Receive(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint64, e
 			if progress != nil {
 				finished = progress.add(packet.Offset, end)
 			}
-			if tracker.OnPacket(packet.Seq) {
+			beforeAck, _ := tracker.Snapshot(0, nil)
+			changed := tracker.OnPacket(packet.Seq)
+			gap := packet.Seq > beforeAck+1
+			if changed && acks.OnPacket(gap) {
 				emitStatusPacket(cfg.Transport, remote, cfg.SessionID, cfg.SessionKey, cfg.StreamID, tracker, statusBuf, &sackScratch)
+				acks.MarkSent()
 			}
 			if finished {
+				emitStatusPacket(cfg.Transport, remote, cfg.SessionID, cfg.SessionKey, cfg.StreamID, tracker, statusBuf, &sackScratch)
+				lingerStatus(ctx, cfg, remote, tracker, statusBuf, &sackScratch, buf, &packet)
 				return total, nil
 			}
 			continue
 		}
-		if tracker.OnPacket(packet.Seq) {
+		beforeAck, _ := tracker.Snapshot(0, nil)
+		changed := tracker.OnPacket(packet.Seq)
+		gap := packet.Seq > beforeAck+1
+		if changed && acks.OnPacket(gap) {
 			emitStatusPacket(cfg.Transport, remote, cfg.SessionID, cfg.SessionKey, cfg.StreamID, tracker, statusBuf, &sackScratch)
+			acks.MarkSent()
 		}
+	}
+}
+
+type receiveStreamState struct {
+	tracker     *udpwire.SackTracker
+	acks        *ackCoalescer
+	remote      *net.UDPAddr
+	sackScratch []udpwire.SackRange
+}
+
+func ReceiveMany(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint64, error) {
+	if cfg.Transport == nil {
+		return 0, errors.New("transport is required")
+	}
+	if dst == nil {
+		return 0, errors.New("nil destination writer")
+	}
+	if cfg.BufferSize <= 0 {
+		cfg.BufferSize = 64 * 1024
+	}
+	streamIDs := cfg.StreamIDs
+	if len(streamIDs) == 0 && cfg.StreamID != 0 {
+		streamIDs = []uint32{cfg.StreamID}
+	}
+	if len(streamIDs) == 0 {
+		return 0, errors.New("at least one stream id is required")
+	}
+
+	states := make(map[uint32]*receiveStreamState, len(streamIDs))
+	for _, id := range streamIDs {
+		if id == 0 {
+			continue
+		}
+		states[id] = &receiveStreamState{
+			tracker: udpwire.NewSackTracker(),
+			acks:    newAckCoalescer(cfg.AckEveryPackets, cfg.AckEvery),
+		}
+	}
+	if len(states) == 0 {
+		return 0, errors.New("at least one non-zero stream id is required")
+	}
+
+	buf := make([]byte, cfg.BufferSize)
+	statusBuf := make([]byte, udpwire.StatusHeaderLen+udpwire.MaxSackRanges*udpwire.SackBlockLen)
+	var packet udpwire.DataPacket
+	var total uint64
+	progress := newRangeTracker(cfg.ExpectedSize)
+
+	defer cfg.Transport.SetReadDeadline(time.Time{})
+	for {
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+		if err := setReadDeadline(ctx, cfg.Transport); err != nil {
+			return total, err
+		}
+		n, addr, err := cfg.Transport.ReadPacket(buf)
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				continue
+			}
+			if isClosedNetworkError(err) || errors.Is(err, io.EOF) {
+				return total, nil
+			}
+			return total, err
+		}
+		if n == 0 || !udpwire.IsDataPacket(buf[:n]) {
+			continue
+		}
+		if _, err := packet.Decode(buf[:n]); err != nil {
+			continue
+		}
+		state := states[packet.StreamID]
+		if state == nil {
+			continue
+		}
+		if state.remote == nil {
+			state.remote = addr
+		} else if addr != nil && !udpAddrEqual(addr, state.remote) {
+			continue
+		}
+		if len(packet.Payload) == 0 {
+			beforeAck, _ := state.tracker.Snapshot(0, nil)
+			changed := state.tracker.OnPacket(packet.Seq)
+			gap := packet.Seq > beforeAck+1
+			if changed && state.acks.OnPacket(gap) {
+				emitStatusPacket(cfg.Transport, state.remote, cfg.SessionID, cfg.SessionKey, packet.StreamID, state.tracker, statusBuf, &state.sackScratch)
+				state.acks.MarkSent()
+			}
+			continue
+		}
+
+		if _, err := dst.WriteAt(packet.Payload, int64(packet.Offset)); err != nil {
+			return total, fmt.Errorf("write payload: %w", err)
+		}
+		end := packet.Offset + uint64(len(packet.Payload))
+		if end > total {
+			total = end
+		}
+		recordPacketReceive(cfg.Collector)
+		recordReceiveMetric(cfg.Collector, len(packet.Payload))
+		internal.Debug("udp data rx", internal.Fields{
+			"session": cfg.SessionID,
+			"stream":  packet.StreamID,
+			"seq":     packet.Seq,
+			"bytes":   len(packet.Payload),
+		})
+		finished := false
+		if progress != nil {
+			finished = progress.add(packet.Offset, end)
+		}
+		beforeAck, _ := state.tracker.Snapshot(0, nil)
+		changed := state.tracker.OnPacket(packet.Seq)
+		gap := packet.Seq > beforeAck+1
+		if changed && state.acks.OnPacket(gap) {
+			emitStatusPacket(cfg.Transport, state.remote, cfg.SessionID, cfg.SessionKey, packet.StreamID, state.tracker, statusBuf, &state.sackScratch)
+			state.acks.MarkSent()
+		}
+		if finished {
+			for streamID, st := range states {
+				if st.remote != nil {
+					emitStatusPacket(cfg.Transport, st.remote, cfg.SessionID, cfg.SessionKey, streamID, st.tracker, statusBuf, &st.sackScratch)
+				}
+			}
+			lingerManyStatus(ctx, cfg, states, statusBuf, buf, &packet)
+			return total, nil
+		}
+	}
+}
+
+func lingerStatus(
+	ctx context.Context,
+	cfg ReceiveConfig,
+	remote *net.UDPAddr,
+	tracker *udpwire.SackTracker,
+	statusBuf []byte,
+	sackScratch *[]udpwire.SackRange,
+	buf []byte,
+	packet *udpwire.DataPacket,
+) {
+	if cfg.Transport == nil || tracker == nil || remote == nil || packet == nil {
+		return
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		_ = cfg.Transport.SetReadDeadline(time.Now().Add(25 * time.Millisecond))
+		n, addr, err := cfg.Transport.ReadPacket(buf)
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				continue
+			}
+			return
+		}
+		if addr != nil && !udpAddrEqual(addr, remote) {
+			continue
+		}
+		if n == 0 || !udpwire.IsDataPacket(buf[:n]) {
+			continue
+		}
+		if _, err := packet.Decode(buf[:n]); err != nil {
+			continue
+		}
+		if packet.StreamID != cfg.StreamID {
+			continue
+		}
+		_ = tracker.OnPacket(packet.Seq)
+		emitStatusPacket(cfg.Transport, remote, cfg.SessionID, cfg.SessionKey, cfg.StreamID, tracker, statusBuf, sackScratch)
+	}
+}
+
+func lingerManyStatus(
+	ctx context.Context,
+	cfg ReceiveConfig,
+	states map[uint32]*receiveStreamState,
+	statusBuf []byte,
+	buf []byte,
+	packet *udpwire.DataPacket,
+) {
+	if cfg.Transport == nil || packet == nil {
+		return
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		_ = cfg.Transport.SetReadDeadline(time.Now().Add(25 * time.Millisecond))
+		n, addr, err := cfg.Transport.ReadPacket(buf)
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				continue
+			}
+			return
+		}
+		if n == 0 || !udpwire.IsDataPacket(buf[:n]) {
+			continue
+		}
+		if _, err := packet.Decode(buf[:n]); err != nil {
+			continue
+		}
+		state := states[packet.StreamID]
+		if state == nil || state.remote == nil {
+			continue
+		}
+		if addr != nil && !udpAddrEqual(addr, state.remote) {
+			continue
+		}
+		_ = state.tracker.OnPacket(packet.Seq)
+		emitStatusPacket(cfg.Transport, state.remote, cfg.SessionID, cfg.SessionKey, packet.StreamID, state.tracker, statusBuf, &state.sackScratch)
 	}
 }
 

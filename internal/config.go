@@ -28,20 +28,26 @@ type AppConfig struct {
 }
 
 type UdpClientConfig struct {
-	AckTimeout         int  `mapstructure:"ack_timeout"`
-	SocketBufferSize   int  `mapstructure:"socket_buffer_size"`
-	ParallelSenders    uint `mapstructure:"parallel_senders"`
-	QueueSize          int  `mapstructure:"queue_size"`
-	MaxInFlightPackets int  `mapstructure:"max_in_flight_packets"`
-	RateLimitMbps      int  `mapstructure:"rate_limit_mbps"`
-	LinkBandwidthMbps  int  `mapstructure:"link_bandwidth_mbps"`
-	TargetLossPercent  int  `mapstructure:"target_loss_percent"`
-	MaxRetries         int  `mapstructure:"max_retries"`
-	EnableSack         bool `mapstructure:"enable_sack"`
-	MtuSize            int  `mapstructure:"mtu_size"`
-	CheckSum           bool `mapstructure:"check_sum"`
-	SessionTTL         int  `mapstructure:"session_ttl"`
-	SessionScan        int  `mapstructure:"scan_time"`
+	AckTimeout         int    `mapstructure:"ack_timeout"`
+	SocketBufferSize   int    `mapstructure:"socket_buffer_size"`
+	ParallelSenders    uint   `mapstructure:"parallel_senders"`
+	ParallelStreams    uint   `mapstructure:"parallel_streams"`
+	QueueSize          int    `mapstructure:"queue_size"`
+	MaxInFlightPackets int    `mapstructure:"max_in_flight_packets"`
+	RateLimitMbps      int    `mapstructure:"rate_limit_mbps"`
+	LinkBandwidthMbps  int    `mapstructure:"link_bandwidth_mbps"`
+	TargetLossPercent  int    `mapstructure:"target_loss_percent"`
+	MaxRetries         int    `mapstructure:"max_retries"`
+	EnableSack         bool   `mapstructure:"enable_sack"`
+	MtuSize            int    `mapstructure:"mtu_size"`
+	FlowControl        string `mapstructure:"flow_control"`
+	WindowPackets      int    `mapstructure:"window_packets"`
+	WindowBytes        int    `mapstructure:"window_bytes"`
+	AckEveryPackets    int    `mapstructure:"ack_every_packets"`
+	AckEveryMs         int    `mapstructure:"ack_every_ms"`
+	CheckSum           bool   `mapstructure:"check_sum"`
+	SessionTTL         int    `mapstructure:"session_ttl"`
+	SessionScan        int    `mapstructure:"scan_time"`
 }
 
 func LoadUdpClientConfig(configPath string) (*UdpClientConfig, error) {
@@ -58,6 +64,7 @@ func LoadUdpClientConfig(configPath string) (*UdpClientConfig, error) {
 	v.SetDefault("ack_timeout", 50)
 	v.SetDefault("socket_buffer_size", 8<<20)
 	v.SetDefault("parallel_senders", 1)
+	v.SetDefault("parallel_streams", 1)
 	v.SetDefault("queue_size", 65536)
 	v.SetDefault("max_in_flight_packets", 4096)
 	v.SetDefault("rate_limit_mbps", 0)
@@ -66,11 +73,26 @@ func LoadUdpClientConfig(configPath string) (*UdpClientConfig, error) {
 	v.SetDefault("max_retries", 5)
 	v.SetDefault("enable_sack", true)
 	v.SetDefault("mtu_size", 1500)
+	v.SetDefault("flow_control", "fixed")
+	v.SetDefault("window_packets", 4096)
+	v.SetDefault("window_bytes", 0)
+	v.SetDefault("ack_every_packets", 32)
+	v.SetDefault("ack_every_ms", 5)
 	v.SetDefault("check_sum", true)
 
 	var cfg UdpClientConfig
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
+	}
+	if cfg.ParallelStreams == 0 {
+		cfg.ParallelStreams = cfg.ParallelSenders
+	}
+	if cfg.ParallelStreams == 0 {
+		cfg.ParallelStreams = 1
+	}
+	cfg.FlowControl = strings.ToLower(strings.TrimSpace(cfg.FlowControl))
+	if cfg.FlowControl == "" {
+		cfg.FlowControl = "fixed"
 	}
 	if v.ConfigFileUsed() == "" {
 		writePath := configPath
@@ -286,6 +308,7 @@ func (cfg *UdpClientConfig) Save(path string) (string, error) {
 	v.SetDefault("ack_timeout", cfg.AckTimeout)
 	v.SetDefault("socket_buffer_size", cfg.SocketBufferSize)
 	v.SetDefault("parallel_senders", cfg.ParallelSenders)
+	v.SetDefault("parallel_streams", cfg.ParallelStreams)
 	v.SetDefault("queue_size", cfg.QueueSize)
 	v.SetDefault("max_in_flight_packets", cfg.MaxInFlightPackets)
 	v.SetDefault("rate_limit_mbps", cfg.RateLimitMbps)
@@ -294,6 +317,11 @@ func (cfg *UdpClientConfig) Save(path string) (string, error) {
 	v.SetDefault("max_retries", cfg.MaxRetries)
 	v.SetDefault("enable_sack", cfg.EnableSack)
 	v.SetDefault("mtu_size", cfg.MtuSize)
+	v.SetDefault("flow_control", cfg.FlowControl)
+	v.SetDefault("window_packets", cfg.WindowPackets)
+	v.SetDefault("window_bytes", cfg.WindowBytes)
+	v.SetDefault("ack_every_packets", cfg.AckEveryPackets)
+	v.SetDefault("ack_every_ms", cfg.AckEveryMs)
 	v.SetDefault("check_sum", cfg.CheckSum)
 	v.SetDefault("session_ttl", 10)
 	v.SetDefault("scan_time", 10)

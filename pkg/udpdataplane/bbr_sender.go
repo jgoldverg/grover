@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,8 +43,6 @@ func (s *BBRSender) Send(ctx context.Context, cfg SendConfig, src io.Reader) (ui
 		return 0, errors.New("stream id is required")
 	}
 	payloadSize := payloadSizeFromMTU(cfg.MTU)
-	payloadBuf := make([]byte, payloadSize)
-	packetBuf := make([]byte, udpwire.DataHeaderLen+payloadSize+4)
 	ackBuf := make([]byte, udpwire.StatusHeaderLen+udpwire.MaxSackRanges*udpwire.SackBlockLen)
 	var ackPkt udpwire.StatusPacket
 
@@ -62,11 +61,12 @@ func (s *BBRSender) Send(ctx context.Context, cfg SendConfig, src io.Reader) (ui
 		if err := ctx.Err(); err != nil {
 			return offset, err
 		}
-		target := s.inflightLimitBytes()
-		if target <= 0 {
-			target = s.minWindowBytes
+		windowPackets := cfg.WindowPackets
+		if windowPackets <= 0 {
+			windowPackets = 4096
 		}
-		if bytesInflight >= target {
+		target := s.flowControlWindowBytes(cfg, payloadSize, windowPackets)
+		if bytesInflight >= target || len(pending) >= windowPackets {
 			acked, err := drainStatusPackets(ctx, cfg.Transport, &sendRemote, cfg.StreamID, ackBuf, &ackPkt, &pending, cfg.Collector, s.ackTimeout(), false, s.observeAck)
 			if err != nil {
 				return offset, err
@@ -80,23 +80,16 @@ func (s *BBRSender) Send(ctx context.Context, cfg SendConfig, src io.Reader) (ui
 			continue
 		}
 
-		n, readErr := src.Read(payloadBuf)
+		packetBuf := make([]byte, udpwire.DataHeaderLen+payloadSize+4)
+		n, readErr := src.Read(packetBuf[udpwire.DataHeaderLen : udpwire.DataHeaderLen+payloadSize])
 		if n > 0 {
 			seq++
-			dp := udpwire.DataPacket{
-				SessionID: cfg.SessionKey,
-				StreamID:  cfg.StreamID,
-				Seq:       seq,
-				Offset:    offset,
-				Payload:   payloadBuf[:n],
-			}
-			pktLen, err := dp.Encode(packetBuf)
+			pktLen, err := udpwire.EncodeDataPacketInPlace(packetBuf, cfg.SessionKey, cfg.StreamID, seq, cfg.BaseOffset+offset, n)
 			if err != nil {
 				return offset, fmt.Errorf("encode data packet: %w", err)
 			}
-			packetCopy := make([]byte, pktLen)
-			copy(packetCopy, packetBuf[:pktLen])
-			if err := writePacketWithRetry(ctx, cfg.Transport, sendRemote, packetCopy); err != nil {
+			packetBuf = packetBuf[:pktLen]
+			if err := writePacketWithRetry(ctx, cfg.Transport, sendRemote, packetBuf); err != nil {
 				return offset, err
 			}
 			recordPacketSend(cfg.Collector)
@@ -112,7 +105,7 @@ func (s *BBRSender) Send(ctx context.Context, cfg SendConfig, src io.Reader) (ui
 			pending = append(pending, pendingPacket{
 				seq:        seq,
 				payloadLen: n,
-				data:       packetCopy,
+				data:       packetBuf,
 				sentAt:     time.Now(),
 			})
 			acked, err := drainStatusPackets(ctx, cfg.Transport, &sendRemote, cfg.StreamID, ackBuf, &ackPkt, &pending, cfg.Collector, s.pollTimeout(), true, s.observeAck)
@@ -137,6 +130,9 @@ func (s *BBRSender) Send(ctx context.Context, cfg SendConfig, src io.Reader) (ui
 	for len(pending) > 0 {
 		acked, err := drainStatusPackets(ctx, cfg.Transport, &sendRemote, cfg.StreamID, ackBuf, &ackPkt, &pending, cfg.Collector, s.ackTimeout(), false, s.observeAck)
 		if err != nil {
+			if !cfg.RequireFinalAck {
+				return offset, nil
+			}
 			return offset, err
 		}
 		if acked > 0 {
@@ -208,6 +204,22 @@ func (s *BBRSender) inflightLimitBytes() int64 {
 		window = float64(s.minWindowBytes)
 	}
 	return int64(window)
+}
+
+func (s *BBRSender) flowControlWindowBytes(cfg SendConfig, payloadSize int, windowPackets int) int64 {
+	if cfg.WindowBytes > 0 {
+		return int64(cfg.WindowBytes)
+	}
+	if strings.EqualFold(strings.TrimSpace(cfg.FlowControl), "bbr") {
+		target := s.inflightLimitBytes()
+		if target > 0 {
+			return target
+		}
+	}
+	if windowPackets > 0 && payloadSize > 0 {
+		return int64(windowPackets * payloadSize)
+	}
+	return s.minWindowBytes
 }
 
 func (s *BBRSender) ackTimeout() time.Duration {

@@ -49,6 +49,16 @@ type GroverTransferClient struct {
 	transport    string
 }
 
+type TransferOptions struct {
+	ParallelStreams    int
+	UDPFlowControl     string
+	UDPWindowPackets   int
+	UDPWindowBytes     int
+	UDPAckEveryPackets int
+	UDPAckEveryMs      int
+	MTU                string
+}
+
 func NewTransferAPI(cfg *internal.UdpClientConfig, cc pb.TransferControlClient, fallbackHost, protocol string) *GroverTransferClient {
 	transport := strings.ToLower(strings.TrimSpace(protocol))
 	if env := strings.ToLower(strings.TrimSpace(os.Getenv("GROVER_TRANSFER_PROTOCOL"))); env != "" {
@@ -62,6 +72,38 @@ func NewTransferAPI(cfg *internal.UdpClientConfig, cc pb.TransferControlClient, 
 		controlPb:    cc,
 		fallbackHost: strings.TrimSpace(fallbackHost),
 		transport:    transport,
+	}
+}
+
+func (t *GroverTransferClient) ApplyTransferOptions(opts TransferOptions) {
+	if t.cfg == nil {
+		t.cfg = &internal.UdpClientConfig{}
+	}
+	if opts.ParallelStreams > 0 {
+		t.cfg.ParallelStreams = uint(opts.ParallelStreams)
+		t.cfg.ParallelSenders = uint(opts.ParallelStreams)
+	}
+	if strings.TrimSpace(opts.UDPFlowControl) != "" {
+		t.cfg.FlowControl = strings.ToLower(strings.TrimSpace(opts.UDPFlowControl))
+	}
+	if opts.UDPWindowPackets > 0 {
+		t.cfg.WindowPackets = opts.UDPWindowPackets
+		t.cfg.MaxInFlightPackets = opts.UDPWindowPackets
+	}
+	if opts.UDPWindowBytes > 0 {
+		t.cfg.WindowBytes = opts.UDPWindowBytes
+	}
+	if opts.UDPAckEveryPackets > 0 {
+		t.cfg.AckEveryPackets = opts.UDPAckEveryPackets
+	}
+	if opts.UDPAckEveryMs > 0 {
+		t.cfg.AckEveryMs = opts.UDPAckEveryMs
+	}
+	if strings.TrimSpace(opts.MTU) != "" && !strings.EqualFold(strings.TrimSpace(opts.MTU), "auto") {
+		var mtu int
+		if _, err := fmt.Sscanf(strings.TrimSpace(opts.MTU), "%d", &mtu); err == nil && mtu > 0 {
+			t.cfg.MtuSize = mtu
+		}
 	}
 }
 
@@ -99,15 +141,27 @@ func (t *GroverTransferClient) Get(ctx context.Context, path string, w io.Writer
 		}
 		defer conn.Close()
 		transport := udpdataplane.NewUDPConnTransport(conn)
-		bytesRead, readErr = udpdataplane.Receive(ctx, udpdataplane.ReceiveConfig{
-			Transport:    transport,
-			SessionID:    info.id,
-			SessionKey:   info.sessionKey,
-			StreamID:     lease.streamID,
-			BufferSize:   t.recvBufferSize(),
-			Collector:    t.collector,
-			ExpectedSize: info.totalSize,
-		}, udpdataplane.NewSequentialWriter(w))
+		dst := udpdataplane.NewSequentialWriter(w)
+		if wa, ok := w.(io.WriterAt); ok {
+			dst = wa
+		}
+		recvCfg := udpdataplane.ReceiveConfig{
+			Transport:       transport,
+			SessionID:       info.id,
+			SessionKey:      info.sessionKey,
+			StreamID:        lease.streamID,
+			StreamIDs:       append([]uint32(nil), info.streamIDs...),
+			BufferSize:      t.recvBufferSize(),
+			Collector:       t.collector,
+			ExpectedSize:    info.totalSize,
+			AckEveryPackets: t.ackEveryPackets(),
+			AckEvery:        t.ackEvery(),
+		}
+		if len(info.streamIDs) > 1 && info.totalSize > 0 {
+			bytesRead, readErr = udpdataplane.ReceiveMany(ctx, recvCfg, dst)
+		} else {
+			bytesRead, readErr = udpdataplane.Receive(ctx, recvCfg, dst)
+		}
 	}
 	releaseErr := t.releaseStream(ctx, info, lease, readErr == nil, bytesRead)
 	if readErr != nil {
@@ -137,6 +191,10 @@ func (t *GroverTransferClient) getTCP(ctx context.Context, info *sessionInfo, w 
 		return uint64(n), err
 	}
 
+	if wa, ok := w.(io.WriterAt); ok {
+		return t.getTCPToWriterAt(ctx, info, wa)
+	}
+
 	tmp, err := os.CreateTemp("", "grover-tcp-download-*")
 	if err != nil {
 		return 0, err
@@ -150,32 +208,22 @@ func (t *GroverTransferClient) getTCP(ctx context.Context, info *sessionInfo, w 
 		return 0, err
 	}
 
-	workers := len(info.streamIDs)
-	if workers < 1 {
-		workers = 1
+	ranges, err := planByteRanges(int64(info.totalSize), len(info.streamIDs))
+	if err != nil {
+		return 0, err
 	}
-	base := int64(info.totalSize) / int64(workers)
-	rem := int64(info.totalSize) % int64(workers)
 
 	var total atomic.Uint64
-	errCh := make(chan error, workers)
+	errCh := make(chan error, len(ranges))
 	var wg sync.WaitGroup
-	for i := 0; i < workers; i++ {
-		offset := int64(i) * base
-		length := base
-		if i == workers-1 {
-			length += rem
-		}
-		if length <= 0 {
-			continue
-		}
+	for _, br := range ranges {
 		wg.Add(1)
 		go func(off, ln int64) {
 			defer wg.Done()
 			if err := t.fetchTCPRange(ctx, info, tmp, off, ln, &total); err != nil {
 				errCh <- err
 			}
-		}(offset, length)
+		}(br.offset, br.length)
 	}
 	wg.Wait()
 	close(errCh)
@@ -194,7 +242,35 @@ func (t *GroverTransferClient) getTCP(ctx context.Context, info *sessionInfo, w 
 	return uint64(n), err
 }
 
-func (t *GroverTransferClient) fetchTCPRange(ctx context.Context, info *sessionInfo, dst *os.File, offset, length int64, total *atomic.Uint64) error {
+func (t *GroverTransferClient) getTCPToWriterAt(ctx context.Context, info *sessionInfo, dst io.WriterAt) (uint64, error) {
+	ranges, err := planByteRanges(int64(info.totalSize), len(info.streamIDs))
+	if err != nil {
+		return 0, err
+	}
+
+	var total atomic.Uint64
+	errCh := make(chan error, len(ranges))
+	var wg sync.WaitGroup
+	for _, br := range ranges {
+		wg.Add(1)
+		go func(off, ln int64) {
+			defer wg.Done()
+			if err := t.fetchTCPRange(ctx, info, dst, off, ln, &total); err != nil {
+				errCh <- err
+			}
+		}(br.offset, br.length)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			return total.Load(), err
+		}
+	}
+	return total.Load(), nil
+}
+
+func (t *GroverTransferClient) fetchTCPRange(ctx context.Context, info *sessionInfo, dst io.WriterAt, offset, length int64, total *atomic.Uint64) error {
 	conn, err := t.dialTCPSession(ctx, info)
 	if err != nil {
 		return err
@@ -259,20 +335,7 @@ func (t *GroverTransferClient) Put(ctx context.Context, path string, r io.Reader
 	if t.transport == "tcp" {
 		bytesWritten, writeErr = t.putTCP(ctx, info, r, size)
 	} else {
-		conn, err := t.dialSession(ctx, info)
-		if err != nil {
-			return err
-		}
-		defer conn.Close()
-		transport := udpdataplane.NewUDPConnTransport(conn)
-		bytesWritten, writeErr = udpdataplane.Send(ctx, udpdataplane.SendConfig{
-			Transport:  transport,
-			SessionID:  info.id,
-			SessionKey: info.sessionKey,
-			StreamID:   lease.streamID,
-			MTU:        info.mtu,
-			Collector:  t.collector,
-		}, r)
+		bytesWritten, writeErr = t.putUDP(ctx, info, lease, r, size)
 	}
 	releaseErr := t.releaseStream(ctx, info, lease, writeErr == nil, bytesWritten)
 	if writeErr != nil {
@@ -287,6 +350,89 @@ func (t *GroverTransferClient) Put(ctx context.Context, path string, r io.Reader
 		"size_bytes": size,
 	})
 	return nil
+}
+
+func (t *GroverTransferClient) putUDP(ctx context.Context, info *sessionInfo, lease *leasedStream, r io.Reader, size int64) (uint64, error) {
+	ra, ok := r.(io.ReaderAt)
+	if ok && size > 0 && len(info.streamIDs) > 1 {
+		return t.putUDPParallel(ctx, info, ra, size)
+	}
+	streamID := info.streamID
+	if lease != nil && lease.streamID != 0 {
+		streamID = lease.streamID
+	}
+	conn, err := t.dialSession(ctx, info)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+	transport := udpdataplane.NewUDPConnTransport(conn)
+	return udpdataplane.Send(ctx, udpdataplane.SendConfig{
+		Transport:       transport,
+		SessionID:       info.id,
+		SessionKey:      info.sessionKey,
+		StreamID:        streamID,
+		MTU:             t.mtu(info),
+		Collector:       t.collector,
+		FlowControl:     t.flowControl(),
+		WindowPackets:   t.windowPackets(),
+		WindowBytes:     t.windowBytes(),
+		RequireFinalAck: true,
+	}, r)
+}
+
+func (t *GroverTransferClient) putUDPParallel(ctx context.Context, info *sessionInfo, ra io.ReaderAt, size int64) (uint64, error) {
+	ranges, err := planByteRanges(size, len(info.streamIDs))
+	if err != nil {
+		return 0, err
+	}
+	if len(ranges) == 0 {
+		return 0, nil
+	}
+	var total atomic.Uint64
+	errCh := make(chan error, len(ranges))
+	var wg sync.WaitGroup
+	for i, br := range ranges {
+		streamID := info.streamIDs[i]
+		wg.Add(1)
+		go func(streamID uint32, br byteRange) {
+			defer wg.Done()
+			conn, err := t.dialSession(ctx, info)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			defer conn.Close()
+			sr := io.NewSectionReader(ra, br.offset, br.length)
+			n, err := udpdataplane.Send(ctx, udpdataplane.SendConfig{
+				Transport:       udpdataplane.NewUDPConnTransport(conn),
+				SessionID:       info.id,
+				SessionKey:      info.sessionKey,
+				StreamID:        streamID,
+				BaseOffset:      uint64(br.offset),
+				MTU:             t.mtu(info),
+				Collector:       t.collector,
+				FlowControl:     t.flowControl(),
+				WindowPackets:   t.windowPackets(),
+				WindowBytes:     t.windowBytes(),
+				RequireFinalAck: true,
+			}, sr)
+			if n > 0 {
+				total.Add(n)
+			}
+			if err != nil {
+				errCh <- err
+			}
+		}(streamID, br)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			return total.Load(), err
+		}
+	}
+	return total.Load(), nil
 }
 
 func (t *GroverTransferClient) Enumerate(ctx context.Context, path string, recursive bool) ([]RemoteFile, error) {
@@ -347,8 +493,12 @@ func (t *GroverTransferClient) openSession(ctx context.Context, path string, siz
 	}
 
 	parallelStreams := uint32(1)
-	if t.transport == "tcp" && t.cfg != nil && t.cfg.ParallelSenders > 1 {
-		parallelStreams = uint32(t.cfg.ParallelSenders)
+	if t.cfg != nil {
+		if t.cfg.ParallelStreams > 1 {
+			parallelStreams = uint32(t.cfg.ParallelStreams)
+		} else if t.cfg.ParallelSenders > 1 {
+			parallelStreams = uint32(t.cfg.ParallelSenders)
+		}
 	}
 	req := pb.OpenSessionRequest{
 		Mode:            m,
@@ -457,35 +607,22 @@ func (t *GroverTransferClient) putTCP(ctx context.Context, info *sessionInfo, r 
 		return uint64(n), err
 	}
 
-	workers := len(info.streamIDs)
-	if workers < 1 {
-		workers = 1
+	ranges, err := planByteRanges(size, len(info.streamIDs))
+	if err != nil {
+		return 0, err
 	}
-	if int64(workers) > size {
-		workers = int(size)
-	}
-	base := size / int64(workers)
-	rem := size % int64(workers)
 
 	var total atomic.Uint64
-	errCh := make(chan error, workers)
+	errCh := make(chan error, len(ranges))
 	var wg sync.WaitGroup
-	for i := 0; i < workers; i++ {
-		offset := int64(i) * base
-		length := base
-		if i == workers-1 {
-			length += rem
-		}
-		if length <= 0 {
-			continue
-		}
+	for _, br := range ranges {
 		wg.Add(1)
 		go func(off, ln int64) {
 			defer wg.Done()
 			if err := t.sendTCPChunk(ctx, info, ra, off, ln, &total); err != nil {
 				errCh <- err
 			}
-		}(offset, length)
+		}(br.offset, br.length)
 	}
 	wg.Wait()
 	close(errCh)
@@ -619,6 +756,56 @@ func (t *GroverTransferClient) recvBufferSize() int {
 		return t.cfg.SocketBufferSize
 	}
 	return 64 * 1024
+}
+
+func (t *GroverTransferClient) mtu(info *sessionInfo) int {
+	if t.cfg != nil && t.cfg.MtuSize > 0 {
+		return t.cfg.MtuSize
+	}
+	if info != nil && info.mtu > 0 {
+		return info.mtu
+	}
+	return 1500
+}
+
+func (t *GroverTransferClient) flowControl() string {
+	if t.cfg == nil || strings.TrimSpace(t.cfg.FlowControl) == "" {
+		return "fixed"
+	}
+	return strings.ToLower(strings.TrimSpace(t.cfg.FlowControl))
+}
+
+func (t *GroverTransferClient) windowPackets() int {
+	if t.cfg != nil {
+		if t.cfg.WindowPackets > 0 {
+			return t.cfg.WindowPackets
+		}
+		if t.cfg.MaxInFlightPackets > 0 {
+			return t.cfg.MaxInFlightPackets
+		}
+	}
+	return 4096
+}
+
+func (t *GroverTransferClient) windowBytes() int {
+	if t.cfg != nil && t.cfg.WindowBytes > 0 {
+		return t.cfg.WindowBytes
+	}
+	return 0
+}
+
+func (t *GroverTransferClient) ackEveryPackets() int {
+	if t.cfg != nil && t.cfg.AckEveryPackets > 0 {
+		return t.cfg.AckEveryPackets
+	}
+	return 32
+}
+
+func (t *GroverTransferClient) ackEvery() time.Duration {
+	if t.cfg != nil && t.cfg.AckEveryMs > 0 {
+		return time.Duration(t.cfg.AckEveryMs) * time.Millisecond
+	}
+	return 5 * time.Millisecond
 }
 
 func sendHello(ctx context.Context, conn *net.UDPConn, sessionID []byte, token []byte) error {

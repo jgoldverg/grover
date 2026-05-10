@@ -10,6 +10,8 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jgoldverg/grover/internal"
@@ -166,19 +168,26 @@ func (r *udpSessionRunner) receiveFile(ctx context.Context, addr *net.UDPAddr) e
 	}
 	sessionKey := binary.BigEndian.Uint32(r.session.ID[:4])
 	cfg := udpdataplane.ReceiveConfig{
-		Transport:    udpdataplane.NewUDPConnTransport(conn),
-		RemoteAddr:   remote,
-		SessionID:    r.session.ID.String(),
-		SessionKey:   sessionKey,
-		StreamID:     r.session.StreamID,
-		BufferSize:   r.recvBufferSize(),
-		Collector:    nil,
-		ExpectedSize: r.session.TotalSize,
+		Transport:       udpdataplane.NewUDPConnTransport(conn),
+		RemoteAddr:      remote,
+		SessionID:       r.session.ID.String(),
+		SessionKey:      sessionKey,
+		StreamID:        r.session.StreamID,
+		StreamIDs:       append([]uint32(nil), r.session.StreamIDs...),
+		BufferSize:      r.recvBufferSize(),
+		Collector:       nil,
+		ExpectedSize:    r.session.TotalSize,
+		AckEveryPackets: 32,
+		AckEvery:        5 * time.Millisecond,
 		OnRemoteAddr: func(a *net.UDPAddr) {
 			if a != nil {
 				r.session.SetRemoteAddr(a)
 			}
 		},
+	}
+	if len(r.session.StreamIDs) > 1 {
+		_, err := udpdataplane.ReceiveMany(ctx, cfg, file)
+		return err
 	}
 	_, err := udpdataplane.Receive(ctx, cfg, file)
 	return err
@@ -206,17 +215,85 @@ func (r *udpSessionRunner) sendFile(ctx context.Context, addr *net.UDPAddr) erro
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("seek file: %w", err)
 	}
+	if r.session.TotalSize > 0 && len(r.session.StreamIDs) > 1 {
+		return r.sendFileParallel(ctx, remote)
+	}
 	sessionKey := binary.BigEndian.Uint32(r.session.ID[:4])
 	_, err := udpdataplane.Send(ctx, udpdataplane.SendConfig{
-		Transport:  udpdataplane.NewUDPConnTransport(conn),
-		RemoteAddr: remote,
-		SessionID:  r.session.ID.String(),
-		SessionKey: sessionKey,
-		StreamID:   r.session.StreamID,
-		MTU:        int(r.session.MTU),
-		Collector:  nil,
+		Transport:       udpdataplane.NewUDPConnTransport(conn),
+		RemoteAddr:      remote,
+		SessionID:       r.session.ID.String(),
+		SessionKey:      sessionKey,
+		StreamID:        r.session.StreamID,
+		MTU:             int(r.session.MTU),
+		Collector:       nil,
+		FlowControl:     "fixed",
+		WindowPackets:   4096,
+		RequireFinalAck: false,
 	}, file)
 	return err
+}
+
+func (r *udpSessionRunner) sendFileParallel(ctx context.Context, remote *net.UDPAddr) error {
+	file := r.session.file
+	if file == nil {
+		return errors.New("session missing source file")
+	}
+	ranges, err := planByteRanges(int64(r.session.TotalSize), len(r.session.StreamIDs))
+	if err != nil {
+		return err
+	}
+	base := udpdataplane.NewUDPConnTransport(r.session.Conn())
+	demuxCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	transports := udpdataplane.StartStatusDemux(demuxCtx, base, r.session.StreamIDs, r.recvBufferSize(), 1024)
+	sessionKey := binary.BigEndian.Uint32(r.session.ID[:4])
+
+	var total atomic.Uint64
+	errCh := make(chan error, len(ranges))
+	var wg sync.WaitGroup
+	for i, br := range ranges {
+		streamID := r.session.StreamIDs[i]
+		transport := transports[streamID]
+		if transport == nil {
+			return fmt.Errorf("missing demux transport for stream %d", streamID)
+		}
+		wg.Add(1)
+		go func(streamID uint32, br byteRange, transport udpdataplane.Transport) {
+			defer wg.Done()
+			sr := io.NewSectionReader(file, br.offset, br.length)
+			n, err := udpdataplane.Send(ctx, udpdataplane.SendConfig{
+				Transport:       transport,
+				RemoteAddr:      remote,
+				SessionID:       r.session.ID.String(),
+				SessionKey:      sessionKey,
+				StreamID:        streamID,
+				BaseOffset:      uint64(br.offset),
+				MTU:             int(r.session.MTU),
+				Collector:       nil,
+				FlowControl:     "fixed",
+				WindowPackets:   4096,
+				RequireFinalAck: false,
+			}, sr)
+			if n > 0 {
+				total.Add(n)
+			}
+			if err != nil {
+				errCh <- err
+			}
+		}(streamID, br, transport)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			return err
+		}
+	}
+	if total.Load() != r.session.TotalSize {
+		return fmt.Errorf("sent %d bytes, expected %d", total.Load(), r.session.TotalSize)
+	}
+	return nil
 }
 
 func isClosedNetworkError(err error) bool {

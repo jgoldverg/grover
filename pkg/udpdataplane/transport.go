@@ -24,6 +24,17 @@ type Transport interface {
 	RemoteAddr() *net.UDPAddr
 }
 
+type PacketBuffer struct {
+	Bytes []byte
+	Addr  *net.UDPAddr
+	N     int
+}
+
+type BatchTransport interface {
+	ReadBatch([]PacketBuffer) (int, error)
+	WriteBatch([]PacketBuffer, *net.UDPAddr) (int, error)
+}
+
 // UDPConnTransport adapts a *net.UDPConn to the Transport interface.
 type UDPConnTransport struct {
 	conn *net.UDPConn
@@ -62,6 +73,46 @@ func (t *UDPConnTransport) ReadPacket(buf []byte) (int, *net.UDPAddr, error) {
 		return n, nil, nil
 	}
 	return t.conn.ReadFromUDP(buf)
+}
+
+func (t *UDPConnTransport) WriteBatch(buffers []PacketBuffer, remote *net.UDPAddr) (int, error) {
+	written := 0
+	for i := range buffers {
+		if len(buffers[i].Bytes) == 0 {
+			continue
+		}
+		addr := buffers[i].Addr
+		if addr == nil {
+			addr = remote
+		}
+		n, err := t.WritePacket(buffers[i].Bytes, addr)
+		if n > 0 {
+			written++
+		}
+		if err != nil {
+			return written, err
+		}
+	}
+	return written, nil
+}
+
+func (t *UDPConnTransport) ReadBatch(buffers []PacketBuffer) (int, error) {
+	read := 0
+	for i := range buffers {
+		if len(buffers[i].Bytes) == 0 {
+			continue
+		}
+		n, addr, err := t.ReadPacket(buffers[i].Bytes)
+		if n > 0 {
+			buffers[i].N = n
+			buffers[i].Addr = addr
+			read++
+		}
+		if err != nil {
+			return read, err
+		}
+	}
+	return read, nil
 }
 
 func (t *UDPConnTransport) SetReadDeadline(ts time.Time) error {
