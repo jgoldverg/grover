@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"runtime"
 	"strings"
 	"time"
 
@@ -170,33 +171,22 @@ func Receive(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint64, e
 	var total uint64
 	progress := newRangeTracker(cfg.ExpectedSize)
 	acks := newAckCoalescer(cfg.AckEveryPackets, cfg.AckEvery)
+	batchTransport, useBatch := cfg.Transport.(BatchTransport)
+	useBatch = useBatch && runtime.GOOS == "linux"
+	batch := make([]PacketBuffer, 0)
+	if useBatch {
+		batch = make([]PacketBuffer, defaultAckPollEvery)
+		for i := range batch {
+			batch[i].Bytes = make([]byte, cfg.BufferSize)
+		}
+	}
 
 	defer cfg.Transport.SetReadDeadline(time.Time{})
 	remote := cfg.RemoteAddr
 
-	for {
-		if err := ctx.Err(); err != nil {
-			return total, err
-		}
-		if err := setReceiveDeadline(ctx, cfg.Transport, acks); err != nil {
-			return total, err
-		}
-		n, addr, err := cfg.Transport.ReadPacket(buf)
-		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				if remote != nil && acks.ShouldFlush() {
-					emitStatusPacket(cfg.Transport, remote, cfg.SessionID, cfg.SessionKey, cfg.StreamID, tracker, statusBuf, &sackScratch)
-					acks.MarkSent()
-				}
-				continue
-			}
-			if isClosedNetworkError(err) || errors.Is(err, io.EOF) {
-				return total, nil
-			}
-			return total, err
-		}
-		if n == 0 {
-			continue
+	processPacket := func(packetBytes []byte, addr *net.UDPAddr) (bool, error) {
+		if len(packetBytes) == 0 || !udpwire.IsDataPacket(packetBytes) {
+			return false, nil
 		}
 		if remote == nil {
 			remote = addr
@@ -204,17 +194,13 @@ func Receive(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint64, e
 				cfg.OnRemoteAddr(remote)
 			}
 		} else if addr != nil && !udpAddrEqual(addr, remote) {
-			continue
-		}
-		packetBytes := buf[:n]
-		if !udpwire.IsDataPacket(packetBytes) {
-			continue
+			return false, nil
 		}
 		if _, err := packet.Decode(packetBytes); err != nil {
-			continue
+			return false, nil
 		}
 		if packet.StreamID != cfg.StreamID {
-			continue
+			return false, nil
 		}
 		if len(packet.Payload) > 0 {
 			recordNetworkReceiveMetric(cfg.Collector, len(packet.Payload))
@@ -228,7 +214,7 @@ func Receive(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint64, e
 			}
 			if payloadLen > 0 {
 				if _, err := dst.WriteAt(packet.Payload[:payloadLen], int64(packet.Offset)); err != nil {
-					return total, fmt.Errorf("write payload: %w", err)
+					return false, fmt.Errorf("write payload: %w", err)
 				}
 			}
 			end := packet.Offset + uint64(payloadLen)
@@ -259,12 +245,7 @@ func Receive(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint64, e
 				emitStatusPacket(cfg.Transport, remote, cfg.SessionID, cfg.SessionKey, cfg.StreamID, tracker, statusBuf, &sackScratch)
 				acks.MarkSent()
 			}
-			if finished {
-				emitStatusPacket(cfg.Transport, remote, cfg.SessionID, cfg.SessionKey, cfg.StreamID, tracker, statusBuf, &sackScratch)
-				lingerStatus(ctx, cfg, remote, tracker, statusBuf, &sackScratch, buf, &packet)
-				return total, nil
-			}
-			continue
+			return finished, nil
 		}
 		beforeAck, _ := tracker.Snapshot(0, nil)
 		changed := tracker.OnPacket(packet.Seq)
@@ -272,6 +253,91 @@ func Receive(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint64, e
 		if changed && acks.OnPacket(gap) {
 			emitStatusPacket(cfg.Transport, remote, cfg.SessionID, cfg.SessionKey, cfg.StreamID, tracker, statusBuf, &sackScratch)
 			acks.MarkSent()
+		}
+		return false, nil
+	}
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+		if err := setReceiveDeadline(ctx, cfg.Transport, acks); err != nil {
+			return total, err
+		}
+		if useBatch {
+			for i := range batch {
+				batch[i].N = 0
+				batch[i].Addr = nil
+			}
+			n, err := batchTransport.ReadBatch(batch)
+			if err != nil && n == 0 {
+				if ne, ok := err.(net.Error); ok && ne.Timeout() {
+					if remote != nil && acks.ShouldFlush() {
+						emitStatusPacket(cfg.Transport, remote, cfg.SessionID, cfg.SessionKey, cfg.StreamID, tracker, statusBuf, &sackScratch)
+						acks.MarkSent()
+					}
+					continue
+				}
+				if isClosedNetworkError(err) || errors.Is(err, io.EOF) {
+					return total, nil
+				}
+				return total, err
+			}
+			for i := 0; i < n; i++ {
+				if batch[i].N <= 0 {
+					continue
+				}
+				finished, err := processPacket(batch[i].Bytes[:batch[i].N], batch[i].Addr)
+				if err != nil {
+					return total, err
+				}
+				if finished {
+					emitStatusPacket(cfg.Transport, remote, cfg.SessionID, cfg.SessionKey, cfg.StreamID, tracker, statusBuf, &sackScratch)
+					lingerStatus(ctx, cfg, remote, tracker, statusBuf, &sackScratch, buf, &packet)
+					return total, nil
+				}
+			}
+			if err != nil {
+				if ne, ok := err.(net.Error); ok && ne.Timeout() {
+					if remote != nil && acks.ShouldFlush() {
+						emitStatusPacket(cfg.Transport, remote, cfg.SessionID, cfg.SessionKey, cfg.StreamID, tracker, statusBuf, &sackScratch)
+						acks.MarkSent()
+					}
+					continue
+				}
+				if isClosedNetworkError(err) || errors.Is(err, io.EOF) {
+					return total, nil
+				}
+				return total, err
+			}
+			continue
+		}
+
+		n, addr, err := cfg.Transport.ReadPacket(buf)
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				if remote != nil && acks.ShouldFlush() {
+					emitStatusPacket(cfg.Transport, remote, cfg.SessionID, cfg.SessionKey, cfg.StreamID, tracker, statusBuf, &sackScratch)
+					acks.MarkSent()
+				}
+				continue
+			}
+			if isClosedNetworkError(err) || errors.Is(err, io.EOF) {
+				return total, nil
+			}
+			return total, err
+		}
+		if n == 0 {
+			continue
+		}
+		finished, err := processPacket(buf[:n], addr)
+		if err != nil {
+			return total, err
+		}
+		if finished {
+			emitStatusPacket(cfg.Transport, remote, cfg.SessionID, cfg.SessionKey, cfg.StreamID, tracker, statusBuf, &sackScratch)
+			lingerStatus(ctx, cfg, remote, tracker, statusBuf, &sackScratch, buf, &packet)
+			return total, nil
 		}
 	}
 }
@@ -320,40 +386,31 @@ func ReceiveMany(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint6
 	var packet udpwire.DataPacket
 	var total uint64
 	progress := newRangeTracker(cfg.ExpectedSize)
+	batchTransport, useBatch := cfg.Transport.(BatchTransport)
+	useBatch = useBatch && runtime.GOOS == "linux"
+	batch := make([]PacketBuffer, 0)
+	if useBatch {
+		batch = make([]PacketBuffer, defaultAckPollEvery)
+		for i := range batch {
+			batch[i].Bytes = make([]byte, cfg.BufferSize)
+		}
+	}
 
-	defer cfg.Transport.SetReadDeadline(time.Time{})
-	for {
-		if err := ctx.Err(); err != nil {
-			return total, err
+	processPacket := func(packetBytes []byte, addr *net.UDPAddr) (bool, error) {
+		if len(packetBytes) == 0 || !udpwire.IsDataPacket(packetBytes) {
+			return false, nil
 		}
-		if err := setReceiveManyDeadline(ctx, cfg.Transport, states); err != nil {
-			return total, err
-		}
-		n, addr, err := cfg.Transport.ReadPacket(buf)
-		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				flushDueManyStatus(cfg, states, statusBuf)
-				continue
-			}
-			if isClosedNetworkError(err) || errors.Is(err, io.EOF) {
-				return total, nil
-			}
-			return total, err
-		}
-		if n == 0 || !udpwire.IsDataPacket(buf[:n]) {
-			continue
-		}
-		if _, err := packet.Decode(buf[:n]); err != nil {
-			continue
+		if _, err := packet.Decode(packetBytes); err != nil {
+			return false, nil
 		}
 		state := states[packet.StreamID]
 		if state == nil {
-			continue
+			return false, nil
 		}
 		if state.remote == nil {
 			state.remote = addr
 		} else if addr != nil && !udpAddrEqual(addr, state.remote) {
-			continue
+			return false, nil
 		}
 		if len(packet.Payload) == 0 {
 			beforeAck, _ := state.tracker.Snapshot(0, nil)
@@ -363,7 +420,7 @@ func ReceiveMany(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint6
 				emitStatusPacket(cfg.Transport, state.remote, cfg.SessionID, cfg.SessionKey, packet.StreamID, state.tracker, statusBuf, &state.sackScratch)
 				state.acks.MarkSent()
 			}
-			continue
+			return false, nil
 		}
 
 		recordNetworkReceiveMetric(cfg.Collector, len(packet.Payload))
@@ -377,7 +434,7 @@ func ReceiveMany(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint6
 		}
 		if payloadLen > 0 {
 			if _, err := dst.WriteAt(packet.Payload[:payloadLen], int64(packet.Offset)); err != nil {
-				return total, fmt.Errorf("write payload: %w", err)
+				return false, fmt.Errorf("write payload: %w", err)
 			}
 		}
 		end := packet.Offset + uint64(payloadLen)
@@ -407,6 +464,79 @@ func ReceiveMany(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint6
 		if changed && state.acks.OnPacket(gap) {
 			emitStatusPacket(cfg.Transport, state.remote, cfg.SessionID, cfg.SessionKey, packet.StreamID, state.tracker, statusBuf, &state.sackScratch)
 			state.acks.MarkSent()
+		}
+		return finished, nil
+	}
+
+	defer cfg.Transport.SetReadDeadline(time.Time{})
+	for {
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+		if err := setReceiveManyDeadline(ctx, cfg.Transport, states); err != nil {
+			return total, err
+		}
+		if useBatch {
+			for i := range batch {
+				batch[i].N = 0
+				batch[i].Addr = nil
+			}
+			n, err := batchTransport.ReadBatch(batch)
+			if err != nil && n == 0 {
+				if ne, ok := err.(net.Error); ok && ne.Timeout() {
+					flushDueManyStatus(cfg, states, statusBuf)
+					continue
+				}
+				if isClosedNetworkError(err) || errors.Is(err, io.EOF) {
+					return total, nil
+				}
+				return total, err
+			}
+			for i := 0; i < n; i++ {
+				if batch[i].N <= 0 {
+					continue
+				}
+				finished, err := processPacket(batch[i].Bytes[:batch[i].N], batch[i].Addr)
+				if err != nil {
+					return total, err
+				}
+				if finished {
+					for streamID, st := range states {
+						if st.remote != nil {
+							emitStatusPacket(cfg.Transport, st.remote, cfg.SessionID, cfg.SessionKey, streamID, st.tracker, statusBuf, &st.sackScratch)
+						}
+					}
+					lingerManyStatus(ctx, cfg, states, statusBuf, buf, &packet)
+					return total, nil
+				}
+			}
+			if err != nil {
+				if ne, ok := err.(net.Error); ok && ne.Timeout() {
+					flushDueManyStatus(cfg, states, statusBuf)
+					continue
+				}
+				if isClosedNetworkError(err) || errors.Is(err, io.EOF) {
+					return total, nil
+				}
+				return total, err
+			}
+			continue
+		}
+
+		n, addr, err := cfg.Transport.ReadPacket(buf)
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				flushDueManyStatus(cfg, states, statusBuf)
+				continue
+			}
+			if isClosedNetworkError(err) || errors.Is(err, io.EOF) {
+				return total, nil
+			}
+			return total, err
+		}
+		finished, err := processPacket(buf[:n], addr)
+		if err != nil {
+			return total, err
 		}
 		if finished {
 			for streamID, st := range states {

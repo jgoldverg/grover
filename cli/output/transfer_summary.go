@@ -23,9 +23,12 @@ type TransferSummary struct {
 	completed  *atomic.Uint64
 	writer     io.Writer
 
-	mu     sync.Mutex
-	cancel context.CancelFunc
-	active bool
+	mu       sync.Mutex
+	cancel   context.CancelFunc
+	active   bool
+	lastAt   time.Time
+	lastGood uint64
+	lastNet  uint64
 }
 
 func NewTransferSummary(direction string, collector *metrics.TransferCollector, totalFiles int, totalBytes uint64, completed *atomic.Uint64) *TransferSummary {
@@ -129,9 +132,11 @@ func (s *TransferSummary) print(state string) {
 			networkBytes = goodBytes
 		}
 	}
+	now := time.Now()
+	curGoodMbps, curNetMbps := s.intervalRates(now, goodBytes, networkBytes)
 	fmt.Fprintf(
 		s.writer,
-		"%s %s elapsed=%s files=%d/%d good=%s/%s net=%s net_rate=%s goodput=%s efficiency=%.1f%% disk_read=%s disk_write=%s retrans=%d retrans_bytes=%s\n",
+		"%s %s elapsed=%s files=%d/%d good=%s/%s net=%s cur_net=%s cur_good=%s avg_net=%s avg_good=%s efficiency=%.1f%% disk_read=%s disk_write=%s retrans=%d retrans_bytes=%s\n",
 		s.direction,
 		state,
 		shortDuration(snap.Elapsed),
@@ -140,6 +145,8 @@ func (s *TransferSummary) print(state string) {
 		humanBytes(goodBytes),
 		humanBytes(s.totalBytes),
 		humanBytes(networkBytes),
+		humanMbps(curNetMbps),
+		humanMbps(curGoodMbps),
 		humanMbps(snap.ThroughputMbps),
 		humanMbps(snap.GoodputMbps),
 		summaryRatioOrZero(snap.GoodputBps, snap.ThroughputBps)*100,
@@ -148,6 +155,34 @@ func (s *TransferSummary) print(state string) {
 		snap.Retransmissions,
 		humanBytes(snap.BytesRetransmit),
 	)
+}
+
+func (s *TransferSummary) intervalRates(now time.Time, goodBytes, networkBytes uint64) (float64, float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lastAt.IsZero() {
+		s.lastAt = now
+		s.lastGood = goodBytes
+		s.lastNet = networkBytes
+		return 0, 0
+	}
+	elapsed := now.Sub(s.lastAt)
+	prevGood := s.lastGood
+	prevNet := s.lastNet
+	s.lastAt = now
+	s.lastGood = goodBytes
+	s.lastNet = networkBytes
+	if elapsed <= 0 {
+		return 0, 0
+	}
+	return mbpsFromDelta(goodBytes, prevGood, elapsed), mbpsFromDelta(networkBytes, prevNet, elapsed)
+}
+
+func mbpsFromDelta(cur, prev uint64, elapsed time.Duration) float64 {
+	if cur <= prev || elapsed <= 0 {
+		return 0
+	}
+	return float64(cur-prev) * 8 / elapsed.Seconds() / 1_000_000
 }
 
 func summaryRatioOrZero(num, den float64) float64 {
