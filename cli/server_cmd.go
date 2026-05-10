@@ -187,8 +187,10 @@ func MtuProbe() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&opts.ipAddr, "ip-addr", "", "IP or hostname to probe (default derived from server_url)")
+	cmd.Flags().IntVar(&opts.udpPort, "udp-port", 22444, "UDP port to probe")
 	cmd.Flags().UintVar(&opts.minSize, "min-size", 1200, "smallest mtu to start from(default is 1200)")
 	cmd.Flags().UintVar(&opts.maxSize, "max-size", 65000, "maximum mtu to start from(default is 65000)")
+	cmd.Flags().IntVar(&opts.timeoutMs, "timeout-ms", opts.timeoutMs, "probe write timeout per attempt in milliseconds")
 	cmd.Flags().String("via", "", "routing policy (overrides config)")
 
 	return cmd

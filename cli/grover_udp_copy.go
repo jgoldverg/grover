@@ -91,7 +91,7 @@ func SimpleCopy() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.NoUI, "no-ui", false, "Disable live progress and metrics output")
 	cmd.Flags().StringVar(&opts.Protocol, "protocol", "", "Transfer data-plane protocol (udp|tcp)")
 	cmd.Flags().IntVar(&opts.ParallelStreams, "parallel-streams", 0, "Per-file parallel streams/ranges (0 uses config)")
-	cmd.Flags().StringVar(&opts.UDPFlowControl, "udp-flow-control", "", "UDP flow control mode (fixed|aimd|bbr)")
+	cmd.Flags().StringVar(&opts.UDPFlowControl, "udp-flow-control", "", "UDP flow control mode (fixed|bbr)")
 	cmd.Flags().IntVar(&opts.UDPWindowPackets, "udp-window-packets", 0, "UDP max in-flight packets per stream (0 uses config)")
 	cmd.Flags().IntVar(&opts.UDPWindowBytes, "udp-window-bytes", 0, "UDP max in-flight bytes per stream (0 derives from packets)")
 	cmd.Flags().IntVar(&opts.UDPAckEveryPackets, "udp-ack-every-packets", 0, "UDP ACK every N packets (0 uses config)")
@@ -628,9 +628,9 @@ func (opts CopyOptions) validate() error {
 		return fmt.Errorf("udp tuning values must be >= 0")
 	}
 	switch strings.ToLower(strings.TrimSpace(opts.UDPFlowControl)) {
-	case "", "fixed", "aimd", "bbr":
+	case "", "fixed", "bbr":
 	default:
-		return fmt.Errorf("invalid --udp-flow-control %q: must be fixed, aimd, or bbr", opts.UDPFlowControl)
+		return fmt.Errorf("invalid --udp-flow-control %q: must be fixed or bbr", opts.UDPFlowControl)
 	}
 	if mtu := strings.TrimSpace(opts.MTU); mtu != "" && !strings.EqualFold(mtu, "auto") {
 		var parsed int
@@ -841,6 +841,7 @@ func newTransferClientForRemote(cmd *cobra.Command, ref RemoteRef, opts CopyOpti
 			UDPAckEveryPackets: opts.UDPAckEveryPackets,
 			UDPAckEveryMs:      opts.UDPAckEveryMs,
 			MTU:                opts.MTU,
+			AutoMTU:            strings.EqualFold(strings.TrimSpace(opts.MTU), "auto"),
 		})
 	}
 	return client, nil

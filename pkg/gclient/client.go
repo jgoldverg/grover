@@ -70,6 +70,7 @@ type Client struct {
 func NewClient(cfg internal.AppConfig) *Client {
 	return &Client{
 		cfg: cfg,
+		mtu: NewPMTUService(),
 	}
 }
 

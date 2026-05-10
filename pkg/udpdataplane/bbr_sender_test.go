@@ -11,9 +11,6 @@ func TestFlowControlWindowBytes(t *testing.T) {
 	if got := s.flowControlWindowBytes(SendConfig{FlowControl: "fixed"}, 100, 10); got != 1000 {
 		t.Fatalf("fixed packet window = %d, want 1000", got)
 	}
-	if got := s.flowControlWindowBytes(SendConfig{FlowControl: "aimd"}, 100, 10); got != 1000 {
-		t.Fatalf("aimd fallback window = %d, want 1000", got)
-	}
 	if got := s.flowControlWindowBytes(SendConfig{FlowControl: "bbr"}, 100, 10); got != s.minWindowBytes {
 		t.Fatalf("bbr initial window = %d, want %d", got, s.minWindowBytes)
 	}

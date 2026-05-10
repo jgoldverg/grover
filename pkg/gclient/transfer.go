@@ -57,6 +57,7 @@ type TransferOptions struct {
 	UDPAckEveryPackets int
 	UDPAckEveryMs      int
 	MTU                string
+	AutoMTU            bool
 }
 
 func NewTransferAPI(cfg *internal.UdpClientConfig, cc pb.TransferControlClient, fallbackHost, protocol string) *GroverTransferClient {
@@ -99,7 +100,9 @@ func (t *GroverTransferClient) ApplyTransferOptions(opts TransferOptions) {
 	if opts.UDPAckEveryMs > 0 {
 		t.cfg.AckEveryMs = opts.UDPAckEveryMs
 	}
-	if strings.TrimSpace(opts.MTU) != "" && !strings.EqualFold(strings.TrimSpace(opts.MTU), "auto") {
+	if opts.AutoMTU || strings.EqualFold(strings.TrimSpace(opts.MTU), "auto") {
+		t.cfg.MtuSize = 0
+	} else if strings.TrimSpace(opts.MTU) != "" {
 		var mtu int
 		if _, err := fmt.Sscanf(strings.TrimSpace(opts.MTU), "%d", &mtu); err == nil && mtu > 0 {
 			t.cfg.MtuSize = mtu
@@ -335,6 +338,9 @@ func (t *GroverTransferClient) Put(ctx context.Context, path string, r io.Reader
 	if t.transport == "tcp" {
 		bytesWritten, writeErr = t.putTCP(ctx, info, r, size)
 	} else {
+		if err := t.discoverMTUIfNeeded(ctx, info); err != nil {
+			return err
+		}
 		bytesWritten, writeErr = t.putUDP(ctx, info, lease, r, size)
 	}
 	releaseErr := t.releaseStream(ctx, info, lease, writeErr == nil, bytesWritten)
@@ -766,6 +772,24 @@ func (t *GroverTransferClient) mtu(info *sessionInfo) int {
 		return info.mtu
 	}
 	return 1500
+}
+
+func (t *GroverTransferClient) discoverMTUIfNeeded(ctx context.Context, info *sessionInfo) error {
+	if t.cfg == nil || t.cfg.MtuSize > 0 || info == nil || info.port == 0 {
+		return nil
+	}
+	prober := NewPMTUService()
+	mtu, err := prober.DiscoverPMTU(ctx, info.host, int(info.port), 1200, 9000, 300*time.Millisecond)
+	if err != nil {
+		return err
+	}
+	t.cfg.MtuSize = mtu
+	internal.Info("udp pmtu discovered", internal.Fields{
+		"host": info.host,
+		"port": info.port,
+		"mtu":  mtu,
+	})
+	return nil
 }
 
 func (t *GroverTransferClient) flowControl() string {
