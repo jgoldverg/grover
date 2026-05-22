@@ -104,8 +104,14 @@ func SimpleCopy() *cobra.Command {
 				if err != nil {
 					return err
 				}
+				if opts.uiMode() == "live" {
+					return nil
+				}
 				fmt.Fprintf(cmd.OutOrStdout(), "transfer_job: %s\n", job.GetJobId())
 				fmt.Fprintf(cmd.OutOrStdout(), "state: %s\n", job.GetState().String())
+				if job.GetErrorMessage() != "" {
+					fmt.Fprintf(cmd.OutOrStdout(), "error: %s\n", job.GetErrorMessage())
+				}
 				fmt.Fprintf(cmd.OutOrStdout(), "files_done: %d\n", job.GetFilesDone())
 				fmt.Fprintf(cmd.OutOrStdout(), "good_bytes: %d\n", job.GetGoodBytes())
 				return nil
@@ -156,7 +162,7 @@ func startOneShotRoutedTransfer(cmd *cobra.Command, src string, dst string, opts
 		CreatedAt:       time.Now().UTC(),
 		UpdatedAt:       time.Now().UTC(),
 	}
-	return startDirectRoute(cmd, route, opts.SourceServer, opts.DestinationServer)
+	return startDirectRoute(cmd, route, opts)
 }
 
 func applyPreparedRouteTemplate(cmd *cobra.Command, args []string, opts *CopyOptions) ([]string, error) {
@@ -348,6 +354,9 @@ func printTransferJobStatus(w io.Writer, job *pb.TransferJob) {
 	fmt.Fprintf(w, "transfer_job: %s\n", job.GetJobId())
 	fmt.Fprintf(w, "route_id: %s\n", job.GetRouteId())
 	fmt.Fprintf(w, "state: %s\n", job.GetState().String())
+	if job.GetErrorMessage() != "" {
+		fmt.Fprintf(w, "error: %s\n", job.GetErrorMessage())
+	}
 	fmt.Fprintf(w, "protocol: %s\n", job.GetProtocol().String())
 	fmt.Fprintf(w, "good_bytes: %d\n", job.GetGoodBytes())
 	fmt.Fprintf(w, "network_bytes: %d\n", job.GetNetworkBytes())

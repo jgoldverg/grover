@@ -4,6 +4,9 @@
 BIN_DIR    := bin
 PROTO_SRC  := api/proto
 PB_OUT     := pkg/groverpb
+TOOLS_BIN  ?= $(HOME)/.grover-tools/bin
+
+export PATH := $(TOOLS_BIN):$(PATH)
 
 ## Binaries
 SERVER_DIR := cmd/groverd
@@ -30,19 +33,19 @@ all: server client
 generate: proto
 
 tools:
+	@mkdir -p $(TOOLS_BIN)
 	@command -v protoc >/dev/null 2>&1 || { echo "Error: protoc not found. Install protoc first."; exit 1; }
 	@command -v protoc-gen-go >/dev/null 2>&1 || { \
 		echo "Installing protoc-gen-go..."; \
-		GOBIN=$$(go env GOPATH)/bin go install google.golang.org/protobuf/cmd/protoc-gen-go@latest; }
+		GOBIN=$(TOOLS_BIN) go install google.golang.org/protobuf/cmd/protoc-gen-go@latest; }
 	@command -v protoc-gen-go-grpc >/dev/null 2>&1 || { \
 		echo "Installing protoc-gen-go-grpc..."; \
-		GOBIN=$$(go env GOPATH)/bin go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest; }
+		GOBIN=$(TOOLS_BIN) go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest; }
 
 PB_OUT := .
 
 proto: tools
 	@echo "Generating protobuf Go code..."
-	PATH="$$(go env GOPATH)/bin:$$PATH" \
 	protoc -I $(PROTO_SRC) \
 	  --go_out=$(PB_OUT)      --go_opt=module=$(MODULE) \
 	  --go-grpc_out=$(PB_OUT) --go-grpc_opt=module=$(MODULE) \

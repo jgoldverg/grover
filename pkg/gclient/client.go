@@ -16,6 +16,7 @@ import (
 	groverpb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
 	"github.com/jgoldverg/grover/pkg/util"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -91,7 +92,10 @@ func (c *Client) Initialize(ctx context.Context, policy util.RoutePolicy) error 
 		if err != nil {
 			return err
 		}
-		cc.Connect()
+		if err := waitForReady(ctx, cc, 10*time.Second); err != nil {
+			_ = cc.Close()
+			return err
+		}
 		internal.Info(cc.GetState().String(), nil)
 
 		ci = cc
@@ -163,4 +167,25 @@ func (c *Client) dialControl(ctx context.Context, target, caPath string, insecur
 		target,
 		grpc.WithTransportCredentials(creds),
 	)
+}
+
+func waitForReady(ctx context.Context, cc *grpc.ClientConn, timeout time.Duration) error {
+	if _, ok := ctx.Deadline(); !ok && timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	cc.Connect()
+	for {
+		state := cc.GetState()
+		if state == connectivity.Ready {
+			return nil
+		}
+		if !cc.WaitForStateChange(ctx, state) {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return context.DeadlineExceeded
+		}
+	}
 }

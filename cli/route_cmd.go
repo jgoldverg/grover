@@ -179,7 +179,7 @@ func routeStartCommand(opts *routeCommandOptions) *cobra.Command {
 	return cmd
 }
 
-func startDirectRoute(cmd *cobra.Command, route storedRouteTemplate, sourceServer, destinationServer string) (*pb.TransferJob, error) {
+func startDirectRoute(cmd *cobra.Command, route storedRouteTemplate, opts CopyOptions) (*pb.TransferJob, error) {
 	plan, err := route.plan()
 	if err != nil {
 		return nil, err
@@ -194,14 +194,14 @@ func startDirectRoute(cmd *cobra.Command, route storedRouteTemplate, sourceServe
 	sourceCfg := *baseCfg
 	if strings.TrimSpace(plan.Source.ControlEndpoint) != "" {
 		sourceCfg.ServerURL = strings.TrimSpace(plan.Source.ControlEndpoint)
-	} else if strings.TrimSpace(sourceServer) != "" {
-		sourceCfg.ServerURL = strings.TrimSpace(sourceServer)
+	} else if strings.TrimSpace(opts.SourceServer) != "" {
+		sourceCfg.ServerURL = strings.TrimSpace(opts.SourceServer)
 	}
 	destCfg := sourceCfg
 	if strings.TrimSpace(plan.Destination.ControlEndpoint) != "" {
 		destCfg.ServerURL = strings.TrimSpace(plan.Destination.ControlEndpoint)
-	} else if strings.TrimSpace(destinationServer) != "" {
-		destCfg.ServerURL = strings.TrimSpace(destinationServer)
+	} else if strings.TrimSpace(opts.DestinationServer) != "" {
+		destCfg.ServerURL = strings.TrimSpace(opts.DestinationServer)
 	}
 	sourceClient := gclient.NewClient(sourceCfg)
 	if err := sourceClient.Initialize(cmd.Context(), util.RouteForceRemote); err != nil {
@@ -259,14 +259,45 @@ func startDirectRoute(cmd *cobra.Command, route storedRouteTemplate, sourceServe
 	if err != nil {
 		return nil, err
 	}
-	for job.GetState() == pb.RuntimeState_RUNTIME_STATE_RUNNING || job.GetState() == pb.RuntimeState_RUNTIME_STATE_PREPARING {
-		time.Sleep(250 * time.Millisecond)
-		job, err = sourceRouted.GetTransferJob(cmd.Context(), jobID)
+	return monitorRoutedTransferJob(cmd, sourceRouted, job, opts)
+}
+
+func monitorRoutedTransferJob(cmd *cobra.Command, routed gclient.RoutedTransferAPI, job *pb.TransferJob, opts CopyOptions) (*pb.TransferJob, error) {
+	if job == nil {
+		return nil, fmt.Errorf("transfer job was not returned by source groverd")
+	}
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "transfer_job: %s\n", job.GetJobId())
+	fmt.Fprintf(out, "state: %s\n", job.GetState().String())
+	if opts.uiMode() == "live" {
+		printTransferJobStatus(out, job)
+	}
+	interval := opts.uiInterval()
+	if interval <= 0 {
+		interval = time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for isActiveTransferState(job.GetState()) {
+		select {
+		case <-cmd.Context().Done():
+			return nil, cmd.Context().Err()
+		case <-ticker.C:
+		}
+		next, err := routed.GetTransferJob(cmd.Context(), job.GetJobId())
 		if err != nil {
 			return nil, err
 		}
+		job = next
+		if opts.uiMode() == "live" {
+			printTransferJobStatus(out, job)
+		}
 	}
 	return job, nil
+}
+
+func isActiveTransferState(state pb.RuntimeState) bool {
+	return state == pb.RuntimeState_RUNTIME_STATE_RUNNING || state == pb.RuntimeState_RUNTIME_STATE_PREPARING
 }
 
 func materializeRelayForwards(cmd *cobra.Command, routeID string, jobID string, protocol pb.DataProtocol, relays []TransferRelayHop, dest *pb.TransferEndpoint) (func(), error) {

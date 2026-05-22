@@ -250,6 +250,12 @@ func TestUDPJobStartPacketRoundTrip(t *testing.T) {
 	if !isUDPJobReadyPacket(encodeUDPJobReadyPacket(42), 42) {
 		t.Fatal("ready packet did not validate")
 	}
+	if !isUDPJobDonePacket(encodeUDPJobDonePacket(42), 42) {
+		t.Fatal("done packet did not validate")
+	}
+	if isUDPJobDonePacket(encodeUDPJobReadyPacket(42), 42) {
+		t.Fatal("ready packet validated as done")
+	}
 }
 
 func TestTransferJobManagerTCPViaRelayForward(t *testing.T) {

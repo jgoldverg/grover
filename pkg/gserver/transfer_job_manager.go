@@ -33,6 +33,7 @@ var udpJobMagic = []byte("GROVERJOBUDP2")
 const (
 	udpJobPacketStart byte = 1
 	udpJobPacketReady byte = 2
+	udpJobPacketDone  byte = 3
 )
 
 type TransferEndpointRegistry interface {
@@ -749,7 +750,7 @@ func sendFileToUDPDestination(ctx context.Context, exec *TransferExecutionContex
 		return err
 	}
 	if plan.Size == 0 {
-		return nil
+		return waitUDPJobDone(ctx, conn, sessionKey)
 	}
 	if len(streamIDs) == 1 {
 		n, err := udpdataplane.Send(ctx, udpdataplane.SendConfig{
@@ -761,14 +762,20 @@ func sendFileToUDPDestination(ctx context.Context, exec *TransferExecutionContex
 			FlowControl:     "fixed",
 			WindowPackets:   udpWindowPackets(exec),
 			BatchPackets:    udpBatchPackets(exec),
-			RequireFinalAck: true,
+			RequireFinalAck: false,
 		}, src)
 		if n > 0 && exec.OnProgress != nil {
 			exec.OnProgress(plan.SourcePath, int(n))
 		}
+		if err != nil {
+			return err
+		}
+		return waitUDPJobDone(ctx, conn, sessionKey)
+	}
+	if err := sendFileToUDPDestinationParallel(ctx, exec, plan, sessionKey, streamIDs); err != nil {
 		return err
 	}
-	return sendFileToUDPDestinationParallel(ctx, exec, plan, sessionKey, streamIDs)
+	return waitUDPJobDone(ctx, conn, sessionKey)
 }
 
 func sendFileToUDPDestinationParallel(ctx context.Context, exec *TransferExecutionContext, plan TransferFilePlan, sessionKey uint32, streamIDs []uint32) error {
@@ -809,7 +816,7 @@ func sendFileToUDPDestinationParallel(ctx context.Context, exec *TransferExecuti
 				FlowControl:     "fixed",
 				WindowPackets:   udpWindowPackets(exec),
 				BatchPackets:    udpBatchPackets(exec),
-				RequireFinalAck: true,
+				RequireFinalAck: false,
 			}, sr)
 			if n > 0 && exec.OnProgress != nil {
 				exec.OnProgress(plan.SourcePath, int(n))
@@ -947,21 +954,37 @@ func decodeUDPJobStartPacket(packet []byte) (udpJobStartPacket, bool, error) {
 }
 
 func encodeUDPJobReadyPacket(sessionKey uint32) []byte {
+	return encodeUDPJobControlPacket(udpJobPacketReady, sessionKey)
+}
+
+func encodeUDPJobDonePacket(sessionKey uint32) []byte {
+	return encodeUDPJobControlPacket(udpJobPacketDone, sessionKey)
+}
+
+func encodeUDPJobControlPacket(kind byte, sessionKey uint32) []byte {
 	packet := make([]byte, len(udpJobMagic)+1+4)
 	copy(packet, udpJobMagic)
 	pos := len(udpJobMagic)
-	packet[pos] = udpJobPacketReady
+	packet[pos] = kind
 	pos++
 	binary.BigEndian.PutUint32(packet[pos:pos+4], sessionKey)
 	return packet
 }
 
 func isUDPJobReadyPacket(packet []byte, sessionKey uint32) bool {
+	return isUDPJobControlPacket(packet, udpJobPacketReady, sessionKey)
+}
+
+func isUDPJobDonePacket(packet []byte, sessionKey uint32) bool {
+	return isUDPJobControlPacket(packet, udpJobPacketDone, sessionKey)
+}
+
+func isUDPJobControlPacket(packet []byte, kind byte, sessionKey uint32) bool {
 	if len(packet) != len(udpJobMagic)+1+4 || string(packet[:len(udpJobMagic)]) != string(udpJobMagic) {
 		return false
 	}
 	pos := len(udpJobMagic)
-	if packet[pos] != udpJobPacketReady {
+	if packet[pos] != kind {
 		return false
 	}
 	pos++
@@ -1002,6 +1025,37 @@ func sendUDPJobStartAndWait(ctx context.Context, conn *net.UDPConn, relPath stri
 		}
 	}
 	return fmt.Errorf("timed out waiting for udp transfer endpoint to accept %s", relPath)
+}
+
+func waitUDPJobDone(ctx context.Context, conn *net.UDPConn, sessionKey uint32) error {
+	deadline := time.Now().Add(5 * time.Second)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	defer conn.SetReadDeadline(time.Time{})
+	buf := make([]byte, 64*1024)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
+			return err
+		}
+		n, err := conn.Read(buf)
+		if err == nil {
+			if isUDPJobDonePacket(buf[:n], sessionKey) {
+				return nil
+			}
+			continue
+		}
+		if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			if time.Now().After(deadline) {
+				return fmt.Errorf("timed out waiting for udp transfer completion acknowledgement")
+			}
+			continue
+		}
+		return err
+	}
 }
 
 func writeUDPDatagram(conn *net.UDPConn, packet []byte) error {
@@ -1175,7 +1229,11 @@ func receiveUDPJobFile(ctx context.Context, conn *net.UDPConn, root string, remo
 	go repeatUDPReady(conn, remote, start.sessionKey, readyDone)
 	defer close(readyDone)
 	if start.size == 0 {
-		return f.Sync()
+		if err := f.Sync(); err != nil {
+			return err
+		}
+		sendUDPJobDoneBurst(conn, remote, start.sessionKey)
+		return nil
 	}
 	cfg := udpdataplane.ReceiveConfig{
 		Transport:       udpdataplane.NewUDPConnTransport(conn),
@@ -1199,7 +1257,11 @@ func receiveUDPJobFile(ctx context.Context, conn *net.UDPConn, root string, remo
 	if receiveErr != nil {
 		return receiveErr
 	}
-	return f.Sync()
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	sendUDPJobDoneBurst(conn, remote, start.sessionKey)
+	return nil
 }
 
 func repeatUDPReady(conn *net.UDPConn, remote *net.UDPAddr, sessionKey uint32, done <-chan struct{}) {
@@ -1213,6 +1275,14 @@ func repeatUDPReady(conn *net.UDPConn, remote *net.UDPAddr, sessionKey uint32, d
 			return
 		case <-ticker.C:
 		}
+	}
+}
+
+func sendUDPJobDoneBurst(conn *net.UDPConn, remote *net.UDPAddr, sessionKey uint32) {
+	packet := encodeUDPJobDonePacket(sessionKey)
+	for i := 0; i < 20; i++ {
+		_, _ = conn.WriteToUDP(packet, remote)
+		time.Sleep(25 * time.Millisecond)
 	}
 }
 
