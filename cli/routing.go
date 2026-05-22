@@ -9,7 +9,7 @@ import (
 
 func resolveRoutePolicy(cmd *cobra.Command, defaultRoute string) util.RoutePolicy {
 	route := defaultRoute
-	if flag := cmd.Flag("via"); flag != nil {
+	if flag := cmd.Flag("execution"); flag != nil {
 		if v := strings.TrimSpace(flag.Value.String()); v != "" {
 			route = v
 		}

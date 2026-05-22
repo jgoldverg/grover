@@ -11,27 +11,31 @@ import (
 )
 
 const (
-	defaultReadTimeout   = 2 * time.Second
-	defaultWriteTimeout  = 2 * time.Second
-	maxAckRetries        = 5
-	enobufsRetryInterval = 5 * time.Millisecond
-	defaultAckPollEvery  = 64
+	defaultReadTimeout           = 2 * time.Second
+	defaultWriteTimeout          = 2 * time.Second
+	maxAckRetries                = 5
+	enobufsRetryInterval         = 5 * time.Millisecond
+	defaultAckPollEvery          = 64
+	defaultDataBatchSize         = 64
+	defaultFastRetransmitPackets = 32
 )
 
 // SendConfig captures the parameters needed to transmit data over UDP.
 type SendConfig struct {
-	Transport       Transport
-	RemoteAddr      *net.UDPAddr
-	SessionID       string
-	SessionKey      uint32
-	StreamID        uint32
-	BaseOffset      uint64
-	MTU             int
-	Collector       *metrics.TransferCollector
-	FlowControl     string
-	WindowPackets   int
-	WindowBytes     int
-	RequireFinalAck bool
+	Transport             Transport
+	RemoteAddr            *net.UDPAddr
+	SessionID             string
+	SessionKey            uint32
+	StreamID              uint32
+	BaseOffset            uint64
+	MTU                   int
+	Collector             *metrics.TransferCollector
+	FlowControl           string
+	WindowPackets         int
+	WindowBytes           int
+	BatchPackets          int
+	FastRetransmitPackets int
+	RequireFinalAck       bool
 }
 
 // ReceiveConfig controls how UDP payloads are ingested.
@@ -47,6 +51,7 @@ type ReceiveConfig struct {
 	ExpectedSize    uint64
 	AckEveryPackets int
 	AckEvery        time.Duration
+	BatchPackets    int
 	// OnRemoteAddr is called the first time we learn the peer address (for unconnected sockets).
 	OnRemoteAddr func(*net.UDPAddr)
 }
@@ -65,6 +70,20 @@ func Send(ctx context.Context, cfg SendConfig, src io.Reader) (uint64, error) {
 		return 0, errors.New("no UDP sender configured")
 	}
 	return DefaultSender.Send(ctx, cfg, src)
+}
+
+func batchPacketCount(n int) int {
+	if n <= 0 {
+		return defaultDataBatchSize
+	}
+	return n
+}
+
+func fastRetransmitPacketCount(n int) int {
+	if n <= 0 {
+		return defaultFastRetransmitPackets
+	}
+	return n
 }
 
 func recordSendMetric(col *metrics.TransferCollector, bytes int, retrans bool) {

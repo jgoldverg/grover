@@ -45,12 +45,14 @@ func (s *BBRSender) Send(ctx context.Context, cfg SendConfig, src io.Reader) (ui
 	payloadSize := payloadSizeFromMTU(cfg.MTU)
 	ackBuf := make([]byte, udpwire.StatusHeaderLen+udpwire.MaxSackRanges*udpwire.SackBlockLen)
 	var ackPkt udpwire.StatusPacket
+	fastRetransmitPackets := fastRetransmitPacketCount(cfg.FastRetransmitPackets)
 
 	var (
 		seq           uint32
 		offset        uint64
 		pending       = make([]pendingPacket, 0, 1024)
-		batch         = make([]pendingPacket, 0, defaultAckPollEvery)
+		batchMax      = batchPacketCount(cfg.BatchPackets)
+		batch         = make([]pendingPacket, 0, batchMax)
 		bytesInflight int64
 		batchBytes    int64
 		sentSincePoll int
@@ -102,7 +104,7 @@ func (s *BBRSender) Send(ctx context.Context, cfg SendConfig, src io.Reader) (ui
 			if err := flushBatch(); err != nil {
 				return offset, err
 			}
-			acked, err := drainStatusPackets(ctx, cfg.Transport, &sendRemote, cfg.StreamID, ackBuf, &ackPkt, &pending, cfg.Collector, s.ackTimeout(), false, s.observeAck)
+			acked, err := drainStatusPackets(ctx, cfg.Transport, &sendRemote, cfg.StreamID, ackBuf, &ackPkt, &pending, cfg.Collector, s.ackTimeout(), false, fastRetransmitPackets, s.observeAck)
 			if err != nil {
 				return offset, err
 			}
@@ -137,7 +139,7 @@ func (s *BBRSender) Send(ctx context.Context, cfg SendConfig, src io.Reader) (ui
 				if err := flushBatch(); err != nil {
 					return offset, err
 				}
-				acked, err := drainStatusPackets(ctx, cfg.Transport, &sendRemote, cfg.StreamID, ackBuf, &ackPkt, &pending, cfg.Collector, 0, true, s.observeAck)
+				acked, err := drainStatusPackets(ctx, cfg.Transport, &sendRemote, cfg.StreamID, ackBuf, &ackPkt, &pending, cfg.Collector, 0, true, fastRetransmitPackets, s.observeAck)
 				if err != nil {
 					return offset, err
 				}
@@ -148,7 +150,7 @@ func (s *BBRSender) Send(ctx context.Context, cfg SendConfig, src io.Reader) (ui
 					}
 				}
 			}
-			if len(batch) >= defaultAckPollEvery {
+			if len(batch) >= batchMax {
 				if err := flushBatch(); err != nil {
 					return offset, err
 				}
@@ -166,7 +168,7 @@ func (s *BBRSender) Send(ctx context.Context, cfg SendConfig, src io.Reader) (ui
 		return offset, err
 	}
 	for len(pending) > 0 {
-		acked, err := drainStatusPackets(ctx, cfg.Transport, &sendRemote, cfg.StreamID, ackBuf, &ackPkt, &pending, cfg.Collector, s.ackTimeout(), false, s.observeAck)
+		acked, err := drainStatusPackets(ctx, cfg.Transport, &sendRemote, cfg.StreamID, ackBuf, &ackPkt, &pending, cfg.Collector, s.ackTimeout(), false, fastRetransmitPackets, s.observeAck)
 		if err != nil {
 			if !cfg.RequireFinalAck {
 				return offset, nil

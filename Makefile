@@ -13,9 +13,7 @@ SERVER_BIN := $(BIN_DIR)/groverd
 CLIENT_BIN := $(BIN_DIR)/grover
 
 ## Proto files (flat layout)
-PROTO_FILES := \
-  $(PROTO_SRC)/grover.proto \
-  $(PROTO_SRC)/grover_udp.proto
+PROTO_FILES := $(PROTO_SRC)/grover.proto
 
 ## Discover module path for protoc-gen-go (trims output dirs correctly)
 MODULE := $(shell go list -m)
@@ -25,9 +23,11 @@ LDFLAGS := -s -w
 GOFLAGS :=
 BUILD_TAGS :=
 
-.PHONY: all proto server client clean test fmt vet tools proto-clean
+.PHONY: all proto generate server client clean test fmt vet tools proto-clean
 
-all: proto server client
+all: server client
+
+generate: proto
 
 tools:
 	@command -v protoc >/dev/null 2>&1 || { echo "Error: protoc not found. Install protoc first."; exit 1; }
@@ -77,7 +77,7 @@ proto-clean:
 	find $(PB_OUT) -name '*.pb.go' -type f -delete
 	@echo "Proto clean complete."
 
-clean: proto-clean
+clean:
 	@echo "Cleaning binaries..."
-	rm -rf $(BIN_DIR)
+	rm -f $(SERVER_BIN) $(CLIENT_BIN)
 	@echo "Clean complete."

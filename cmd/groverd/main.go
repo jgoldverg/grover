@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"flag"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -11,6 +11,7 @@ import (
 
 	"github.com/jgoldverg/grover/internal"
 	gs "github.com/jgoldverg/grover/pkg/gserver"
+	"github.com/spf13/pflag"
 )
 
 func main() {
@@ -24,29 +25,47 @@ func main() {
 		logLevel        string
 		certFile        string
 		keyFile         string
+		dataBindHost    string
+		dataAdvertise   string
+		dataPortMin     int
+		dataPortMax     int
 		udpMTU          int
 		udpWindow       int
 		udpAckPackets   int
 		udpAckMs        int
+		udpBatchPackets int
 		udpReadBuffer   int
 		udpWriteBuffer  int
 	)
-	flag.StringVar(&configPath, "config", "", "Path to server config file (TOML)")
-	flag.StringVar(&serverConfig, "server-config", "", "Path to server config file (TOML)")
-	flag.IntVar(&port, "port", 0, "gRPC control-plane listen port")
-	flag.StringVar(&protocol, "protocol", "", "Transfer data-plane protocol (udp|tcp)")
-	flag.BoolVar(&insecureControl, "insecure-control", false, "Start gRPC control-plane without TLS")
-	flag.StringVar(&credentialsFile, "credentials-file", "", "Path to credential store file")
-	flag.StringVar(&logLevel, "log-level", "", "Log level")
-	flag.StringVar(&certFile, "server-cert", "", "Path to TLS certificate PEM")
-	flag.StringVar(&keyFile, "server-key", "", "Path to TLS private key PEM")
-	flag.IntVar(&udpMTU, "udp-mtu", 0, "UDP datagram MTU for server-sent transfers")
-	flag.IntVar(&udpWindow, "udp-window-packets", 0, "UDP max in-flight packets per stream for server-sent transfers")
-	flag.IntVar(&udpAckPackets, "udp-ack-every-packets", 0, "UDP ACK every N packets for server receive path")
-	flag.IntVar(&udpAckMs, "udp-ack-every-ms", 0, "UDP ACK interval in milliseconds for server receive path")
-	flag.IntVar(&udpReadBuffer, "udp-read-buffer", 0, "UDP socket read buffer bytes")
-	flag.IntVar(&udpWriteBuffer, "udp-write-buffer", 0, "UDP socket write buffer bytes")
-	flag.Parse()
+	flags := pflag.NewFlagSet("groverd", pflag.ContinueOnError)
+	flags.SortFlags = false
+	flags.SetOutput(os.Stderr)
+	flags.StringVar(&configPath, "config", "", "Path to server config file (TOML)")
+	flags.StringVar(&serverConfig, "server-config", "", "Path to server config file (TOML)")
+	flags.IntVar(&port, "port", 0, "gRPC control-plane listen port")
+	flags.StringVar(&protocol, "protocol", "", "Transfer data-plane protocol (udp|tcp)")
+	flags.BoolVar(&insecureControl, "insecure-control", false, "Start gRPC control-plane without TLS")
+	flags.StringVar(&credentialsFile, "credentials-file", "", "Path to credential store file")
+	flags.StringVar(&logLevel, "log-level", "", "Log level")
+	flags.StringVar(&certFile, "server-cert", "", "Path to TLS certificate PEM")
+	flags.StringVar(&keyFile, "server-key", "", "Path to TLS private key PEM")
+	flags.StringVar(&dataBindHost, "data-bind-host", "", "Data-plane bind host")
+	flags.StringVar(&dataAdvertise, "data-advertise-host", "", "Data-plane advertised host")
+	flags.IntVar(&dataPortMin, "data-port-min", 0, "Minimum server-allocated data-plane port (0 uses OS ephemeral ports)")
+	flags.IntVar(&dataPortMax, "data-port-max", 0, "Maximum server-allocated data-plane port (0 uses OS ephemeral ports)")
+	flags.IntVar(&udpMTU, "udp-mtu", 0, "UDP datagram MTU for server-sent transfers")
+	flags.IntVar(&udpWindow, "udp-window-packets", 0, "UDP max in-flight packets per stream for server-sent transfers")
+	flags.IntVar(&udpAckPackets, "udp-ack-every-packets", 0, "UDP ACK every N packets for server receive path")
+	flags.IntVar(&udpAckMs, "udp-ack-every-ms", 0, "UDP ACK interval in milliseconds for server receive path")
+	flags.IntVar(&udpBatchPackets, "udp-batch-packets", 0, "UDP packets per kernel batch call")
+	flags.IntVar(&udpReadBuffer, "udp-read-buffer", 0, "UDP socket read buffer bytes")
+	flags.IntVar(&udpWriteBuffer, "udp-write-buffer", 0, "UDP socket write buffer bytes")
+	if err := flags.Parse(os.Args[1:]); err != nil {
+		if errors.Is(err, pflag.ErrHelp) {
+			os.Exit(0)
+		}
+		os.Exit(2)
+	}
 	if strings.TrimSpace(serverConfig) != "" {
 		configPath = serverConfig
 	}
@@ -92,6 +111,18 @@ func main() {
 	if strings.TrimSpace(keyFile) != "" {
 		cfg.ServerKeyPath = keyFile
 	}
+	if strings.TrimSpace(dataBindHost) != "" {
+		cfg.DataBindHost = dataBindHost
+	}
+	if strings.TrimSpace(dataAdvertise) != "" {
+		cfg.DataAdvertiseHost = dataAdvertise
+	}
+	if dataPortMin != 0 {
+		cfg.DataPortMin = dataPortMin
+	}
+	if dataPortMax != 0 {
+		cfg.DataPortMax = dataPortMax
+	}
 	if udpMTU > 0 {
 		cfg.UDPMTUSize = udpMTU
 	}
@@ -103,6 +134,9 @@ func main() {
 	}
 	if udpAckMs > 0 {
 		cfg.UDPAckEveryMs = udpAckMs
+	}
+	if udpBatchPackets > 0 {
+		cfg.UDPBatchPackets = udpBatchPackets
 	}
 	if udpReadBuffer > 0 {
 		cfg.UDPReadBufferSize = udpReadBuffer

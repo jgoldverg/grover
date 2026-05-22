@@ -21,6 +21,168 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type DataProtocol int32
+
+const (
+	DataProtocol_DATA_PROTOCOL_UNSPECIFIED DataProtocol = 0
+	DataProtocol_DATA_PROTOCOL_TCP         DataProtocol = 1
+	DataProtocol_DATA_PROTOCOL_UDP         DataProtocol = 2
+)
+
+// Enum value maps for DataProtocol.
+var (
+	DataProtocol_name = map[int32]string{
+		0: "DATA_PROTOCOL_UNSPECIFIED",
+		1: "DATA_PROTOCOL_TCP",
+		2: "DATA_PROTOCOL_UDP",
+	}
+	DataProtocol_value = map[string]int32{
+		"DATA_PROTOCOL_UNSPECIFIED": 0,
+		"DATA_PROTOCOL_TCP":         1,
+		"DATA_PROTOCOL_UDP":         2,
+	}
+)
+
+func (x DataProtocol) Enum() *DataProtocol {
+	p := new(DataProtocol)
+	*p = x
+	return p
+}
+
+func (x DataProtocol) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (DataProtocol) Descriptor() protoreflect.EnumDescriptor {
+	return file_grover_proto_enumTypes[0].Descriptor()
+}
+
+func (DataProtocol) Type() protoreflect.EnumType {
+	return &file_grover_proto_enumTypes[0]
+}
+
+func (x DataProtocol) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use DataProtocol.Descriptor instead.
+func (DataProtocol) EnumDescriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{0}
+}
+
+type RuntimeState int32
+
+const (
+	RuntimeState_RUNTIME_STATE_UNSPECIFIED RuntimeState = 0
+	RuntimeState_RUNTIME_STATE_PREPARING   RuntimeState = 1
+	RuntimeState_RUNTIME_STATE_READY       RuntimeState = 2
+	RuntimeState_RUNTIME_STATE_RUNNING     RuntimeState = 3
+	RuntimeState_RUNTIME_STATE_DONE        RuntimeState = 4
+	RuntimeState_RUNTIME_STATE_ABORTED     RuntimeState = 5
+	RuntimeState_RUNTIME_STATE_FAILED      RuntimeState = 6
+	RuntimeState_RUNTIME_STATE_EXPIRED     RuntimeState = 7
+)
+
+// Enum value maps for RuntimeState.
+var (
+	RuntimeState_name = map[int32]string{
+		0: "RUNTIME_STATE_UNSPECIFIED",
+		1: "RUNTIME_STATE_PREPARING",
+		2: "RUNTIME_STATE_READY",
+		3: "RUNTIME_STATE_RUNNING",
+		4: "RUNTIME_STATE_DONE",
+		5: "RUNTIME_STATE_ABORTED",
+		6: "RUNTIME_STATE_FAILED",
+		7: "RUNTIME_STATE_EXPIRED",
+	}
+	RuntimeState_value = map[string]int32{
+		"RUNTIME_STATE_UNSPECIFIED": 0,
+		"RUNTIME_STATE_PREPARING":   1,
+		"RUNTIME_STATE_READY":       2,
+		"RUNTIME_STATE_RUNNING":     3,
+		"RUNTIME_STATE_DONE":        4,
+		"RUNTIME_STATE_ABORTED":     5,
+		"RUNTIME_STATE_FAILED":      6,
+		"RUNTIME_STATE_EXPIRED":     7,
+	}
+)
+
+func (x RuntimeState) Enum() *RuntimeState {
+	p := new(RuntimeState)
+	*p = x
+	return p
+}
+
+func (x RuntimeState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (RuntimeState) Descriptor() protoreflect.EnumDescriptor {
+	return file_grover_proto_enumTypes[1].Descriptor()
+}
+
+func (RuntimeState) Type() protoreflect.EnumType {
+	return &file_grover_proto_enumTypes[1]
+}
+
+func (x RuntimeState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use RuntimeState.Descriptor instead.
+func (RuntimeState) EnumDescriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{1}
+}
+
+type TransferEndpointRole int32
+
+const (
+	TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_UNSPECIFIED TransferEndpointRole = 0
+	TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_SOURCE      TransferEndpointRole = 1
+	TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_DESTINATION TransferEndpointRole = 2
+)
+
+// Enum value maps for TransferEndpointRole.
+var (
+	TransferEndpointRole_name = map[int32]string{
+		0: "TRANSFER_ENDPOINT_ROLE_UNSPECIFIED",
+		1: "TRANSFER_ENDPOINT_ROLE_SOURCE",
+		2: "TRANSFER_ENDPOINT_ROLE_DESTINATION",
+	}
+	TransferEndpointRole_value = map[string]int32{
+		"TRANSFER_ENDPOINT_ROLE_UNSPECIFIED": 0,
+		"TRANSFER_ENDPOINT_ROLE_SOURCE":      1,
+		"TRANSFER_ENDPOINT_ROLE_DESTINATION": 2,
+	}
+)
+
+func (x TransferEndpointRole) Enum() *TransferEndpointRole {
+	p := new(TransferEndpointRole)
+	*p = x
+	return p
+}
+
+func (x TransferEndpointRole) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (TransferEndpointRole) Descriptor() protoreflect.EnumDescriptor {
+	return file_grover_proto_enumTypes[2].Descriptor()
+}
+
+func (TransferEndpointRole) Type() protoreflect.EnumType {
+	return &file_grover_proto_enumTypes[2]
+}
+
+func (x TransferEndpointRole) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use TransferEndpointRole.Descriptor instead.
+func (TransferEndpointRole) EnumDescriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{2}
+}
+
 type EndpointType int32
 
 const (
@@ -54,11 +216,11 @@ func (x EndpointType) String() string {
 }
 
 func (EndpointType) Descriptor() protoreflect.EnumDescriptor {
-	return file_grover_proto_enumTypes[0].Descriptor()
+	return file_grover_proto_enumTypes[3].Descriptor()
 }
 
 func (EndpointType) Type() protoreflect.EnumType {
-	return &file_grover_proto_enumTypes[0]
+	return &file_grover_proto_enumTypes[3]
 }
 
 func (x EndpointType) Number() protoreflect.EnumNumber {
@@ -67,7 +229,7 @@ func (x EndpointType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use EndpointType.Descriptor instead.
 func (EndpointType) EnumDescriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{0}
+	return file_grover_proto_rawDescGZIP(), []int{3}
 }
 
 type CredentialType int32
@@ -103,11 +265,11 @@ func (x CredentialType) String() string {
 }
 
 func (CredentialType) Descriptor() protoreflect.EnumDescriptor {
-	return file_grover_proto_enumTypes[1].Descriptor()
+	return file_grover_proto_enumTypes[4].Descriptor()
 }
 
 func (CredentialType) Type() protoreflect.EnumType {
-	return &file_grover_proto_enumTypes[1]
+	return &file_grover_proto_enumTypes[4]
 }
 
 func (x CredentialType) Number() protoreflect.EnumNumber {
@@ -116,7 +278,1951 @@ func (x CredentialType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use CredentialType.Descriptor instead.
 func (CredentialType) EnumDescriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{4}
+}
+
+type DataEndpoint struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Host          string                 `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"`
+	Port          uint32                 `protobuf:"varint,2,opt,name=port,proto3" json:"port,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DataEndpoint) Reset() {
+	*x = DataEndpoint{}
+	mi := &file_grover_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DataEndpoint) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DataEndpoint) ProtoMessage() {}
+
+func (x *DataEndpoint) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DataEndpoint.ProtoReflect.Descriptor instead.
+func (*DataEndpoint) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *DataEndpoint) GetHost() string {
+	if x != nil {
+		return x.Host
+	}
+	return ""
+}
+
+func (x *DataEndpoint) GetPort() uint32 {
+	if x != nil {
+		return x.Port
+	}
+	return 0
+}
+
+type StatsSnapshot struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	IngressBytes         uint64                 `protobuf:"varint,1,opt,name=ingress_bytes,json=ingressBytes,proto3" json:"ingress_bytes,omitempty"`
+	EgressBytes          uint64                 `protobuf:"varint,2,opt,name=egress_bytes,json=egressBytes,proto3" json:"egress_bytes,omitempty"`
+	Packets              uint64                 `protobuf:"varint,3,opt,name=packets,proto3" json:"packets,omitempty"`
+	CurrentThroughputBps float64                `protobuf:"fixed64,4,opt,name=current_throughput_bps,json=currentThroughputBps,proto3" json:"current_throughput_bps,omitempty"`
+	AverageThroughputBps float64                `protobuf:"fixed64,5,opt,name=average_throughput_bps,json=averageThroughputBps,proto3" json:"average_throughput_bps,omitempty"`
+	ActiveConnections    uint32                 `protobuf:"varint,6,opt,name=active_connections,json=activeConnections,proto3" json:"active_connections,omitempty"`
+	ActiveStreams        uint32                 `protobuf:"varint,7,opt,name=active_streams,json=activeStreams,proto3" json:"active_streams,omitempty"`
+	Errors               uint64                 `protobuf:"varint,8,opt,name=errors,proto3" json:"errors,omitempty"`
+	Drops                uint64                 `protobuf:"varint,9,opt,name=drops,proto3" json:"drops,omitempty"`
+	LatencyMs            float64                `protobuf:"fixed64,10,opt,name=latency_ms,json=latencyMs,proto3" json:"latency_ms,omitempty"`
+	SampledAtUnixNano    int64                  `protobuf:"varint,11,opt,name=sampled_at_unix_nano,json=sampledAtUnixNano,proto3" json:"sampled_at_unix_nano,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *StatsSnapshot) Reset() {
+	*x = StatsSnapshot{}
+	mi := &file_grover_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StatsSnapshot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StatsSnapshot) ProtoMessage() {}
+
+func (x *StatsSnapshot) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StatsSnapshot.ProtoReflect.Descriptor instead.
+func (*StatsSnapshot) Descriptor() ([]byte, []int) {
 	return file_grover_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *StatsSnapshot) GetIngressBytes() uint64 {
+	if x != nil {
+		return x.IngressBytes
+	}
+	return 0
+}
+
+func (x *StatsSnapshot) GetEgressBytes() uint64 {
+	if x != nil {
+		return x.EgressBytes
+	}
+	return 0
+}
+
+func (x *StatsSnapshot) GetPackets() uint64 {
+	if x != nil {
+		return x.Packets
+	}
+	return 0
+}
+
+func (x *StatsSnapshot) GetCurrentThroughputBps() float64 {
+	if x != nil {
+		return x.CurrentThroughputBps
+	}
+	return 0
+}
+
+func (x *StatsSnapshot) GetAverageThroughputBps() float64 {
+	if x != nil {
+		return x.AverageThroughputBps
+	}
+	return 0
+}
+
+func (x *StatsSnapshot) GetActiveConnections() uint32 {
+	if x != nil {
+		return x.ActiveConnections
+	}
+	return 0
+}
+
+func (x *StatsSnapshot) GetActiveStreams() uint32 {
+	if x != nil {
+		return x.ActiveStreams
+	}
+	return 0
+}
+
+func (x *StatsSnapshot) GetErrors() uint64 {
+	if x != nil {
+		return x.Errors
+	}
+	return 0
+}
+
+func (x *StatsSnapshot) GetDrops() uint64 {
+	if x != nil {
+		return x.Drops
+	}
+	return 0
+}
+
+func (x *StatsSnapshot) GetLatencyMs() float64 {
+	if x != nil {
+		return x.LatencyMs
+	}
+	return 0
+}
+
+func (x *StatsSnapshot) GetSampledAtUnixNano() int64 {
+	if x != nil {
+		return x.SampledAtUnixNano
+	}
+	return 0
+}
+
+type ForwardSession struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ForwardId     string                 `protobuf:"bytes,1,opt,name=forward_id,json=forwardId,proto3" json:"forward_id,omitempty"`
+	RouteId       string                 `protobuf:"bytes,2,opt,name=route_id,json=routeId,proto3" json:"route_id,omitempty"`
+	JobId         string                 `protobuf:"bytes,3,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	HopIndex      uint32                 `protobuf:"varint,4,opt,name=hop_index,json=hopIndex,proto3" json:"hop_index,omitempty"`
+	Protocol      DataProtocol           `protobuf:"varint,5,opt,name=protocol,proto3,enum=grover.v1.DataProtocol" json:"protocol,omitempty"`
+	Ingress       *DataEndpoint          `protobuf:"bytes,6,opt,name=ingress,proto3" json:"ingress,omitempty"`
+	Egress        *DataEndpoint          `protobuf:"bytes,7,opt,name=egress,proto3" json:"egress,omitempty"`
+	State         RuntimeState           `protobuf:"varint,8,opt,name=state,proto3,enum=grover.v1.RuntimeState" json:"state,omitempty"`
+	TtlSeconds    uint32                 `protobuf:"varint,9,opt,name=ttl_seconds,json=ttlSeconds,proto3" json:"ttl_seconds,omitempty"`
+	ExpiresAtUnix int64                  `protobuf:"varint,10,opt,name=expires_at_unix,json=expiresAtUnix,proto3" json:"expires_at_unix,omitempty"`
+	Stats         *StatsSnapshot         `protobuf:"bytes,11,opt,name=stats,proto3" json:"stats,omitempty"`
+	ErrorMessage  string                 `protobuf:"bytes,12,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ForwardSession) Reset() {
+	*x = ForwardSession{}
+	mi := &file_grover_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ForwardSession) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ForwardSession) ProtoMessage() {}
+
+func (x *ForwardSession) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ForwardSession.ProtoReflect.Descriptor instead.
+func (*ForwardSession) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ForwardSession) GetForwardId() string {
+	if x != nil {
+		return x.ForwardId
+	}
+	return ""
+}
+
+func (x *ForwardSession) GetRouteId() string {
+	if x != nil {
+		return x.RouteId
+	}
+	return ""
+}
+
+func (x *ForwardSession) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *ForwardSession) GetHopIndex() uint32 {
+	if x != nil {
+		return x.HopIndex
+	}
+	return 0
+}
+
+func (x *ForwardSession) GetProtocol() DataProtocol {
+	if x != nil {
+		return x.Protocol
+	}
+	return DataProtocol_DATA_PROTOCOL_UNSPECIFIED
+}
+
+func (x *ForwardSession) GetIngress() *DataEndpoint {
+	if x != nil {
+		return x.Ingress
+	}
+	return nil
+}
+
+func (x *ForwardSession) GetEgress() *DataEndpoint {
+	if x != nil {
+		return x.Egress
+	}
+	return nil
+}
+
+func (x *ForwardSession) GetState() RuntimeState {
+	if x != nil {
+		return x.State
+	}
+	return RuntimeState_RUNTIME_STATE_UNSPECIFIED
+}
+
+func (x *ForwardSession) GetTtlSeconds() uint32 {
+	if x != nil {
+		return x.TtlSeconds
+	}
+	return 0
+}
+
+func (x *ForwardSession) GetExpiresAtUnix() int64 {
+	if x != nil {
+		return x.ExpiresAtUnix
+	}
+	return 0
+}
+
+func (x *ForwardSession) GetStats() *StatsSnapshot {
+	if x != nil {
+		return x.Stats
+	}
+	return nil
+}
+
+func (x *ForwardSession) GetErrorMessage() string {
+	if x != nil {
+		return x.ErrorMessage
+	}
+	return ""
+}
+
+type CreateForwardRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RouteId       string                 `protobuf:"bytes,1,opt,name=route_id,json=routeId,proto3" json:"route_id,omitempty"`
+	JobId         string                 `protobuf:"bytes,2,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	HopIndex      uint32                 `protobuf:"varint,3,opt,name=hop_index,json=hopIndex,proto3" json:"hop_index,omitempty"`
+	Protocol      DataProtocol           `protobuf:"varint,4,opt,name=protocol,proto3,enum=grover.v1.DataProtocol" json:"protocol,omitempty"`
+	Bind          *DataEndpoint          `protobuf:"bytes,5,opt,name=bind,proto3" json:"bind,omitempty"`
+	Egress        *DataEndpoint          `protobuf:"bytes,6,opt,name=egress,proto3" json:"egress,omitempty"`
+	TtlSeconds    uint32                 `protobuf:"varint,7,opt,name=ttl_seconds,json=ttlSeconds,proto3" json:"ttl_seconds,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateForwardRequest) Reset() {
+	*x = CreateForwardRequest{}
+	mi := &file_grover_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateForwardRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateForwardRequest) ProtoMessage() {}
+
+func (x *CreateForwardRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateForwardRequest.ProtoReflect.Descriptor instead.
+func (*CreateForwardRequest) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *CreateForwardRequest) GetRouteId() string {
+	if x != nil {
+		return x.RouteId
+	}
+	return ""
+}
+
+func (x *CreateForwardRequest) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *CreateForwardRequest) GetHopIndex() uint32 {
+	if x != nil {
+		return x.HopIndex
+	}
+	return 0
+}
+
+func (x *CreateForwardRequest) GetProtocol() DataProtocol {
+	if x != nil {
+		return x.Protocol
+	}
+	return DataProtocol_DATA_PROTOCOL_UNSPECIFIED
+}
+
+func (x *CreateForwardRequest) GetBind() *DataEndpoint {
+	if x != nil {
+		return x.Bind
+	}
+	return nil
+}
+
+func (x *CreateForwardRequest) GetEgress() *DataEndpoint {
+	if x != nil {
+		return x.Egress
+	}
+	return nil
+}
+
+func (x *CreateForwardRequest) GetTtlSeconds() uint32 {
+	if x != nil {
+		return x.TtlSeconds
+	}
+	return 0
+}
+
+type CreateForwardResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Forward       *ForwardSession        `protobuf:"bytes,1,opt,name=forward,proto3" json:"forward,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateForwardResponse) Reset() {
+	*x = CreateForwardResponse{}
+	mi := &file_grover_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateForwardResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateForwardResponse) ProtoMessage() {}
+
+func (x *CreateForwardResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateForwardResponse.ProtoReflect.Descriptor instead.
+func (*CreateForwardResponse) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *CreateForwardResponse) GetForward() *ForwardSession {
+	if x != nil {
+		return x.Forward
+	}
+	return nil
+}
+
+type GetForwardRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ForwardId     string                 `protobuf:"bytes,1,opt,name=forward_id,json=forwardId,proto3" json:"forward_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetForwardRequest) Reset() {
+	*x = GetForwardRequest{}
+	mi := &file_grover_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetForwardRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetForwardRequest) ProtoMessage() {}
+
+func (x *GetForwardRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetForwardRequest.ProtoReflect.Descriptor instead.
+func (*GetForwardRequest) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *GetForwardRequest) GetForwardId() string {
+	if x != nil {
+		return x.ForwardId
+	}
+	return ""
+}
+
+type GetForwardResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Forward       *ForwardSession        `protobuf:"bytes,1,opt,name=forward,proto3" json:"forward,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetForwardResponse) Reset() {
+	*x = GetForwardResponse{}
+	mi := &file_grover_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetForwardResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetForwardResponse) ProtoMessage() {}
+
+func (x *GetForwardResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetForwardResponse.ProtoReflect.Descriptor instead.
+func (*GetForwardResponse) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *GetForwardResponse) GetForward() *ForwardSession {
+	if x != nil {
+		return x.Forward
+	}
+	return nil
+}
+
+type ListForwardsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RouteId       string                 `protobuf:"bytes,1,opt,name=route_id,json=routeId,proto3" json:"route_id,omitempty"`
+	JobId         string                 `protobuf:"bytes,2,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListForwardsRequest) Reset() {
+	*x = ListForwardsRequest{}
+	mi := &file_grover_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListForwardsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListForwardsRequest) ProtoMessage() {}
+
+func (x *ListForwardsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListForwardsRequest.ProtoReflect.Descriptor instead.
+func (*ListForwardsRequest) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ListForwardsRequest) GetRouteId() string {
+	if x != nil {
+		return x.RouteId
+	}
+	return ""
+}
+
+func (x *ListForwardsRequest) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+type ListForwardsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Forwards      []*ForwardSession      `protobuf:"bytes,1,rep,name=forwards,proto3" json:"forwards,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListForwardsResponse) Reset() {
+	*x = ListForwardsResponse{}
+	mi := &file_grover_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListForwardsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListForwardsResponse) ProtoMessage() {}
+
+func (x *ListForwardsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListForwardsResponse.ProtoReflect.Descriptor instead.
+func (*ListForwardsResponse) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *ListForwardsResponse) GetForwards() []*ForwardSession {
+	if x != nil {
+		return x.Forwards
+	}
+	return nil
+}
+
+type DeleteForwardRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ForwardId     string                 `protobuf:"bytes,1,opt,name=forward_id,json=forwardId,proto3" json:"forward_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteForwardRequest) Reset() {
+	*x = DeleteForwardRequest{}
+	mi := &file_grover_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteForwardRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteForwardRequest) ProtoMessage() {}
+
+func (x *DeleteForwardRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteForwardRequest.ProtoReflect.Descriptor instead.
+func (*DeleteForwardRequest) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *DeleteForwardRequest) GetForwardId() string {
+	if x != nil {
+		return x.ForwardId
+	}
+	return ""
+}
+
+type DeleteForwardResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteForwardResponse) Reset() {
+	*x = DeleteForwardResponse{}
+	mi := &file_grover_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteForwardResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteForwardResponse) ProtoMessage() {}
+
+func (x *DeleteForwardResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteForwardResponse.ProtoReflect.Descriptor instead.
+func (*DeleteForwardResponse) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *DeleteForwardResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+type RenewForwardRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ForwardId     string                 `protobuf:"bytes,1,opt,name=forward_id,json=forwardId,proto3" json:"forward_id,omitempty"`
+	TtlSeconds    uint32                 `protobuf:"varint,2,opt,name=ttl_seconds,json=ttlSeconds,proto3" json:"ttl_seconds,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RenewForwardRequest) Reset() {
+	*x = RenewForwardRequest{}
+	mi := &file_grover_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenewForwardRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenewForwardRequest) ProtoMessage() {}
+
+func (x *RenewForwardRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenewForwardRequest.ProtoReflect.Descriptor instead.
+func (*RenewForwardRequest) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *RenewForwardRequest) GetForwardId() string {
+	if x != nil {
+		return x.ForwardId
+	}
+	return ""
+}
+
+func (x *RenewForwardRequest) GetTtlSeconds() uint32 {
+	if x != nil {
+		return x.TtlSeconds
+	}
+	return 0
+}
+
+type RenewForwardResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Forward       *ForwardSession        `protobuf:"bytes,1,opt,name=forward,proto3" json:"forward,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RenewForwardResponse) Reset() {
+	*x = RenewForwardResponse{}
+	mi := &file_grover_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenewForwardResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenewForwardResponse) ProtoMessage() {}
+
+func (x *RenewForwardResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenewForwardResponse.ProtoReflect.Descriptor instead.
+func (*RenewForwardResponse) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *RenewForwardResponse) GetForward() *ForwardSession {
+	if x != nil {
+		return x.Forward
+	}
+	return nil
+}
+
+type StreamForwardStatsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ForwardId     string                 `protobuf:"bytes,1,opt,name=forward_id,json=forwardId,proto3" json:"forward_id,omitempty"`
+	RouteId       string                 `protobuf:"bytes,2,opt,name=route_id,json=routeId,proto3" json:"route_id,omitempty"`
+	JobId         string                 `protobuf:"bytes,3,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StreamForwardStatsRequest) Reset() {
+	*x = StreamForwardStatsRequest{}
+	mi := &file_grover_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StreamForwardStatsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StreamForwardStatsRequest) ProtoMessage() {}
+
+func (x *StreamForwardStatsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StreamForwardStatsRequest.ProtoReflect.Descriptor instead.
+func (*StreamForwardStatsRequest) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *StreamForwardStatsRequest) GetForwardId() string {
+	if x != nil {
+		return x.ForwardId
+	}
+	return ""
+}
+
+func (x *StreamForwardStatsRequest) GetRouteId() string {
+	if x != nil {
+		return x.RouteId
+	}
+	return ""
+}
+
+func (x *StreamForwardStatsRequest) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+type TransferEndpoint struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EndpointId    string                 `protobuf:"bytes,1,opt,name=endpoint_id,json=endpointId,proto3" json:"endpoint_id,omitempty"`
+	RouteId       string                 `protobuf:"bytes,2,opt,name=route_id,json=routeId,proto3" json:"route_id,omitempty"`
+	JobId         string                 `protobuf:"bytes,3,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	Role          TransferEndpointRole   `protobuf:"varint,4,opt,name=role,proto3,enum=grover.v1.TransferEndpointRole" json:"role,omitempty"`
+	Protocol      DataProtocol           `protobuf:"varint,5,opt,name=protocol,proto3,enum=grover.v1.DataProtocol" json:"protocol,omitempty"`
+	DataEndpoint  *DataEndpoint          `protobuf:"bytes,6,opt,name=data_endpoint,json=dataEndpoint,proto3" json:"data_endpoint,omitempty"`
+	RootPath      string                 `protobuf:"bytes,7,opt,name=root_path,json=rootPath,proto3" json:"root_path,omitempty"`
+	TtlSeconds    uint32                 `protobuf:"varint,8,opt,name=ttl_seconds,json=ttlSeconds,proto3" json:"ttl_seconds,omitempty"`
+	ExpiresAtUnix int64                  `protobuf:"varint,9,opt,name=expires_at_unix,json=expiresAtUnix,proto3" json:"expires_at_unix,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TransferEndpoint) Reset() {
+	*x = TransferEndpoint{}
+	mi := &file_grover_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransferEndpoint) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransferEndpoint) ProtoMessage() {}
+
+func (x *TransferEndpoint) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TransferEndpoint.ProtoReflect.Descriptor instead.
+func (*TransferEndpoint) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *TransferEndpoint) GetEndpointId() string {
+	if x != nil {
+		return x.EndpointId
+	}
+	return ""
+}
+
+func (x *TransferEndpoint) GetRouteId() string {
+	if x != nil {
+		return x.RouteId
+	}
+	return ""
+}
+
+func (x *TransferEndpoint) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *TransferEndpoint) GetRole() TransferEndpointRole {
+	if x != nil {
+		return x.Role
+	}
+	return TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_UNSPECIFIED
+}
+
+func (x *TransferEndpoint) GetProtocol() DataProtocol {
+	if x != nil {
+		return x.Protocol
+	}
+	return DataProtocol_DATA_PROTOCOL_UNSPECIFIED
+}
+
+func (x *TransferEndpoint) GetDataEndpoint() *DataEndpoint {
+	if x != nil {
+		return x.DataEndpoint
+	}
+	return nil
+}
+
+func (x *TransferEndpoint) GetRootPath() string {
+	if x != nil {
+		return x.RootPath
+	}
+	return ""
+}
+
+func (x *TransferEndpoint) GetTtlSeconds() uint32 {
+	if x != nil {
+		return x.TtlSeconds
+	}
+	return 0
+}
+
+func (x *TransferEndpoint) GetExpiresAtUnix() int64 {
+	if x != nil {
+		return x.ExpiresAtUnix
+	}
+	return 0
+}
+
+type TransferFileState struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	RelativePath  string                 `protobuf:"bytes,2,opt,name=relative_path,json=relativePath,proto3" json:"relative_path,omitempty"`
+	Size          uint64                 `protobuf:"varint,3,opt,name=size,proto3" json:"size,omitempty"`
+	BytesDone     uint64                 `protobuf:"varint,4,opt,name=bytes_done,json=bytesDone,proto3" json:"bytes_done,omitempty"`
+	State         RuntimeState           `protobuf:"varint,5,opt,name=state,proto3,enum=grover.v1.RuntimeState" json:"state,omitempty"`
+	ErrorMessage  string                 `protobuf:"bytes,6,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TransferFileState) Reset() {
+	*x = TransferFileState{}
+	mi := &file_grover_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransferFileState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransferFileState) ProtoMessage() {}
+
+func (x *TransferFileState) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TransferFileState.ProtoReflect.Descriptor instead.
+func (*TransferFileState) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *TransferFileState) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *TransferFileState) GetRelativePath() string {
+	if x != nil {
+		return x.RelativePath
+	}
+	return ""
+}
+
+func (x *TransferFileState) GetSize() uint64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+func (x *TransferFileState) GetBytesDone() uint64 {
+	if x != nil {
+		return x.BytesDone
+	}
+	return 0
+}
+
+func (x *TransferFileState) GetState() RuntimeState {
+	if x != nil {
+		return x.State
+	}
+	return RuntimeState_RUNTIME_STATE_UNSPECIFIED
+}
+
+func (x *TransferFileState) GetErrorMessage() string {
+	if x != nil {
+		return x.ErrorMessage
+	}
+	return ""
+}
+
+type TransferJob struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	JobId          string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	RouteId        string                 `protobuf:"bytes,2,opt,name=route_id,json=routeId,proto3" json:"route_id,omitempty"`
+	State          RuntimeState           `protobuf:"varint,3,opt,name=state,proto3,enum=grover.v1.RuntimeState" json:"state,omitempty"`
+	Protocol       DataProtocol           `protobuf:"varint,4,opt,name=protocol,proto3,enum=grover.v1.DataProtocol" json:"protocol,omitempty"`
+	Source         *TransferEndpoint      `protobuf:"bytes,5,opt,name=source,proto3" json:"source,omitempty"`
+	Destination    *TransferEndpoint      `protobuf:"bytes,6,opt,name=destination,proto3" json:"destination,omitempty"`
+	FilesInFlight  uint32                 `protobuf:"varint,7,opt,name=files_in_flight,json=filesInFlight,proto3" json:"files_in_flight,omitempty"`
+	StreamsPerFile uint32                 `protobuf:"varint,8,opt,name=streams_per_file,json=streamsPerFile,proto3" json:"streams_per_file,omitempty"`
+	GoodBytes      uint64                 `protobuf:"varint,9,opt,name=good_bytes,json=goodBytes,proto3" json:"good_bytes,omitempty"`
+	NetworkBytes   uint64                 `protobuf:"varint,10,opt,name=network_bytes,json=networkBytes,proto3" json:"network_bytes,omitempty"`
+	DiskReadBytes  uint64                 `protobuf:"varint,11,opt,name=disk_read_bytes,json=diskReadBytes,proto3" json:"disk_read_bytes,omitempty"`
+	DiskWriteBytes uint64                 `protobuf:"varint,12,opt,name=disk_write_bytes,json=diskWriteBytes,proto3" json:"disk_write_bytes,omitempty"`
+	FilesDone      uint32                 `protobuf:"varint,13,opt,name=files_done,json=filesDone,proto3" json:"files_done,omitempty"`
+	FilesActive    uint32                 `protobuf:"varint,14,opt,name=files_active,json=filesActive,proto3" json:"files_active,omitempty"`
+	StreamsActive  uint32                 `protobuf:"varint,15,opt,name=streams_active,json=streamsActive,proto3" json:"streams_active,omitempty"`
+	Retransmits    uint64                 `protobuf:"varint,16,opt,name=retransmits,proto3" json:"retransmits,omitempty"`
+	Files          []*TransferFileState   `protobuf:"bytes,17,rep,name=files,proto3" json:"files,omitempty"`
+	Stats          *StatsSnapshot         `protobuf:"bytes,18,opt,name=stats,proto3" json:"stats,omitempty"`
+	ErrorMessage   string                 `protobuf:"bytes,19,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *TransferJob) Reset() {
+	*x = TransferJob{}
+	mi := &file_grover_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransferJob) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransferJob) ProtoMessage() {}
+
+func (x *TransferJob) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TransferJob.ProtoReflect.Descriptor instead.
+func (*TransferJob) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *TransferJob) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *TransferJob) GetRouteId() string {
+	if x != nil {
+		return x.RouteId
+	}
+	return ""
+}
+
+func (x *TransferJob) GetState() RuntimeState {
+	if x != nil {
+		return x.State
+	}
+	return RuntimeState_RUNTIME_STATE_UNSPECIFIED
+}
+
+func (x *TransferJob) GetProtocol() DataProtocol {
+	if x != nil {
+		return x.Protocol
+	}
+	return DataProtocol_DATA_PROTOCOL_UNSPECIFIED
+}
+
+func (x *TransferJob) GetSource() *TransferEndpoint {
+	if x != nil {
+		return x.Source
+	}
+	return nil
+}
+
+func (x *TransferJob) GetDestination() *TransferEndpoint {
+	if x != nil {
+		return x.Destination
+	}
+	return nil
+}
+
+func (x *TransferJob) GetFilesInFlight() uint32 {
+	if x != nil {
+		return x.FilesInFlight
+	}
+	return 0
+}
+
+func (x *TransferJob) GetStreamsPerFile() uint32 {
+	if x != nil {
+		return x.StreamsPerFile
+	}
+	return 0
+}
+
+func (x *TransferJob) GetGoodBytes() uint64 {
+	if x != nil {
+		return x.GoodBytes
+	}
+	return 0
+}
+
+func (x *TransferJob) GetNetworkBytes() uint64 {
+	if x != nil {
+		return x.NetworkBytes
+	}
+	return 0
+}
+
+func (x *TransferJob) GetDiskReadBytes() uint64 {
+	if x != nil {
+		return x.DiskReadBytes
+	}
+	return 0
+}
+
+func (x *TransferJob) GetDiskWriteBytes() uint64 {
+	if x != nil {
+		return x.DiskWriteBytes
+	}
+	return 0
+}
+
+func (x *TransferJob) GetFilesDone() uint32 {
+	if x != nil {
+		return x.FilesDone
+	}
+	return 0
+}
+
+func (x *TransferJob) GetFilesActive() uint32 {
+	if x != nil {
+		return x.FilesActive
+	}
+	return 0
+}
+
+func (x *TransferJob) GetStreamsActive() uint32 {
+	if x != nil {
+		return x.StreamsActive
+	}
+	return 0
+}
+
+func (x *TransferJob) GetRetransmits() uint64 {
+	if x != nil {
+		return x.Retransmits
+	}
+	return 0
+}
+
+func (x *TransferJob) GetFiles() []*TransferFileState {
+	if x != nil {
+		return x.Files
+	}
+	return nil
+}
+
+func (x *TransferJob) GetStats() *StatsSnapshot {
+	if x != nil {
+		return x.Stats
+	}
+	return nil
+}
+
+func (x *TransferJob) GetErrorMessage() string {
+	if x != nil {
+		return x.ErrorMessage
+	}
+	return ""
+}
+
+type PrepareTransferEndpointRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RouteId       string                 `protobuf:"bytes,1,opt,name=route_id,json=routeId,proto3" json:"route_id,omitempty"`
+	JobId         string                 `protobuf:"bytes,2,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	Role          TransferEndpointRole   `protobuf:"varint,3,opt,name=role,proto3,enum=grover.v1.TransferEndpointRole" json:"role,omitempty"`
+	Protocol      DataProtocol           `protobuf:"varint,4,opt,name=protocol,proto3,enum=grover.v1.DataProtocol" json:"protocol,omitempty"`
+	RootPath      string                 `protobuf:"bytes,5,opt,name=root_path,json=rootPath,proto3" json:"root_path,omitempty"`
+	Bind          *DataEndpoint          `protobuf:"bytes,6,opt,name=bind,proto3" json:"bind,omitempty"`
+	TtlSeconds    uint32                 `protobuf:"varint,7,opt,name=ttl_seconds,json=ttlSeconds,proto3" json:"ttl_seconds,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PrepareTransferEndpointRequest) Reset() {
+	*x = PrepareTransferEndpointRequest{}
+	mi := &file_grover_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PrepareTransferEndpointRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PrepareTransferEndpointRequest) ProtoMessage() {}
+
+func (x *PrepareTransferEndpointRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PrepareTransferEndpointRequest.ProtoReflect.Descriptor instead.
+func (*PrepareTransferEndpointRequest) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *PrepareTransferEndpointRequest) GetRouteId() string {
+	if x != nil {
+		return x.RouteId
+	}
+	return ""
+}
+
+func (x *PrepareTransferEndpointRequest) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *PrepareTransferEndpointRequest) GetRole() TransferEndpointRole {
+	if x != nil {
+		return x.Role
+	}
+	return TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_UNSPECIFIED
+}
+
+func (x *PrepareTransferEndpointRequest) GetProtocol() DataProtocol {
+	if x != nil {
+		return x.Protocol
+	}
+	return DataProtocol_DATA_PROTOCOL_UNSPECIFIED
+}
+
+func (x *PrepareTransferEndpointRequest) GetRootPath() string {
+	if x != nil {
+		return x.RootPath
+	}
+	return ""
+}
+
+func (x *PrepareTransferEndpointRequest) GetBind() *DataEndpoint {
+	if x != nil {
+		return x.Bind
+	}
+	return nil
+}
+
+func (x *PrepareTransferEndpointRequest) GetTtlSeconds() uint32 {
+	if x != nil {
+		return x.TtlSeconds
+	}
+	return 0
+}
+
+type PrepareTransferEndpointResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Endpoint      *TransferEndpoint      `protobuf:"bytes,1,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PrepareTransferEndpointResponse) Reset() {
+	*x = PrepareTransferEndpointResponse{}
+	mi := &file_grover_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PrepareTransferEndpointResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PrepareTransferEndpointResponse) ProtoMessage() {}
+
+func (x *PrepareTransferEndpointResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PrepareTransferEndpointResponse.ProtoReflect.Descriptor instead.
+func (*PrepareTransferEndpointResponse) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *PrepareTransferEndpointResponse) GetEndpoint() *TransferEndpoint {
+	if x != nil {
+		return x.Endpoint
+	}
+	return nil
+}
+
+type StartTransferJobRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	RouteId        string                 `protobuf:"bytes,1,opt,name=route_id,json=routeId,proto3" json:"route_id,omitempty"`
+	JobId          string                 `protobuf:"bytes,2,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	Source         *TransferEndpoint      `protobuf:"bytes,3,opt,name=source,proto3" json:"source,omitempty"`
+	Destination    *TransferEndpoint      `protobuf:"bytes,4,opt,name=destination,proto3" json:"destination,omitempty"`
+	Paths          []string               `protobuf:"bytes,5,rep,name=paths,proto3" json:"paths,omitempty"`
+	FilesInFlight  uint32                 `protobuf:"varint,6,opt,name=files_in_flight,json=filesInFlight,proto3" json:"files_in_flight,omitempty"`
+	StreamsPerFile uint32                 `protobuf:"varint,7,opt,name=streams_per_file,json=streamsPerFile,proto3" json:"streams_per_file,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *StartTransferJobRequest) Reset() {
+	*x = StartTransferJobRequest{}
+	mi := &file_grover_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartTransferJobRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartTransferJobRequest) ProtoMessage() {}
+
+func (x *StartTransferJobRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StartTransferJobRequest.ProtoReflect.Descriptor instead.
+func (*StartTransferJobRequest) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *StartTransferJobRequest) GetRouteId() string {
+	if x != nil {
+		return x.RouteId
+	}
+	return ""
+}
+
+func (x *StartTransferJobRequest) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *StartTransferJobRequest) GetSource() *TransferEndpoint {
+	if x != nil {
+		return x.Source
+	}
+	return nil
+}
+
+func (x *StartTransferJobRequest) GetDestination() *TransferEndpoint {
+	if x != nil {
+		return x.Destination
+	}
+	return nil
+}
+
+func (x *StartTransferJobRequest) GetPaths() []string {
+	if x != nil {
+		return x.Paths
+	}
+	return nil
+}
+
+func (x *StartTransferJobRequest) GetFilesInFlight() uint32 {
+	if x != nil {
+		return x.FilesInFlight
+	}
+	return 0
+}
+
+func (x *StartTransferJobRequest) GetStreamsPerFile() uint32 {
+	if x != nil {
+		return x.StreamsPerFile
+	}
+	return 0
+}
+
+type StartTransferJobResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Job           *TransferJob           `protobuf:"bytes,1,opt,name=job,proto3" json:"job,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StartTransferJobResponse) Reset() {
+	*x = StartTransferJobResponse{}
+	mi := &file_grover_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartTransferJobResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartTransferJobResponse) ProtoMessage() {}
+
+func (x *StartTransferJobResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StartTransferJobResponse.ProtoReflect.Descriptor instead.
+func (*StartTransferJobResponse) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *StartTransferJobResponse) GetJob() *TransferJob {
+	if x != nil {
+		return x.Job
+	}
+	return nil
+}
+
+type GetTransferJobRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetTransferJobRequest) Reset() {
+	*x = GetTransferJobRequest{}
+	mi := &file_grover_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetTransferJobRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetTransferJobRequest) ProtoMessage() {}
+
+func (x *GetTransferJobRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTransferJobRequest.ProtoReflect.Descriptor instead.
+func (*GetTransferJobRequest) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *GetTransferJobRequest) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+type GetTransferJobResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Job           *TransferJob           `protobuf:"bytes,1,opt,name=job,proto3" json:"job,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetTransferJobResponse) Reset() {
+	*x = GetTransferJobResponse{}
+	mi := &file_grover_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetTransferJobResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetTransferJobResponse) ProtoMessage() {}
+
+func (x *GetTransferJobResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTransferJobResponse.ProtoReflect.Descriptor instead.
+func (*GetTransferJobResponse) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *GetTransferJobResponse) GetJob() *TransferJob {
+	if x != nil {
+		return x.Job
+	}
+	return nil
+}
+
+type ListTransferJobsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RouteId       string                 `protobuf:"bytes,1,opt,name=route_id,json=routeId,proto3" json:"route_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListTransferJobsRequest) Reset() {
+	*x = ListTransferJobsRequest{}
+	mi := &file_grover_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListTransferJobsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListTransferJobsRequest) ProtoMessage() {}
+
+func (x *ListTransferJobsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListTransferJobsRequest.ProtoReflect.Descriptor instead.
+func (*ListTransferJobsRequest) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *ListTransferJobsRequest) GetRouteId() string {
+	if x != nil {
+		return x.RouteId
+	}
+	return ""
+}
+
+type ListTransferJobsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Jobs          []*TransferJob         `protobuf:"bytes,1,rep,name=jobs,proto3" json:"jobs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListTransferJobsResponse) Reset() {
+	*x = ListTransferJobsResponse{}
+	mi := &file_grover_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListTransferJobsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListTransferJobsResponse) ProtoMessage() {}
+
+func (x *ListTransferJobsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListTransferJobsResponse.ProtoReflect.Descriptor instead.
+func (*ListTransferJobsResponse) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *ListTransferJobsResponse) GetJobs() []*TransferJob {
+	if x != nil {
+		return x.Jobs
+	}
+	return nil
+}
+
+type AbortTransferJobRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AbortTransferJobRequest) Reset() {
+	*x = AbortTransferJobRequest{}
+	mi := &file_grover_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AbortTransferJobRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AbortTransferJobRequest) ProtoMessage() {}
+
+func (x *AbortTransferJobRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AbortTransferJobRequest.ProtoReflect.Descriptor instead.
+func (*AbortTransferJobRequest) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *AbortTransferJobRequest) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+type AbortTransferJobResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Job           *TransferJob           `protobuf:"bytes,1,opt,name=job,proto3" json:"job,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AbortTransferJobResponse) Reset() {
+	*x = AbortTransferJobResponse{}
+	mi := &file_grover_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AbortTransferJobResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AbortTransferJobResponse) ProtoMessage() {}
+
+func (x *AbortTransferJobResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AbortTransferJobResponse.ProtoReflect.Descriptor instead.
+func (*AbortTransferJobResponse) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *AbortTransferJobResponse) GetJob() *TransferJob {
+	if x != nil {
+		return x.Job
+	}
+	return nil
+}
+
+type UpdateTransferConcurrencyRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	JobId          string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	FilesInFlight  uint32                 `protobuf:"varint,2,opt,name=files_in_flight,json=filesInFlight,proto3" json:"files_in_flight,omitempty"`
+	StreamsPerFile uint32                 `protobuf:"varint,3,opt,name=streams_per_file,json=streamsPerFile,proto3" json:"streams_per_file,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *UpdateTransferConcurrencyRequest) Reset() {
+	*x = UpdateTransferConcurrencyRequest{}
+	mi := &file_grover_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateTransferConcurrencyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateTransferConcurrencyRequest) ProtoMessage() {}
+
+func (x *UpdateTransferConcurrencyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateTransferConcurrencyRequest.ProtoReflect.Descriptor instead.
+func (*UpdateTransferConcurrencyRequest) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *UpdateTransferConcurrencyRequest) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *UpdateTransferConcurrencyRequest) GetFilesInFlight() uint32 {
+	if x != nil {
+		return x.FilesInFlight
+	}
+	return 0
+}
+
+func (x *UpdateTransferConcurrencyRequest) GetStreamsPerFile() uint32 {
+	if x != nil {
+		return x.StreamsPerFile
+	}
+	return 0
+}
+
+type UpdateTransferConcurrencyResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Job           *TransferJob           `protobuf:"bytes,1,opt,name=job,proto3" json:"job,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateTransferConcurrencyResponse) Reset() {
+	*x = UpdateTransferConcurrencyResponse{}
+	mi := &file_grover_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateTransferConcurrencyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateTransferConcurrencyResponse) ProtoMessage() {}
+
+func (x *UpdateTransferConcurrencyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateTransferConcurrencyResponse.ProtoReflect.Descriptor instead.
+func (*UpdateTransferConcurrencyResponse) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *UpdateTransferConcurrencyResponse) GetJob() *TransferJob {
+	if x != nil {
+		return x.Job
+	}
+	return nil
+}
+
+type StreamTransferStatsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	RouteId       string                 `protobuf:"bytes,2,opt,name=route_id,json=routeId,proto3" json:"route_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StreamTransferStatsRequest) Reset() {
+	*x = StreamTransferStatsRequest{}
+	mi := &file_grover_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StreamTransferStatsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StreamTransferStatsRequest) ProtoMessage() {}
+
+func (x *StreamTransferStatsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_grover_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StreamTransferStatsRequest.ProtoReflect.Descriptor instead.
+func (*StreamTransferStatsRequest) Descriptor() ([]byte, []int) {
+	return file_grover_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *StreamTransferStatsRequest) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *StreamTransferStatsRequest) GetRouteId() string {
+	if x != nil {
+		return x.RouteId
+	}
+	return ""
 }
 
 type CredentialRef struct {
@@ -132,7 +2238,7 @@ type CredentialRef struct {
 
 func (x *CredentialRef) Reset() {
 	*x = CredentialRef{}
-	mi := &file_grover_proto_msgTypes[0]
+	mi := &file_grover_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -144,7 +2250,7 @@ func (x *CredentialRef) String() string {
 func (*CredentialRef) ProtoMessage() {}
 
 func (x *CredentialRef) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[0]
+	mi := &file_grover_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -157,7 +2263,7 @@ func (x *CredentialRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CredentialRef.ProtoReflect.Descriptor instead.
 func (*CredentialRef) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{0}
+	return file_grover_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *CredentialRef) GetRef() isCredentialRef_Ref {
@@ -212,7 +2318,7 @@ type MkdirRequest struct {
 
 func (x *MkdirRequest) Reset() {
 	*x = MkdirRequest{}
-	mi := &file_grover_proto_msgTypes[1]
+	mi := &file_grover_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -224,7 +2330,7 @@ func (x *MkdirRequest) String() string {
 func (*MkdirRequest) ProtoMessage() {}
 
 func (x *MkdirRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[1]
+	mi := &file_grover_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -237,7 +2343,7 @@ func (x *MkdirRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MkdirRequest.ProtoReflect.Descriptor instead.
 func (*MkdirRequest) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{1}
+	return file_grover_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *MkdirRequest) GetType() EndpointType {
@@ -269,7 +2375,7 @@ type MkdirResponse struct {
 
 func (x *MkdirResponse) Reset() {
 	*x = MkdirResponse{}
-	mi := &file_grover_proto_msgTypes[2]
+	mi := &file_grover_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -281,7 +2387,7 @@ func (x *MkdirResponse) String() string {
 func (*MkdirResponse) ProtoMessage() {}
 
 func (x *MkdirResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[2]
+	mi := &file_grover_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -294,7 +2400,7 @@ func (x *MkdirResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MkdirResponse.ProtoReflect.Descriptor instead.
 func (*MkdirResponse) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{2}
+	return file_grover_proto_rawDescGZIP(), []int{32}
 }
 
 type RenameRequest struct {
@@ -309,7 +2415,7 @@ type RenameRequest struct {
 
 func (x *RenameRequest) Reset() {
 	*x = RenameRequest{}
-	mi := &file_grover_proto_msgTypes[3]
+	mi := &file_grover_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -321,7 +2427,7 @@ func (x *RenameRequest) String() string {
 func (*RenameRequest) ProtoMessage() {}
 
 func (x *RenameRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[3]
+	mi := &file_grover_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -334,7 +2440,7 @@ func (x *RenameRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RenameRequest.ProtoReflect.Descriptor instead.
 func (*RenameRequest) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{3}
+	return file_grover_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *RenameRequest) GetType() EndpointType {
@@ -373,7 +2479,7 @@ type RenameResponse struct {
 
 func (x *RenameResponse) Reset() {
 	*x = RenameResponse{}
-	mi := &file_grover_proto_msgTypes[4]
+	mi := &file_grover_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -385,7 +2491,7 @@ func (x *RenameResponse) String() string {
 func (*RenameResponse) ProtoMessage() {}
 
 func (x *RenameResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[4]
+	mi := &file_grover_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -398,7 +2504,7 @@ func (x *RenameResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RenameResponse.ProtoReflect.Descriptor instead.
 func (*RenameResponse) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{4}
+	return file_grover_proto_rawDescGZIP(), []int{34}
 }
 
 type FileInfo struct {
@@ -412,7 +2518,7 @@ type FileInfo struct {
 
 func (x *FileInfo) Reset() {
 	*x = FileInfo{}
-	mi := &file_grover_proto_msgTypes[5]
+	mi := &file_grover_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -424,7 +2530,7 @@ func (x *FileInfo) String() string {
 func (*FileInfo) ProtoMessage() {}
 
 func (x *FileInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[5]
+	mi := &file_grover_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -437,7 +2543,7 @@ func (x *FileInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileInfo.ProtoReflect.Descriptor instead.
 func (*FileInfo) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{5}
+	return file_grover_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *FileInfo) GetPath() string {
@@ -472,7 +2578,7 @@ type ListFilesRequest struct {
 
 func (x *ListFilesRequest) Reset() {
 	*x = ListFilesRequest{}
-	mi := &file_grover_proto_msgTypes[6]
+	mi := &file_grover_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -484,7 +2590,7 @@ func (x *ListFilesRequest) String() string {
 func (*ListFilesRequest) ProtoMessage() {}
 
 func (x *ListFilesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[6]
+	mi := &file_grover_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -497,7 +2603,7 @@ func (x *ListFilesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFilesRequest.ProtoReflect.Descriptor instead.
 func (*ListFilesRequest) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{6}
+	return file_grover_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *ListFilesRequest) GetType() EndpointType {
@@ -530,7 +2636,7 @@ type ListFilesResponse struct {
 
 func (x *ListFilesResponse) Reset() {
 	*x = ListFilesResponse{}
-	mi := &file_grover_proto_msgTypes[7]
+	mi := &file_grover_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -542,7 +2648,7 @@ func (x *ListFilesResponse) String() string {
 func (*ListFilesResponse) ProtoMessage() {}
 
 func (x *ListFilesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[7]
+	mi := &file_grover_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -555,7 +2661,7 @@ func (x *ListFilesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFilesResponse.ProtoReflect.Descriptor instead.
 func (*ListFilesResponse) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{7}
+	return file_grover_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *ListFilesResponse) GetFiles() []*FileInfo {
@@ -576,7 +2682,7 @@ type RemoveFileRequest struct {
 
 func (x *RemoveFileRequest) Reset() {
 	*x = RemoveFileRequest{}
-	mi := &file_grover_proto_msgTypes[8]
+	mi := &file_grover_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -588,7 +2694,7 @@ func (x *RemoveFileRequest) String() string {
 func (*RemoveFileRequest) ProtoMessage() {}
 
 func (x *RemoveFileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[8]
+	mi := &file_grover_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -601,7 +2707,7 @@ func (x *RemoveFileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveFileRequest.ProtoReflect.Descriptor instead.
 func (*RemoveFileRequest) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{8}
+	return file_grover_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *RemoveFileRequest) GetType() EndpointType {
@@ -634,7 +2740,7 @@ type RemoveFileResponse struct {
 
 func (x *RemoveFileResponse) Reset() {
 	*x = RemoveFileResponse{}
-	mi := &file_grover_proto_msgTypes[9]
+	mi := &file_grover_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -646,7 +2752,7 @@ func (x *RemoveFileResponse) String() string {
 func (*RemoveFileResponse) ProtoMessage() {}
 
 func (x *RemoveFileResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[9]
+	mi := &file_grover_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -659,7 +2765,7 @@ func (x *RemoveFileResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveFileResponse.ProtoReflect.Descriptor instead.
 func (*RemoveFileResponse) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{9}
+	return file_grover_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *RemoveFileResponse) GetSuccess() bool {
@@ -686,7 +2792,7 @@ type Credential struct {
 
 func (x *Credential) Reset() {
 	*x = Credential{}
-	mi := &file_grover_proto_msgTypes[10]
+	mi := &file_grover_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -698,7 +2804,7 @@ func (x *Credential) String() string {
 func (*Credential) ProtoMessage() {}
 
 func (x *Credential) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[10]
+	mi := &file_grover_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -711,7 +2817,7 @@ func (x *Credential) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Credential.ProtoReflect.Descriptor instead.
 func (*Credential) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{10}
+	return file_grover_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *Credential) GetCredentialUuid() string {
@@ -787,7 +2893,7 @@ type BasicDetails struct {
 
 func (x *BasicDetails) Reset() {
 	*x = BasicDetails{}
-	mi := &file_grover_proto_msgTypes[11]
+	mi := &file_grover_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -799,7 +2905,7 @@ func (x *BasicDetails) String() string {
 func (*BasicDetails) ProtoMessage() {}
 
 func (x *BasicDetails) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[11]
+	mi := &file_grover_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -812,7 +2918,7 @@ func (x *BasicDetails) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BasicDetails.ProtoReflect.Descriptor instead.
 func (*BasicDetails) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{11}
+	return file_grover_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *BasicDetails) GetUsername() string {
@@ -850,7 +2956,7 @@ type SshDetails struct {
 
 func (x *SshDetails) Reset() {
 	*x = SshDetails{}
-	mi := &file_grover_proto_msgTypes[12]
+	mi := &file_grover_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -862,7 +2968,7 @@ func (x *SshDetails) String() string {
 func (*SshDetails) ProtoMessage() {}
 
 func (x *SshDetails) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[12]
+	mi := &file_grover_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -875,7 +2981,7 @@ func (x *SshDetails) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SshDetails.ProtoReflect.Descriptor instead.
 func (*SshDetails) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{12}
+	return file_grover_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *SshDetails) GetUsername() string {
@@ -929,7 +3035,7 @@ type CreateCredentialRequest struct {
 
 func (x *CreateCredentialRequest) Reset() {
 	*x = CreateCredentialRequest{}
-	mi := &file_grover_proto_msgTypes[13]
+	mi := &file_grover_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -941,7 +3047,7 @@ func (x *CreateCredentialRequest) String() string {
 func (*CreateCredentialRequest) ProtoMessage() {}
 
 func (x *CreateCredentialRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[13]
+	mi := &file_grover_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -954,7 +3060,7 @@ func (x *CreateCredentialRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateCredentialRequest.ProtoReflect.Descriptor instead.
 func (*CreateCredentialRequest) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{13}
+	return file_grover_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *CreateCredentialRequest) GetCredential() *Credential {
@@ -972,7 +3078,7 @@ type CreateCredentialResponse struct {
 
 func (x *CreateCredentialResponse) Reset() {
 	*x = CreateCredentialResponse{}
-	mi := &file_grover_proto_msgTypes[14]
+	mi := &file_grover_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -984,7 +3090,7 @@ func (x *CreateCredentialResponse) String() string {
 func (*CreateCredentialResponse) ProtoMessage() {}
 
 func (x *CreateCredentialResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[14]
+	mi := &file_grover_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -997,7 +3103,7 @@ func (x *CreateCredentialResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateCredentialResponse.ProtoReflect.Descriptor instead.
 func (*CreateCredentialResponse) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{14}
+	return file_grover_proto_rawDescGZIP(), []int{44}
 }
 
 type GetCredentialRequest struct {
@@ -1009,7 +3115,7 @@ type GetCredentialRequest struct {
 
 func (x *GetCredentialRequest) Reset() {
 	*x = GetCredentialRequest{}
-	mi := &file_grover_proto_msgTypes[15]
+	mi := &file_grover_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1021,7 +3127,7 @@ func (x *GetCredentialRequest) String() string {
 func (*GetCredentialRequest) ProtoMessage() {}
 
 func (x *GetCredentialRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[15]
+	mi := &file_grover_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1034,7 +3140,7 @@ func (x *GetCredentialRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCredentialRequest.ProtoReflect.Descriptor instead.
 func (*GetCredentialRequest) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{15}
+	return file_grover_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *GetCredentialRequest) GetRef() *CredentialRef {
@@ -1053,7 +3159,7 @@ type GetCredentialResponse struct {
 
 func (x *GetCredentialResponse) Reset() {
 	*x = GetCredentialResponse{}
-	mi := &file_grover_proto_msgTypes[16]
+	mi := &file_grover_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1065,7 +3171,7 @@ func (x *GetCredentialResponse) String() string {
 func (*GetCredentialResponse) ProtoMessage() {}
 
 func (x *GetCredentialResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[16]
+	mi := &file_grover_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1078,7 +3184,7 @@ func (x *GetCredentialResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCredentialResponse.ProtoReflect.Descriptor instead.
 func (*GetCredentialResponse) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{16}
+	return file_grover_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *GetCredentialResponse) GetCredential() *Credential {
@@ -1097,7 +3203,7 @@ type ListCredentialsRequest struct {
 
 func (x *ListCredentialsRequest) Reset() {
 	*x = ListCredentialsRequest{}
-	mi := &file_grover_proto_msgTypes[17]
+	mi := &file_grover_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1109,7 +3215,7 @@ func (x *ListCredentialsRequest) String() string {
 func (*ListCredentialsRequest) ProtoMessage() {}
 
 func (x *ListCredentialsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[17]
+	mi := &file_grover_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1122,7 +3228,7 @@ func (x *ListCredentialsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListCredentialsRequest.ProtoReflect.Descriptor instead.
 func (*ListCredentialsRequest) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{17}
+	return file_grover_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *ListCredentialsRequest) GetType() CredentialType {
@@ -1142,7 +3248,7 @@ type ListCredentialsResponse struct {
 
 func (x *ListCredentialsResponse) Reset() {
 	*x = ListCredentialsResponse{}
-	mi := &file_grover_proto_msgTypes[18]
+	mi := &file_grover_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1154,7 +3260,7 @@ func (x *ListCredentialsResponse) String() string {
 func (*ListCredentialsResponse) ProtoMessage() {}
 
 func (x *ListCredentialsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[18]
+	mi := &file_grover_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1167,7 +3273,7 @@ func (x *ListCredentialsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListCredentialsResponse.ProtoReflect.Descriptor instead.
 func (*ListCredentialsResponse) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{18}
+	return file_grover_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *ListCredentialsResponse) GetCredentials() []*Credential {
@@ -1193,7 +3299,7 @@ type DeleteCredentialRequest struct {
 
 func (x *DeleteCredentialRequest) Reset() {
 	*x = DeleteCredentialRequest{}
-	mi := &file_grover_proto_msgTypes[19]
+	mi := &file_grover_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1205,7 +3311,7 @@ func (x *DeleteCredentialRequest) String() string {
 func (*DeleteCredentialRequest) ProtoMessage() {}
 
 func (x *DeleteCredentialRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[19]
+	mi := &file_grover_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1218,7 +3324,7 @@ func (x *DeleteCredentialRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteCredentialRequest.ProtoReflect.Descriptor instead.
 func (*DeleteCredentialRequest) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{19}
+	return file_grover_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *DeleteCredentialRequest) GetRef() *CredentialRef {
@@ -1236,7 +3342,7 @@ type DeleteCredentialResponse struct {
 
 func (x *DeleteCredentialResponse) Reset() {
 	*x = DeleteCredentialResponse{}
-	mi := &file_grover_proto_msgTypes[20]
+	mi := &file_grover_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1248,7 +3354,7 @@ func (x *DeleteCredentialResponse) String() string {
 func (*DeleteCredentialResponse) ProtoMessage() {}
 
 func (x *DeleteCredentialResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_grover_proto_msgTypes[20]
+	mi := &file_grover_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1261,14 +3367,170 @@ func (x *DeleteCredentialResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteCredentialResponse.ProtoReflect.Descriptor instead.
 func (*DeleteCredentialResponse) Descriptor() ([]byte, []int) {
-	return file_grover_proto_rawDescGZIP(), []int{20}
+	return file_grover_proto_rawDescGZIP(), []int{50}
 }
 
 var File_grover_proto protoreflect.FileDescriptor
 
 const file_grover_proto_rawDesc = "" +
 	"\n" +
-	"\fgrover.proto\x12\tgrover.v1\"l\n" +
+	"\fgrover.proto\x12\tgrover.v1\"6\n" +
+	"\fDataEndpoint\x12\x12\n" +
+	"\x04host\x18\x01 \x01(\tR\x04host\x12\x12\n" +
+	"\x04port\x18\x02 \x01(\rR\x04port\"\xb1\x03\n" +
+	"\rStatsSnapshot\x12#\n" +
+	"\ringress_bytes\x18\x01 \x01(\x04R\fingressBytes\x12!\n" +
+	"\fegress_bytes\x18\x02 \x01(\x04R\vegressBytes\x12\x18\n" +
+	"\apackets\x18\x03 \x01(\x04R\apackets\x124\n" +
+	"\x16current_throughput_bps\x18\x04 \x01(\x01R\x14currentThroughputBps\x124\n" +
+	"\x16average_throughput_bps\x18\x05 \x01(\x01R\x14averageThroughputBps\x12-\n" +
+	"\x12active_connections\x18\x06 \x01(\rR\x11activeConnections\x12%\n" +
+	"\x0eactive_streams\x18\a \x01(\rR\ractiveStreams\x12\x16\n" +
+	"\x06errors\x18\b \x01(\x04R\x06errors\x12\x14\n" +
+	"\x05drops\x18\t \x01(\x04R\x05drops\x12\x1d\n" +
+	"\n" +
+	"latency_ms\x18\n" +
+	" \x01(\x01R\tlatencyMs\x12/\n" +
+	"\x14sampled_at_unix_nano\x18\v \x01(\x03R\x11sampledAtUnixNano\"\xe4\x03\n" +
+	"\x0eForwardSession\x12\x1d\n" +
+	"\n" +
+	"forward_id\x18\x01 \x01(\tR\tforwardId\x12\x19\n" +
+	"\broute_id\x18\x02 \x01(\tR\arouteId\x12\x15\n" +
+	"\x06job_id\x18\x03 \x01(\tR\x05jobId\x12\x1b\n" +
+	"\thop_index\x18\x04 \x01(\rR\bhopIndex\x123\n" +
+	"\bprotocol\x18\x05 \x01(\x0e2\x17.grover.v1.DataProtocolR\bprotocol\x121\n" +
+	"\aingress\x18\x06 \x01(\v2\x17.grover.v1.DataEndpointR\aingress\x12/\n" +
+	"\x06egress\x18\a \x01(\v2\x17.grover.v1.DataEndpointR\x06egress\x12-\n" +
+	"\x05state\x18\b \x01(\x0e2\x17.grover.v1.RuntimeStateR\x05state\x12\x1f\n" +
+	"\vttl_seconds\x18\t \x01(\rR\n" +
+	"ttlSeconds\x12&\n" +
+	"\x0fexpires_at_unix\x18\n" +
+	" \x01(\x03R\rexpiresAtUnix\x12.\n" +
+	"\x05stats\x18\v \x01(\v2\x18.grover.v1.StatsSnapshotR\x05stats\x12#\n" +
+	"\rerror_message\x18\f \x01(\tR\ferrorMessage\"\x99\x02\n" +
+	"\x14CreateForwardRequest\x12\x19\n" +
+	"\broute_id\x18\x01 \x01(\tR\arouteId\x12\x15\n" +
+	"\x06job_id\x18\x02 \x01(\tR\x05jobId\x12\x1b\n" +
+	"\thop_index\x18\x03 \x01(\rR\bhopIndex\x123\n" +
+	"\bprotocol\x18\x04 \x01(\x0e2\x17.grover.v1.DataProtocolR\bprotocol\x12+\n" +
+	"\x04bind\x18\x05 \x01(\v2\x17.grover.v1.DataEndpointR\x04bind\x12/\n" +
+	"\x06egress\x18\x06 \x01(\v2\x17.grover.v1.DataEndpointR\x06egress\x12\x1f\n" +
+	"\vttl_seconds\x18\a \x01(\rR\n" +
+	"ttlSeconds\"L\n" +
+	"\x15CreateForwardResponse\x123\n" +
+	"\aforward\x18\x01 \x01(\v2\x19.grover.v1.ForwardSessionR\aforward\"2\n" +
+	"\x11GetForwardRequest\x12\x1d\n" +
+	"\n" +
+	"forward_id\x18\x01 \x01(\tR\tforwardId\"I\n" +
+	"\x12GetForwardResponse\x123\n" +
+	"\aforward\x18\x01 \x01(\v2\x19.grover.v1.ForwardSessionR\aforward\"G\n" +
+	"\x13ListForwardsRequest\x12\x19\n" +
+	"\broute_id\x18\x01 \x01(\tR\arouteId\x12\x15\n" +
+	"\x06job_id\x18\x02 \x01(\tR\x05jobId\"M\n" +
+	"\x14ListForwardsResponse\x125\n" +
+	"\bforwards\x18\x01 \x03(\v2\x19.grover.v1.ForwardSessionR\bforwards\"5\n" +
+	"\x14DeleteForwardRequest\x12\x1d\n" +
+	"\n" +
+	"forward_id\x18\x01 \x01(\tR\tforwardId\"'\n" +
+	"\x15DeleteForwardResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\"U\n" +
+	"\x13RenewForwardRequest\x12\x1d\n" +
+	"\n" +
+	"forward_id\x18\x01 \x01(\tR\tforwardId\x12\x1f\n" +
+	"\vttl_seconds\x18\x02 \x01(\rR\n" +
+	"ttlSeconds\"K\n" +
+	"\x14RenewForwardResponse\x123\n" +
+	"\aforward\x18\x01 \x01(\v2\x19.grover.v1.ForwardSessionR\aforward\"l\n" +
+	"\x19StreamForwardStatsRequest\x12\x1d\n" +
+	"\n" +
+	"forward_id\x18\x01 \x01(\tR\tforwardId\x12\x19\n" +
+	"\broute_id\x18\x02 \x01(\tR\arouteId\x12\x15\n" +
+	"\x06job_id\x18\x03 \x01(\tR\x05jobId\"\xf3\x02\n" +
+	"\x10TransferEndpoint\x12\x1f\n" +
+	"\vendpoint_id\x18\x01 \x01(\tR\n" +
+	"endpointId\x12\x19\n" +
+	"\broute_id\x18\x02 \x01(\tR\arouteId\x12\x15\n" +
+	"\x06job_id\x18\x03 \x01(\tR\x05jobId\x123\n" +
+	"\x04role\x18\x04 \x01(\x0e2\x1f.grover.v1.TransferEndpointRoleR\x04role\x123\n" +
+	"\bprotocol\x18\x05 \x01(\x0e2\x17.grover.v1.DataProtocolR\bprotocol\x12<\n" +
+	"\rdata_endpoint\x18\x06 \x01(\v2\x17.grover.v1.DataEndpointR\fdataEndpoint\x12\x1b\n" +
+	"\troot_path\x18\a \x01(\tR\brootPath\x12\x1f\n" +
+	"\vttl_seconds\x18\b \x01(\rR\n" +
+	"ttlSeconds\x12&\n" +
+	"\x0fexpires_at_unix\x18\t \x01(\x03R\rexpiresAtUnix\"\xd3\x01\n" +
+	"\x11TransferFileState\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12#\n" +
+	"\rrelative_path\x18\x02 \x01(\tR\frelativePath\x12\x12\n" +
+	"\x04size\x18\x03 \x01(\x04R\x04size\x12\x1d\n" +
+	"\n" +
+	"bytes_done\x18\x04 \x01(\x04R\tbytesDone\x12-\n" +
+	"\x05state\x18\x05 \x01(\x0e2\x17.grover.v1.RuntimeStateR\x05state\x12#\n" +
+	"\rerror_message\x18\x06 \x01(\tR\ferrorMessage\"\x93\x06\n" +
+	"\vTransferJob\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x19\n" +
+	"\broute_id\x18\x02 \x01(\tR\arouteId\x12-\n" +
+	"\x05state\x18\x03 \x01(\x0e2\x17.grover.v1.RuntimeStateR\x05state\x123\n" +
+	"\bprotocol\x18\x04 \x01(\x0e2\x17.grover.v1.DataProtocolR\bprotocol\x123\n" +
+	"\x06source\x18\x05 \x01(\v2\x1b.grover.v1.TransferEndpointR\x06source\x12=\n" +
+	"\vdestination\x18\x06 \x01(\v2\x1b.grover.v1.TransferEndpointR\vdestination\x12&\n" +
+	"\x0ffiles_in_flight\x18\a \x01(\rR\rfilesInFlight\x12(\n" +
+	"\x10streams_per_file\x18\b \x01(\rR\x0estreamsPerFile\x12\x1d\n" +
+	"\n" +
+	"good_bytes\x18\t \x01(\x04R\tgoodBytes\x12#\n" +
+	"\rnetwork_bytes\x18\n" +
+	" \x01(\x04R\fnetworkBytes\x12&\n" +
+	"\x0fdisk_read_bytes\x18\v \x01(\x04R\rdiskReadBytes\x12(\n" +
+	"\x10disk_write_bytes\x18\f \x01(\x04R\x0ediskWriteBytes\x12\x1d\n" +
+	"\n" +
+	"files_done\x18\r \x01(\rR\tfilesDone\x12!\n" +
+	"\ffiles_active\x18\x0e \x01(\rR\vfilesActive\x12%\n" +
+	"\x0estreams_active\x18\x0f \x01(\rR\rstreamsActive\x12 \n" +
+	"\vretransmits\x18\x10 \x01(\x04R\vretransmits\x122\n" +
+	"\x05files\x18\x11 \x03(\v2\x1c.grover.v1.TransferFileStateR\x05files\x12.\n" +
+	"\x05stats\x18\x12 \x01(\v2\x18.grover.v1.StatsSnapshotR\x05stats\x12#\n" +
+	"\rerror_message\x18\x13 \x01(\tR\ferrorMessage\"\xa7\x02\n" +
+	"\x1ePrepareTransferEndpointRequest\x12\x19\n" +
+	"\broute_id\x18\x01 \x01(\tR\arouteId\x12\x15\n" +
+	"\x06job_id\x18\x02 \x01(\tR\x05jobId\x123\n" +
+	"\x04role\x18\x03 \x01(\x0e2\x1f.grover.v1.TransferEndpointRoleR\x04role\x123\n" +
+	"\bprotocol\x18\x04 \x01(\x0e2\x17.grover.v1.DataProtocolR\bprotocol\x12\x1b\n" +
+	"\troot_path\x18\x05 \x01(\tR\brootPath\x12+\n" +
+	"\x04bind\x18\x06 \x01(\v2\x17.grover.v1.DataEndpointR\x04bind\x12\x1f\n" +
+	"\vttl_seconds\x18\a \x01(\rR\n" +
+	"ttlSeconds\"Z\n" +
+	"\x1fPrepareTransferEndpointResponse\x127\n" +
+	"\bendpoint\x18\x01 \x01(\v2\x1b.grover.v1.TransferEndpointR\bendpoint\"\xa7\x02\n" +
+	"\x17StartTransferJobRequest\x12\x19\n" +
+	"\broute_id\x18\x01 \x01(\tR\arouteId\x12\x15\n" +
+	"\x06job_id\x18\x02 \x01(\tR\x05jobId\x123\n" +
+	"\x06source\x18\x03 \x01(\v2\x1b.grover.v1.TransferEndpointR\x06source\x12=\n" +
+	"\vdestination\x18\x04 \x01(\v2\x1b.grover.v1.TransferEndpointR\vdestination\x12\x14\n" +
+	"\x05paths\x18\x05 \x03(\tR\x05paths\x12&\n" +
+	"\x0ffiles_in_flight\x18\x06 \x01(\rR\rfilesInFlight\x12(\n" +
+	"\x10streams_per_file\x18\a \x01(\rR\x0estreamsPerFile\"D\n" +
+	"\x18StartTransferJobResponse\x12(\n" +
+	"\x03job\x18\x01 \x01(\v2\x16.grover.v1.TransferJobR\x03job\".\n" +
+	"\x15GetTransferJobRequest\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\"B\n" +
+	"\x16GetTransferJobResponse\x12(\n" +
+	"\x03job\x18\x01 \x01(\v2\x16.grover.v1.TransferJobR\x03job\"4\n" +
+	"\x17ListTransferJobsRequest\x12\x19\n" +
+	"\broute_id\x18\x01 \x01(\tR\arouteId\"F\n" +
+	"\x18ListTransferJobsResponse\x12*\n" +
+	"\x04jobs\x18\x01 \x03(\v2\x16.grover.v1.TransferJobR\x04jobs\"0\n" +
+	"\x17AbortTransferJobRequest\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\"D\n" +
+	"\x18AbortTransferJobResponse\x12(\n" +
+	"\x03job\x18\x01 \x01(\v2\x16.grover.v1.TransferJobR\x03job\"\x8b\x01\n" +
+	" UpdateTransferConcurrencyRequest\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12&\n" +
+	"\x0ffiles_in_flight\x18\x02 \x01(\rR\rfilesInFlight\x12(\n" +
+	"\x10streams_per_file\x18\x03 \x01(\rR\x0estreamsPerFile\"M\n" +
+	"!UpdateTransferConcurrencyResponse\x12(\n" +
+	"\x03job\x18\x01 \x01(\v2\x16.grover.v1.TransferJobR\x03job\"N\n" +
+	"\x1aStreamTransferStatsRequest\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x19\n" +
+	"\broute_id\x18\x02 \x01(\tR\arouteId\"l\n" +
 	"\rCredentialRef\x12)\n" +
 	"\x0fcredential_uuid\x18\x01 \x01(\tH\x00R\x0ecredentialUuid\x12)\n" +
 	"\x0fcredential_name\x18\x02 \x01(\tH\x00R\x0ecredentialNameB\x05\n" +
@@ -1341,7 +3603,24 @@ const file_grover_proto_rawDesc = "" +
 	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"E\n" +
 	"\x17DeleteCredentialRequest\x12*\n" +
 	"\x03ref\x18\x01 \x01(\v2\x18.grover.v1.CredentialRefR\x03ref\"\x1a\n" +
-	"\x18DeleteCredentialResponse*E\n" +
+	"\x18DeleteCredentialResponse*[\n" +
+	"\fDataProtocol\x12\x1d\n" +
+	"\x19DATA_PROTOCOL_UNSPECIFIED\x10\x00\x12\x15\n" +
+	"\x11DATA_PROTOCOL_TCP\x10\x01\x12\x15\n" +
+	"\x11DATA_PROTOCOL_UDP\x10\x02*\xe6\x01\n" +
+	"\fRuntimeState\x12\x1d\n" +
+	"\x19RUNTIME_STATE_UNSPECIFIED\x10\x00\x12\x1b\n" +
+	"\x17RUNTIME_STATE_PREPARING\x10\x01\x12\x17\n" +
+	"\x13RUNTIME_STATE_READY\x10\x02\x12\x19\n" +
+	"\x15RUNTIME_STATE_RUNNING\x10\x03\x12\x16\n" +
+	"\x12RUNTIME_STATE_DONE\x10\x04\x12\x19\n" +
+	"\x15RUNTIME_STATE_ABORTED\x10\x05\x12\x18\n" +
+	"\x14RUNTIME_STATE_FAILED\x10\x06\x12\x19\n" +
+	"\x15RUNTIME_STATE_EXPIRED\x10\a*\x89\x01\n" +
+	"\x14TransferEndpointRole\x12&\n" +
+	"\"TRANSFER_ENDPOINT_ROLE_UNSPECIFIED\x10\x00\x12!\n" +
+	"\x1dTRANSFER_ENDPOINT_ROLE_SOURCE\x10\x01\x12&\n" +
+	"\"TRANSFER_ENDPOINT_ROLE_DESTINATION\x10\x02*E\n" +
 	"\fEndpointType\x12\x1d\n" +
 	"\x19ENDPOINT_TYPE_UNSPECIFIED\x10\x00\x12\b\n" +
 	"\x04HTTP\x10\x01\x12\f\n" +
@@ -1349,7 +3628,23 @@ const file_grover_proto_rawDesc = "" +
 	"\x0eCredentialType\x12\x1f\n" +
 	"\x1bCREDENTIAL_TYPE_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13SSH_CREDENTIAL_TYPE\x10\x01\x12\x19\n" +
-	"\x15BASIC_CREDENTIAL_TYPE\x10\x022\x92\x02\n" +
+	"\x15BASIC_CREDENTIAL_TYPE\x10\x022\xfc\x03\n" +
+	"\fRelayControl\x12R\n" +
+	"\rCreateForward\x12\x1f.grover.v1.CreateForwardRequest\x1a .grover.v1.CreateForwardResponse\x12I\n" +
+	"\n" +
+	"GetForward\x12\x1c.grover.v1.GetForwardRequest\x1a\x1d.grover.v1.GetForwardResponse\x12O\n" +
+	"\fListForwards\x12\x1e.grover.v1.ListForwardsRequest\x1a\x1f.grover.v1.ListForwardsResponse\x12R\n" +
+	"\rDeleteForward\x12\x1f.grover.v1.DeleteForwardRequest\x1a .grover.v1.DeleteForwardResponse\x12O\n" +
+	"\fRenewForward\x12\x1e.grover.v1.RenewForwardRequest\x1a\x1f.grover.v1.RenewForwardResponse\x12W\n" +
+	"\x12StreamForwardStats\x12$.grover.v1.StreamForwardStatsRequest\x1a\x19.grover.v1.ForwardSession0\x012\xc4\x05\n" +
+	"\x12TransferJobControl\x12p\n" +
+	"\x17PrepareTransferEndpoint\x12).grover.v1.PrepareTransferEndpointRequest\x1a*.grover.v1.PrepareTransferEndpointResponse\x12[\n" +
+	"\x10StartTransferJob\x12\".grover.v1.StartTransferJobRequest\x1a#.grover.v1.StartTransferJobResponse\x12U\n" +
+	"\x0eGetTransferJob\x12 .grover.v1.GetTransferJobRequest\x1a!.grover.v1.GetTransferJobResponse\x12[\n" +
+	"\x10ListTransferJobs\x12\".grover.v1.ListTransferJobsRequest\x1a#.grover.v1.ListTransferJobsResponse\x12[\n" +
+	"\x10AbortTransferJob\x12\".grover.v1.AbortTransferJobRequest\x1a#.grover.v1.AbortTransferJobResponse\x12v\n" +
+	"\x19UpdateTransferConcurrency\x12+.grover.v1.UpdateTransferConcurrencyRequest\x1a,.grover.v1.UpdateTransferConcurrencyResponse\x12V\n" +
+	"\x13StreamTransferStats\x12%.grover.v1.StreamTransferStatsRequest\x1a\x16.grover.v1.TransferJob0\x012\x92\x02\n" +
 	"\vFileService\x12A\n" +
 	"\x04List\x12\x1b.grover.v1.ListFilesRequest\x1a\x1c.grover.v1.ListFilesResponse\x12E\n" +
 	"\x06Remove\x12\x1c.grover.v1.RemoveFileRequest\x1a\x1d.grover.v1.RemoveFileResponse\x12:\n" +
@@ -1373,73 +3668,165 @@ func file_grover_proto_rawDescGZIP() []byte {
 	return file_grover_proto_rawDescData
 }
 
-var file_grover_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_grover_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_grover_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
+var file_grover_proto_msgTypes = make([]protoimpl.MessageInfo, 51)
 var file_grover_proto_goTypes = []any{
-	(EndpointType)(0),                // 0: grover.v1.EndpointType
-	(CredentialType)(0),              // 1: grover.v1.CredentialType
-	(*CredentialRef)(nil),            // 2: grover.v1.CredentialRef
-	(*MkdirRequest)(nil),             // 3: grover.v1.MkdirRequest
-	(*MkdirResponse)(nil),            // 4: grover.v1.MkdirResponse
-	(*RenameRequest)(nil),            // 5: grover.v1.RenameRequest
-	(*RenameResponse)(nil),           // 6: grover.v1.RenameResponse
-	(*FileInfo)(nil),                 // 7: grover.v1.FileInfo
-	(*ListFilesRequest)(nil),         // 8: grover.v1.ListFilesRequest
-	(*ListFilesResponse)(nil),        // 9: grover.v1.ListFilesResponse
-	(*RemoveFileRequest)(nil),        // 10: grover.v1.RemoveFileRequest
-	(*RemoveFileResponse)(nil),       // 11: grover.v1.RemoveFileResponse
-	(*Credential)(nil),               // 12: grover.v1.Credential
-	(*BasicDetails)(nil),             // 13: grover.v1.BasicDetails
-	(*SshDetails)(nil),               // 14: grover.v1.SshDetails
-	(*CreateCredentialRequest)(nil),  // 15: grover.v1.CreateCredentialRequest
-	(*CreateCredentialResponse)(nil), // 16: grover.v1.CreateCredentialResponse
-	(*GetCredentialRequest)(nil),     // 17: grover.v1.GetCredentialRequest
-	(*GetCredentialResponse)(nil),    // 18: grover.v1.GetCredentialResponse
-	(*ListCredentialsRequest)(nil),   // 19: grover.v1.ListCredentialsRequest
-	(*ListCredentialsResponse)(nil),  // 20: grover.v1.ListCredentialsResponse
-	(*DeleteCredentialRequest)(nil),  // 21: grover.v1.DeleteCredentialRequest
-	(*DeleteCredentialResponse)(nil), // 22: grover.v1.DeleteCredentialResponse
+	(DataProtocol)(0),                         // 0: grover.v1.DataProtocol
+	(RuntimeState)(0),                         // 1: grover.v1.RuntimeState
+	(TransferEndpointRole)(0),                 // 2: grover.v1.TransferEndpointRole
+	(EndpointType)(0),                         // 3: grover.v1.EndpointType
+	(CredentialType)(0),                       // 4: grover.v1.CredentialType
+	(*DataEndpoint)(nil),                      // 5: grover.v1.DataEndpoint
+	(*StatsSnapshot)(nil),                     // 6: grover.v1.StatsSnapshot
+	(*ForwardSession)(nil),                    // 7: grover.v1.ForwardSession
+	(*CreateForwardRequest)(nil),              // 8: grover.v1.CreateForwardRequest
+	(*CreateForwardResponse)(nil),             // 9: grover.v1.CreateForwardResponse
+	(*GetForwardRequest)(nil),                 // 10: grover.v1.GetForwardRequest
+	(*GetForwardResponse)(nil),                // 11: grover.v1.GetForwardResponse
+	(*ListForwardsRequest)(nil),               // 12: grover.v1.ListForwardsRequest
+	(*ListForwardsResponse)(nil),              // 13: grover.v1.ListForwardsResponse
+	(*DeleteForwardRequest)(nil),              // 14: grover.v1.DeleteForwardRequest
+	(*DeleteForwardResponse)(nil),             // 15: grover.v1.DeleteForwardResponse
+	(*RenewForwardRequest)(nil),               // 16: grover.v1.RenewForwardRequest
+	(*RenewForwardResponse)(nil),              // 17: grover.v1.RenewForwardResponse
+	(*StreamForwardStatsRequest)(nil),         // 18: grover.v1.StreamForwardStatsRequest
+	(*TransferEndpoint)(nil),                  // 19: grover.v1.TransferEndpoint
+	(*TransferFileState)(nil),                 // 20: grover.v1.TransferFileState
+	(*TransferJob)(nil),                       // 21: grover.v1.TransferJob
+	(*PrepareTransferEndpointRequest)(nil),    // 22: grover.v1.PrepareTransferEndpointRequest
+	(*PrepareTransferEndpointResponse)(nil),   // 23: grover.v1.PrepareTransferEndpointResponse
+	(*StartTransferJobRequest)(nil),           // 24: grover.v1.StartTransferJobRequest
+	(*StartTransferJobResponse)(nil),          // 25: grover.v1.StartTransferJobResponse
+	(*GetTransferJobRequest)(nil),             // 26: grover.v1.GetTransferJobRequest
+	(*GetTransferJobResponse)(nil),            // 27: grover.v1.GetTransferJobResponse
+	(*ListTransferJobsRequest)(nil),           // 28: grover.v1.ListTransferJobsRequest
+	(*ListTransferJobsResponse)(nil),          // 29: grover.v1.ListTransferJobsResponse
+	(*AbortTransferJobRequest)(nil),           // 30: grover.v1.AbortTransferJobRequest
+	(*AbortTransferJobResponse)(nil),          // 31: grover.v1.AbortTransferJobResponse
+	(*UpdateTransferConcurrencyRequest)(nil),  // 32: grover.v1.UpdateTransferConcurrencyRequest
+	(*UpdateTransferConcurrencyResponse)(nil), // 33: grover.v1.UpdateTransferConcurrencyResponse
+	(*StreamTransferStatsRequest)(nil),        // 34: grover.v1.StreamTransferStatsRequest
+	(*CredentialRef)(nil),                     // 35: grover.v1.CredentialRef
+	(*MkdirRequest)(nil),                      // 36: grover.v1.MkdirRequest
+	(*MkdirResponse)(nil),                     // 37: grover.v1.MkdirResponse
+	(*RenameRequest)(nil),                     // 38: grover.v1.RenameRequest
+	(*RenameResponse)(nil),                    // 39: grover.v1.RenameResponse
+	(*FileInfo)(nil),                          // 40: grover.v1.FileInfo
+	(*ListFilesRequest)(nil),                  // 41: grover.v1.ListFilesRequest
+	(*ListFilesResponse)(nil),                 // 42: grover.v1.ListFilesResponse
+	(*RemoveFileRequest)(nil),                 // 43: grover.v1.RemoveFileRequest
+	(*RemoveFileResponse)(nil),                // 44: grover.v1.RemoveFileResponse
+	(*Credential)(nil),                        // 45: grover.v1.Credential
+	(*BasicDetails)(nil),                      // 46: grover.v1.BasicDetails
+	(*SshDetails)(nil),                        // 47: grover.v1.SshDetails
+	(*CreateCredentialRequest)(nil),           // 48: grover.v1.CreateCredentialRequest
+	(*CreateCredentialResponse)(nil),          // 49: grover.v1.CreateCredentialResponse
+	(*GetCredentialRequest)(nil),              // 50: grover.v1.GetCredentialRequest
+	(*GetCredentialResponse)(nil),             // 51: grover.v1.GetCredentialResponse
+	(*ListCredentialsRequest)(nil),            // 52: grover.v1.ListCredentialsRequest
+	(*ListCredentialsResponse)(nil),           // 53: grover.v1.ListCredentialsResponse
+	(*DeleteCredentialRequest)(nil),           // 54: grover.v1.DeleteCredentialRequest
+	(*DeleteCredentialResponse)(nil),          // 55: grover.v1.DeleteCredentialResponse
 }
 var file_grover_proto_depIdxs = []int32{
-	0,  // 0: grover.v1.MkdirRequest.type:type_name -> grover.v1.EndpointType
-	2,  // 1: grover.v1.MkdirRequest.CredentialRef:type_name -> grover.v1.CredentialRef
-	0,  // 2: grover.v1.RenameRequest.type:type_name -> grover.v1.EndpointType
-	2,  // 3: grover.v1.RenameRequest.credentialRef:type_name -> grover.v1.CredentialRef
-	0,  // 4: grover.v1.ListFilesRequest.type:type_name -> grover.v1.EndpointType
-	2,  // 5: grover.v1.ListFilesRequest.credential_ref:type_name -> grover.v1.CredentialRef
-	7,  // 6: grover.v1.ListFilesResponse.files:type_name -> grover.v1.FileInfo
-	0,  // 7: grover.v1.RemoveFileRequest.type:type_name -> grover.v1.EndpointType
-	2,  // 8: grover.v1.RemoveFileRequest.credential_ref:type_name -> grover.v1.CredentialRef
-	1,  // 9: grover.v1.Credential.type:type_name -> grover.v1.CredentialType
-	13, // 10: grover.v1.Credential.basic:type_name -> grover.v1.BasicDetails
-	14, // 11: grover.v1.Credential.ssh:type_name -> grover.v1.SshDetails
-	12, // 12: grover.v1.CreateCredentialRequest.credential:type_name -> grover.v1.Credential
-	2,  // 13: grover.v1.GetCredentialRequest.ref:type_name -> grover.v1.CredentialRef
-	12, // 14: grover.v1.GetCredentialResponse.credential:type_name -> grover.v1.Credential
-	1,  // 15: grover.v1.ListCredentialsRequest.type:type_name -> grover.v1.CredentialType
-	12, // 16: grover.v1.ListCredentialsResponse.credentials:type_name -> grover.v1.Credential
-	2,  // 17: grover.v1.DeleteCredentialRequest.ref:type_name -> grover.v1.CredentialRef
-	8,  // 18: grover.v1.FileService.List:input_type -> grover.v1.ListFilesRequest
-	10, // 19: grover.v1.FileService.Remove:input_type -> grover.v1.RemoveFileRequest
-	3,  // 20: grover.v1.FileService.Mkdir:input_type -> grover.v1.MkdirRequest
-	5,  // 21: grover.v1.FileService.Rename:input_type -> grover.v1.RenameRequest
-	15, // 22: grover.v1.CredentialService.Create:input_type -> grover.v1.CreateCredentialRequest
-	17, // 23: grover.v1.CredentialService.Get:input_type -> grover.v1.GetCredentialRequest
-	19, // 24: grover.v1.CredentialService.List:input_type -> grover.v1.ListCredentialsRequest
-	21, // 25: grover.v1.CredentialService.Delete:input_type -> grover.v1.DeleteCredentialRequest
-	9,  // 26: grover.v1.FileService.List:output_type -> grover.v1.ListFilesResponse
-	11, // 27: grover.v1.FileService.Remove:output_type -> grover.v1.RemoveFileResponse
-	4,  // 28: grover.v1.FileService.Mkdir:output_type -> grover.v1.MkdirResponse
-	6,  // 29: grover.v1.FileService.Rename:output_type -> grover.v1.RenameResponse
-	16, // 30: grover.v1.CredentialService.Create:output_type -> grover.v1.CreateCredentialResponse
-	18, // 31: grover.v1.CredentialService.Get:output_type -> grover.v1.GetCredentialResponse
-	20, // 32: grover.v1.CredentialService.List:output_type -> grover.v1.ListCredentialsResponse
-	22, // 33: grover.v1.CredentialService.Delete:output_type -> grover.v1.DeleteCredentialResponse
-	26, // [26:34] is the sub-list for method output_type
-	18, // [18:26] is the sub-list for method input_type
-	18, // [18:18] is the sub-list for extension type_name
-	18, // [18:18] is the sub-list for extension extendee
-	0,  // [0:18] is the sub-list for field type_name
+	0,  // 0: grover.v1.ForwardSession.protocol:type_name -> grover.v1.DataProtocol
+	5,  // 1: grover.v1.ForwardSession.ingress:type_name -> grover.v1.DataEndpoint
+	5,  // 2: grover.v1.ForwardSession.egress:type_name -> grover.v1.DataEndpoint
+	1,  // 3: grover.v1.ForwardSession.state:type_name -> grover.v1.RuntimeState
+	6,  // 4: grover.v1.ForwardSession.stats:type_name -> grover.v1.StatsSnapshot
+	0,  // 5: grover.v1.CreateForwardRequest.protocol:type_name -> grover.v1.DataProtocol
+	5,  // 6: grover.v1.CreateForwardRequest.bind:type_name -> grover.v1.DataEndpoint
+	5,  // 7: grover.v1.CreateForwardRequest.egress:type_name -> grover.v1.DataEndpoint
+	7,  // 8: grover.v1.CreateForwardResponse.forward:type_name -> grover.v1.ForwardSession
+	7,  // 9: grover.v1.GetForwardResponse.forward:type_name -> grover.v1.ForwardSession
+	7,  // 10: grover.v1.ListForwardsResponse.forwards:type_name -> grover.v1.ForwardSession
+	7,  // 11: grover.v1.RenewForwardResponse.forward:type_name -> grover.v1.ForwardSession
+	2,  // 12: grover.v1.TransferEndpoint.role:type_name -> grover.v1.TransferEndpointRole
+	0,  // 13: grover.v1.TransferEndpoint.protocol:type_name -> grover.v1.DataProtocol
+	5,  // 14: grover.v1.TransferEndpoint.data_endpoint:type_name -> grover.v1.DataEndpoint
+	1,  // 15: grover.v1.TransferFileState.state:type_name -> grover.v1.RuntimeState
+	1,  // 16: grover.v1.TransferJob.state:type_name -> grover.v1.RuntimeState
+	0,  // 17: grover.v1.TransferJob.protocol:type_name -> grover.v1.DataProtocol
+	19, // 18: grover.v1.TransferJob.source:type_name -> grover.v1.TransferEndpoint
+	19, // 19: grover.v1.TransferJob.destination:type_name -> grover.v1.TransferEndpoint
+	20, // 20: grover.v1.TransferJob.files:type_name -> grover.v1.TransferFileState
+	6,  // 21: grover.v1.TransferJob.stats:type_name -> grover.v1.StatsSnapshot
+	2,  // 22: grover.v1.PrepareTransferEndpointRequest.role:type_name -> grover.v1.TransferEndpointRole
+	0,  // 23: grover.v1.PrepareTransferEndpointRequest.protocol:type_name -> grover.v1.DataProtocol
+	5,  // 24: grover.v1.PrepareTransferEndpointRequest.bind:type_name -> grover.v1.DataEndpoint
+	19, // 25: grover.v1.PrepareTransferEndpointResponse.endpoint:type_name -> grover.v1.TransferEndpoint
+	19, // 26: grover.v1.StartTransferJobRequest.source:type_name -> grover.v1.TransferEndpoint
+	19, // 27: grover.v1.StartTransferJobRequest.destination:type_name -> grover.v1.TransferEndpoint
+	21, // 28: grover.v1.StartTransferJobResponse.job:type_name -> grover.v1.TransferJob
+	21, // 29: grover.v1.GetTransferJobResponse.job:type_name -> grover.v1.TransferJob
+	21, // 30: grover.v1.ListTransferJobsResponse.jobs:type_name -> grover.v1.TransferJob
+	21, // 31: grover.v1.AbortTransferJobResponse.job:type_name -> grover.v1.TransferJob
+	21, // 32: grover.v1.UpdateTransferConcurrencyResponse.job:type_name -> grover.v1.TransferJob
+	3,  // 33: grover.v1.MkdirRequest.type:type_name -> grover.v1.EndpointType
+	35, // 34: grover.v1.MkdirRequest.CredentialRef:type_name -> grover.v1.CredentialRef
+	3,  // 35: grover.v1.RenameRequest.type:type_name -> grover.v1.EndpointType
+	35, // 36: grover.v1.RenameRequest.credentialRef:type_name -> grover.v1.CredentialRef
+	3,  // 37: grover.v1.ListFilesRequest.type:type_name -> grover.v1.EndpointType
+	35, // 38: grover.v1.ListFilesRequest.credential_ref:type_name -> grover.v1.CredentialRef
+	40, // 39: grover.v1.ListFilesResponse.files:type_name -> grover.v1.FileInfo
+	3,  // 40: grover.v1.RemoveFileRequest.type:type_name -> grover.v1.EndpointType
+	35, // 41: grover.v1.RemoveFileRequest.credential_ref:type_name -> grover.v1.CredentialRef
+	4,  // 42: grover.v1.Credential.type:type_name -> grover.v1.CredentialType
+	46, // 43: grover.v1.Credential.basic:type_name -> grover.v1.BasicDetails
+	47, // 44: grover.v1.Credential.ssh:type_name -> grover.v1.SshDetails
+	45, // 45: grover.v1.CreateCredentialRequest.credential:type_name -> grover.v1.Credential
+	35, // 46: grover.v1.GetCredentialRequest.ref:type_name -> grover.v1.CredentialRef
+	45, // 47: grover.v1.GetCredentialResponse.credential:type_name -> grover.v1.Credential
+	4,  // 48: grover.v1.ListCredentialsRequest.type:type_name -> grover.v1.CredentialType
+	45, // 49: grover.v1.ListCredentialsResponse.credentials:type_name -> grover.v1.Credential
+	35, // 50: grover.v1.DeleteCredentialRequest.ref:type_name -> grover.v1.CredentialRef
+	8,  // 51: grover.v1.RelayControl.CreateForward:input_type -> grover.v1.CreateForwardRequest
+	10, // 52: grover.v1.RelayControl.GetForward:input_type -> grover.v1.GetForwardRequest
+	12, // 53: grover.v1.RelayControl.ListForwards:input_type -> grover.v1.ListForwardsRequest
+	14, // 54: grover.v1.RelayControl.DeleteForward:input_type -> grover.v1.DeleteForwardRequest
+	16, // 55: grover.v1.RelayControl.RenewForward:input_type -> grover.v1.RenewForwardRequest
+	18, // 56: grover.v1.RelayControl.StreamForwardStats:input_type -> grover.v1.StreamForwardStatsRequest
+	22, // 57: grover.v1.TransferJobControl.PrepareTransferEndpoint:input_type -> grover.v1.PrepareTransferEndpointRequest
+	24, // 58: grover.v1.TransferJobControl.StartTransferJob:input_type -> grover.v1.StartTransferJobRequest
+	26, // 59: grover.v1.TransferJobControl.GetTransferJob:input_type -> grover.v1.GetTransferJobRequest
+	28, // 60: grover.v1.TransferJobControl.ListTransferJobs:input_type -> grover.v1.ListTransferJobsRequest
+	30, // 61: grover.v1.TransferJobControl.AbortTransferJob:input_type -> grover.v1.AbortTransferJobRequest
+	32, // 62: grover.v1.TransferJobControl.UpdateTransferConcurrency:input_type -> grover.v1.UpdateTransferConcurrencyRequest
+	34, // 63: grover.v1.TransferJobControl.StreamTransferStats:input_type -> grover.v1.StreamTransferStatsRequest
+	41, // 64: grover.v1.FileService.List:input_type -> grover.v1.ListFilesRequest
+	43, // 65: grover.v1.FileService.Remove:input_type -> grover.v1.RemoveFileRequest
+	36, // 66: grover.v1.FileService.Mkdir:input_type -> grover.v1.MkdirRequest
+	38, // 67: grover.v1.FileService.Rename:input_type -> grover.v1.RenameRequest
+	48, // 68: grover.v1.CredentialService.Create:input_type -> grover.v1.CreateCredentialRequest
+	50, // 69: grover.v1.CredentialService.Get:input_type -> grover.v1.GetCredentialRequest
+	52, // 70: grover.v1.CredentialService.List:input_type -> grover.v1.ListCredentialsRequest
+	54, // 71: grover.v1.CredentialService.Delete:input_type -> grover.v1.DeleteCredentialRequest
+	9,  // 72: grover.v1.RelayControl.CreateForward:output_type -> grover.v1.CreateForwardResponse
+	11, // 73: grover.v1.RelayControl.GetForward:output_type -> grover.v1.GetForwardResponse
+	13, // 74: grover.v1.RelayControl.ListForwards:output_type -> grover.v1.ListForwardsResponse
+	15, // 75: grover.v1.RelayControl.DeleteForward:output_type -> grover.v1.DeleteForwardResponse
+	17, // 76: grover.v1.RelayControl.RenewForward:output_type -> grover.v1.RenewForwardResponse
+	7,  // 77: grover.v1.RelayControl.StreamForwardStats:output_type -> grover.v1.ForwardSession
+	23, // 78: grover.v1.TransferJobControl.PrepareTransferEndpoint:output_type -> grover.v1.PrepareTransferEndpointResponse
+	25, // 79: grover.v1.TransferJobControl.StartTransferJob:output_type -> grover.v1.StartTransferJobResponse
+	27, // 80: grover.v1.TransferJobControl.GetTransferJob:output_type -> grover.v1.GetTransferJobResponse
+	29, // 81: grover.v1.TransferJobControl.ListTransferJobs:output_type -> grover.v1.ListTransferJobsResponse
+	31, // 82: grover.v1.TransferJobControl.AbortTransferJob:output_type -> grover.v1.AbortTransferJobResponse
+	33, // 83: grover.v1.TransferJobControl.UpdateTransferConcurrency:output_type -> grover.v1.UpdateTransferConcurrencyResponse
+	21, // 84: grover.v1.TransferJobControl.StreamTransferStats:output_type -> grover.v1.TransferJob
+	42, // 85: grover.v1.FileService.List:output_type -> grover.v1.ListFilesResponse
+	44, // 86: grover.v1.FileService.Remove:output_type -> grover.v1.RemoveFileResponse
+	37, // 87: grover.v1.FileService.Mkdir:output_type -> grover.v1.MkdirResponse
+	39, // 88: grover.v1.FileService.Rename:output_type -> grover.v1.RenameResponse
+	49, // 89: grover.v1.CredentialService.Create:output_type -> grover.v1.CreateCredentialResponse
+	51, // 90: grover.v1.CredentialService.Get:output_type -> grover.v1.GetCredentialResponse
+	53, // 91: grover.v1.CredentialService.List:output_type -> grover.v1.ListCredentialsResponse
+	55, // 92: grover.v1.CredentialService.Delete:output_type -> grover.v1.DeleteCredentialResponse
+	72, // [72:93] is the sub-list for method output_type
+	51, // [51:72] is the sub-list for method input_type
+	51, // [51:51] is the sub-list for extension type_name
+	51, // [51:51] is the sub-list for extension extendee
+	0,  // [0:51] is the sub-list for field type_name
 }
 
 func init() { file_grover_proto_init() }
@@ -1447,11 +3834,11 @@ func file_grover_proto_init() {
 	if File_grover_proto != nil {
 		return
 	}
-	file_grover_proto_msgTypes[0].OneofWrappers = []any{
+	file_grover_proto_msgTypes[30].OneofWrappers = []any{
 		(*CredentialRef_CredentialUuid)(nil),
 		(*CredentialRef_CredentialName)(nil),
 	}
-	file_grover_proto_msgTypes[10].OneofWrappers = []any{
+	file_grover_proto_msgTypes[40].OneofWrappers = []any{
 		(*Credential_Basic)(nil),
 		(*Credential_Ssh)(nil),
 	}
@@ -1460,10 +3847,10 @@ func file_grover_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_grover_proto_rawDesc), len(file_grover_proto_rawDesc)),
-			NumEnums:      2,
-			NumMessages:   21,
+			NumEnums:      5,
+			NumMessages:   51,
 			NumExtensions: 0,
-			NumServices:   2,
+			NumServices:   4,
 		},
 		GoTypes:           file_grover_proto_goTypes,
 		DependencyIndexes: file_grover_proto_depIdxs,

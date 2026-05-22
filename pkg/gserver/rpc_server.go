@@ -13,7 +13,6 @@ import (
 
 	"github.com/jgoldverg/grover/backend"
 	"github.com/jgoldverg/grover/internal"
-	udpPb "github.com/jgoldverg/grover/pkg/groverpb/groverudpv1"
 	groverPb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -54,11 +53,18 @@ func NewGroverServer(ctx context.Context, serverConfig *internal.ServerConfig) *
 	}
 	fs, _ := NewFileService(serverConfig)
 	cs := NewCredentialOps(store)
-	udpControl := NewGUdpControl(serverConfig)
+	relayControl, err := NewRelayControlService(serverConfig)
+	if err != nil {
+		internal.Error("failed to initialize relay control service", internal.Fields{
+			internal.FieldError: err.Error(),
+		})
+		relayControl = &RelayControlService{}
+	}
 
 	groverPb.RegisterFileServiceServer(server, fs)
 	groverPb.RegisterCredentialServiceServer(server, cs)
-	udpPb.RegisterTransferControlServer(server, udpControl)
+	groverPb.RegisterRelayControlServer(server, relayControl)
+	groverPb.RegisterTransferJobControlServer(server, NewTransferJobControlService(serverConfig))
 
 	return &GroverServer{
 		config:       serverConfig,

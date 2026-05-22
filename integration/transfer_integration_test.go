@@ -3,7 +3,6 @@
 package integration
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -17,128 +16,150 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jgoldverg/grover/backend"
 	"github.com/jgoldverg/grover/internal"
 	"github.com/jgoldverg/grover/pkg/gclient"
+	groverpb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
 	"github.com/jgoldverg/grover/pkg/gserver"
 	"github.com/jgoldverg/grover/pkg/util"
 )
 
-func TestTransferRoundTrip(t *testing.T) {
-	for _, protocol := range []string{"tcp", "udp"} {
-		t.Run(protocol+"_stream", func(t *testing.T) {
-			ctx := context.Background()
-			tc := startTestServer(t, protocol, 1)
-			client := newTestClient(t, ctx, tc)
-			defer client.Close()
-
-			src := filepath.Join(tc.tmp, "src.bin")
-			dst := filepath.Join(tc.tmp, "dst.bin")
-			remote := filepath.Join(tc.tmp, "remote.bin")
-			makeDeterministicBlob(t, src, 2*1024*1024)
-
-			uploadFile(t, ctx, client, src, remote)
-			downloadFile(t, ctx, client, remote, dst)
-
-			if got, want := sha256File(t, dst), sha256File(t, src); got != want {
-				t.Fatalf("%s checksum mismatch: got=%s want=%s", protocol, got, want)
-			}
-		})
-	}
-}
-
-func TestTCPParallelChunkUploadAndDownload(t *testing.T) {
-	ctx := context.Background()
-	tc := startTestServer(t, "tcp", 4)
-	client := newTestClient(t, ctx, tc)
-	defer client.Close()
-
-	src := filepath.Join(tc.tmp, "src-parallel.bin")
-	dst := filepath.Join(tc.tmp, "dst-parallel.bin")
-	remote := filepath.Join(tc.tmp, "remote-parallel.bin")
-	makeDeterministicBlob(t, src, 8*1024*1024)
-
-	uploadFile(t, ctx, client, src, remote)
-	downloadFile(t, ctx, client, remote, dst)
-
-	if got, want := sha256File(t, dst), sha256File(t, src); got != want {
-		off, gotByte, wantByte := firstByteDiff(t, dst, src)
-		t.Fatalf("tcp parallel checksum mismatch: got=%s want=%s dst_size=%d src_size=%d first_diff=%d got_byte=%d want_byte=%d", got, want, fileSize(t, dst), fileSize(t, src), off, gotByte, wantByte)
-	}
-}
-
-func TestUDPTransferMultiSizeRoundTrip(t *testing.T) {
-	ctx := context.Background()
-	tc := startTestServer(t, "udp", 1)
-	client := newTestClient(t, ctx, tc)
-	defer client.Close()
-
-	sizes := []int{
-		1,
-		512,
-		1500,
-		64*1024 + 333,
-		2*1024*1024 + 777,
-	}
-	for _, size := range sizes {
-		t.Run(fmt.Sprintf("%d_bytes", size), func(t *testing.T) {
-			src := filepath.Join(tc.tmp, fmt.Sprintf("udp-src-%d.bin", size))
-			dst := filepath.Join(tc.tmp, fmt.Sprintf("udp-dst-%d.bin", size))
-			remote := filepath.Join(tc.tmp, fmt.Sprintf("udp-remote-%d.bin", size))
-			makeDeterministicBlob(t, src, size)
-
-			uploadFile(t, ctx, client, src, remote)
-			downloadFile(t, ctx, client, remote, dst)
-			assertSameFile(t, "udp multi-size", dst, src)
-		})
-	}
-}
-
-func TestUDPConfiguredParallelSendersRoundTrip(t *testing.T) {
-	ctx := context.Background()
-	tc := startTestServer(t, "udp", 4)
-	client := newTestClient(t, ctx, tc)
-	defer client.Close()
-
-	src := filepath.Join(tc.tmp, "udp-src-parallel-config.bin")
-	dst := filepath.Join(tc.tmp, "udp-dst-parallel-config.bin")
-	remote := filepath.Join(tc.tmp, "udp-remote-parallel-config.bin")
-	makeDeterministicBlob(t, src, 4*1024*1024+123)
-
-	uploadFile(t, ctx, client, src, remote)
-	downloadFile(t, ctx, client, remote, dst)
-	assertSameFile(t, "udp parallel-config", dst, src)
-}
-
-func TestConcurrentFileTransfers(t *testing.T) {
+func TestRoutedTransferJobDirectRoundTrip(t *testing.T) {
 	for _, protocol := range []string{"tcp", "udp"} {
 		t.Run(protocol, func(t *testing.T) {
 			ctx := context.Background()
-			tc := startTestServer(t, protocol, 4)
-			client := newTestClient(t, ctx, tc)
-			defer client.Close()
+			sourceServer := startTestServer(t, protocol)
+			destServer := startTestServer(t, protocol)
+			sourceClient := newTestClient(t, ctx, sourceServer)
+			defer sourceClient.Close()
+			destClient := newTestClient(t, ctx, destServer)
+			defer destClient.Close()
+
+			sourceRoot := filepath.Join(sourceServer.tmp, "source-root")
+			destRoot := filepath.Join(destServer.tmp, "dest-root")
+			if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(destRoot, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			src := filepath.Join(sourceRoot, "file.bin")
+			makeDeterministicBlob(t, src, 1024*1024+333)
+
+			sourceAPI := sourceClient.RoutedTransfer()
+			destAPI := destClient.RoutedTransfer()
+			if sourceAPI == nil || destAPI == nil {
+				t.Fatal("routed transfer service unavailable")
+			}
+			pbProtocol := groverpb.DataProtocol_DATA_PROTOCOL_TCP
+			if protocol == "udp" {
+				pbProtocol = groverpb.DataProtocol_DATA_PROTOCOL_UDP
+			}
+			jobID := "routed-direct-" + protocol
+			source, err := sourceAPI.PrepareTransferEndpoint(ctx, &groverpb.PrepareTransferEndpointRequest{
+				RouteId:  "routed-direct",
+				JobId:    jobID,
+				Role:     groverpb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_SOURCE,
+				Protocol: pbProtocol,
+				RootPath: sourceRoot,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			dest, err := destAPI.PrepareTransferEndpoint(ctx, &groverpb.PrepareTransferEndpointRequest{
+				RouteId:  "routed-direct",
+				JobId:    jobID,
+				Role:     groverpb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_DESTINATION,
+				Protocol: pbProtocol,
+				RootPath: destRoot,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := sourceAPI.StartTransferJob(ctx, &groverpb.StartTransferJobRequest{
+				RouteId:        "routed-direct",
+				JobId:          jobID,
+				Source:         source,
+				Destination:    dest,
+				FilesInFlight:  1,
+				StreamsPerFile: 3,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			waitForRoutedJobDone(t, ctx, sourceAPI, jobID)
+			assertSameFile(t, "routed direct "+protocol, filepath.Join(destRoot, "file.bin"), src)
+		})
+	}
+}
+
+func TestRoutedTransferJobDirectMultiSizeUDP(t *testing.T) {
+	ctx := context.Background()
+	sourceServer := startTestServer(t, "udp")
+	destServer := startTestServer(t, "udp")
+	sourceClient := newTestClient(t, ctx, sourceServer)
+	defer sourceClient.Close()
+	destClient := newTestClient(t, ctx, destServer)
+	defer destClient.Close()
+
+	sourceRoot := filepath.Join(sourceServer.tmp, "source-root")
+	destRoot := filepath.Join(destServer.tmp, "dest-root")
+	if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(destRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sizes := []int{1, 512, 1500, 64*1024 + 333, 2*1024*1024 + 777}
+	for _, size := range sizes {
+		t.Run(fmt.Sprintf("%d_bytes", size), func(t *testing.T) {
+			name := fmt.Sprintf("file-%d.bin", size)
+			src := filepath.Join(sourceRoot, name)
+			makeDeterministicBlob(t, src, size)
+			startRoutedDirectJob(t, ctx, sourceClient.RoutedTransfer(), destClient.RoutedTransfer(), "udp-multi", "udp-multi-"+fmt.Sprint(size), sourceRoot, destRoot, "udp", []string{name}, 1, 3)
+			assertSameFile(t, "udp routed multi-size", filepath.Join(destRoot, name), src)
+		})
+	}
+}
+
+func TestRoutedTransferJobConcurrentDirect(t *testing.T) {
+	for _, protocol := range []string{"tcp", "udp"} {
+		t.Run(protocol, func(t *testing.T) {
+			ctx := context.Background()
+			sourceServer := startTestServer(t, protocol)
+			destServer := startTestServer(t, protocol)
+			sourceClient := newTestClient(t, ctx, sourceServer)
+			defer sourceClient.Close()
+			destClient := newTestClient(t, ctx, destServer)
+			defer destClient.Close()
+
+			sourceRoot := filepath.Join(sourceServer.tmp, "source-root")
+			destRoot := filepath.Join(destServer.tmp, "dest-root")
+			if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(destRoot, 0o755); err != nil {
+				t.Fatal(err)
+			}
 
 			const files = 6
+			names := make([]string, files)
 			var wg sync.WaitGroup
 			errCh := make(chan error, files)
 			for i := 0; i < files; i++ {
 				i := i
-				src := filepath.Join(tc.tmp, fmt.Sprintf("src-%02d.bin", i))
-				remote := filepath.Join(tc.tmp, fmt.Sprintf("remote-%02d.bin", i))
-				dst := filepath.Join(tc.tmp, fmt.Sprintf("dst-%02d.bin", i))
+				names[i] = fmt.Sprintf("src-%02d.bin", i)
+				src := filepath.Join(sourceRoot, names[i])
 				makeDeterministicBlob(t, src, 512*1024+i*1024)
 
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					if err := uploadFileErr(ctx, client, src, remote); err != nil {
+					jobID := fmt.Sprintf("%s-concurrent-%02d", protocol, i)
+					err := startRoutedDirectJobErr(ctx, sourceClient.RoutedTransfer(), destClient.RoutedTransfer(), protocol+"-concurrent", jobID, sourceRoot, destRoot, protocol, []string{names[i]}, 1, 2)
+					if err != nil {
 						errCh <- err
 						return
 					}
-					if err := downloadFileErr(ctx, client, remote, dst); err != nil {
-						errCh <- err
-						return
-					}
+					dst := filepath.Join(destRoot, names[i])
 					if got, want := sha256File(t, dst), sha256File(t, src); got != want {
 						off, gotByte, wantByte := firstByteDiff(t, dst, src)
 						errCh <- fmt.Errorf("%s checksum mismatch for file %d: got=%s want=%s dst_size=%d src_size=%d first_diff=%d got_byte=%d want_byte=%d", protocol, i, got, want, fileSize(t, dst), fileSize(t, src), off, gotByte, wantByte)
@@ -156,72 +177,20 @@ func TestConcurrentFileTransfers(t *testing.T) {
 	}
 }
 
-func TestUDPConcurrentIndependentSessions(t *testing.T) {
-	ctx := context.Background()
-	tc := startTestServer(t, "udp", 1)
-	client := newTestClient(t, ctx, tc)
-	defer client.Close()
-
-	const files = 10
-	var wg sync.WaitGroup
-	errCh := make(chan error, files)
-	for i := 0; i < files; i++ {
-		i := i
-		src := filepath.Join(tc.tmp, fmt.Sprintf("udp-independent-src-%02d.bin", i))
-		remote := filepath.Join(tc.tmp, fmt.Sprintf("udp-independent-remote-%02d.bin", i))
-		dst := filepath.Join(tc.tmp, fmt.Sprintf("udp-independent-dst-%02d.bin", i))
-		makeDeterministicBlob(t, src, 128*1024+i*17*1024)
-
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := uploadFileErr(ctx, client, src, remote); err != nil {
-				errCh <- err
-				return
-			}
-			if err := downloadFileErr(ctx, client, remote, dst); err != nil {
-				errCh <- err
-				return
-			}
-			if got, want := sha256File(t, dst), sha256File(t, src); got != want {
-				off, gotByte, wantByte := firstByteDiff(t, dst, src)
-				errCh <- fmt.Errorf("udp independent checksum mismatch for file %d: got=%s want=%s dst_size=%d src_size=%d first_diff=%d got_byte=%d want_byte=%d", i, got, want, fileSize(t, dst), fileSize(t, src), off, gotByte, wantByte)
-			}
-		}()
-	}
-	wg.Wait()
-	close(errCh)
-	for err := range errCh {
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
 type testServer struct {
-	tmp              string
-	port             int
-	protocol         string
-	parallelSenders  uint
-	credentialsFile  string
-	previousProtocol string
+	tmp             string
+	port            int
+	protocol        string
+	credentialsFile string
 }
 
-func startTestServer(t *testing.T, protocol string, parallelSenders uint) testServer {
+func startTestServer(t *testing.T, protocol string) testServer {
 	t.Helper()
 	_ = internal.ConfigureLogger("warn")
 	tmp := t.TempDir()
 	port := freePort(t)
 	creds := filepath.Join(tmp, "credentials.toml")
 	writeFile(t, creds, "[credentials]\n")
-
-	prevProtocol, hadProtocol := os.LookupEnv("GROVER_TRANSFER_PROTOCOL")
-	t.Setenv("GROVER_TRANSFER_PROTOCOL", protocol)
-	t.Setenv("GUDP_CLIENT_CONFIG_PARALLEL_SENDERS", fmt.Sprint(parallelSenders))
-	t.Setenv("GUDP_CLIENT_CONFIG_SOCKET_BUFFER_SIZE", "8388608")
-	if !hadProtocol {
-		prevProtocol = ""
-	}
 
 	cfg := &internal.ServerConfig{
 		Port:               port,
@@ -245,18 +214,12 @@ func startTestServer(t *testing.T, protocol string, parallelSenders uint) testSe
 		case <-errCh:
 		case <-time.After(3 * time.Second):
 		}
-		if hadProtocol {
-			_ = os.Setenv("GROVER_TRANSFER_PROTOCOL", prevProtocol)
-		} else {
-			_ = os.Unsetenv("GROVER_TRANSFER_PROTOCOL")
-		}
 	})
 
 	tc := testServer{
 		tmp:             tmp,
 		port:            port,
 		protocol:        protocol,
-		parallelSenders: parallelSenders,
 		credentialsFile: creds,
 	}
 	waitForGRPC(t, tc)
@@ -289,7 +252,7 @@ func waitForGRPC(t *testing.T, tc testServer) {
 		client := newTestClientNoFatal(tc)
 		err := client.Initialize(ctx, util.RouteForceRemote)
 		if err == nil {
-			_, err = client.Transfer().Enumerate(ctx, tc.tmp, false)
+			_, err = client.RoutedTransfer().ListTransferJobs(ctx, "")
 		}
 		_ = client.Close()
 		cancel()
@@ -314,39 +277,83 @@ func newTestClientNoFatal(tc testServer) *gclient.Client {
 	return gclient.NewClient(cfg)
 }
 
-func uploadFile(t *testing.T, ctx context.Context, client *gclient.Client, src, remote string) {
+func startRoutedDirectJob(t *testing.T, ctx context.Context, sourceAPI gclient.RoutedTransferAPI, destAPI gclient.RoutedTransferAPI, routeID, jobID, sourceRoot, destRoot, protocol string, files []string, filesInFlight, streamsPerFile uint32) {
 	t.Helper()
-	if err := uploadFileErr(ctx, client, src, remote); err != nil {
+	if err := startRoutedDirectJobErr(ctx, sourceAPI, destAPI, routeID, jobID, sourceRoot, destRoot, protocol, files, filesInFlight, streamsPerFile); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func uploadFileErr(ctx context.Context, client *gclient.Client, src, remote string) error {
-	f, err := os.Open(src)
+func startRoutedDirectJobErr(ctx context.Context, sourceAPI gclient.RoutedTransferAPI, destAPI gclient.RoutedTransferAPI, routeID, jobID, sourceRoot, destRoot, protocol string, files []string, filesInFlight, streamsPerFile uint32) error {
+	if sourceAPI == nil || destAPI == nil {
+		return fmt.Errorf("routed transfer service unavailable")
+	}
+	pbProtocol := groverpb.DataProtocol_DATA_PROTOCOL_TCP
+	if protocol == "udp" {
+		pbProtocol = groverpb.DataProtocol_DATA_PROTOCOL_UDP
+	}
+	source, err := sourceAPI.PrepareTransferEndpoint(ctx, &groverpb.PrepareTransferEndpointRequest{
+		RouteId:  routeID,
+		JobId:    jobID,
+		Role:     groverpb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_SOURCE,
+		Protocol: pbProtocol,
+		RootPath: sourceRoot,
+	})
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	st, err := f.Stat()
+	dest, err := destAPI.PrepareTransferEndpoint(ctx, &groverpb.PrepareTransferEndpointRequest{
+		RouteId:  routeID,
+		JobId:    jobID,
+		Role:     groverpb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_DESTINATION,
+		Protocol: pbProtocol,
+		RootPath: destRoot,
+	})
 	if err != nil {
 		return err
 	}
-	return client.Transfer().Put(ctx, remote, f, st.Size(), backend.ALWAYS)
+	for _, name := range files {
+		if _, err := os.Stat(filepath.Join(sourceRoot, name)); err != nil {
+			return err
+		}
+	}
+	if _, err := sourceAPI.StartTransferJob(ctx, &groverpb.StartTransferJobRequest{
+		RouteId:        routeID,
+		JobId:          jobID,
+		Source:         source,
+		Destination:    dest,
+		Paths:          files,
+		FilesInFlight:  filesInFlight,
+		StreamsPerFile: streamsPerFile,
+	}); err != nil {
+		return err
+	}
+	return waitForRoutedJobDoneErr(ctx, sourceAPI, jobID)
 }
 
-func downloadFile(t *testing.T, ctx context.Context, client *gclient.Client, remote, dst string) {
+func waitForRoutedJobDone(t *testing.T, ctx context.Context, api gclient.RoutedTransferAPI, jobID string) {
 	t.Helper()
-	if err := downloadFileErr(ctx, client, remote, dst); err != nil {
+	if err := waitForRoutedJobDoneErr(ctx, api, jobID); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func downloadFileErr(ctx context.Context, client *gclient.Client, remote, dst string) error {
-	var buf bytes.Buffer
-	if err := client.Transfer().Get(ctx, remote, &buf); err != nil {
-		return err
+func waitForRoutedJobDoneErr(ctx context.Context, api gclient.RoutedTransferAPI, jobID string) error {
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		job, err := api.GetTransferJob(ctx, jobID)
+		if err != nil {
+			return err
+		}
+		switch job.GetState() {
+		case groverpb.RuntimeState_RUNTIME_STATE_DONE:
+			return nil
+		case groverpb.RuntimeState_RUNTIME_STATE_FAILED, groverpb.RuntimeState_RUNTIME_STATE_ABORTED, groverpb.RuntimeState_RUNTIME_STATE_EXPIRED:
+			return fmt.Errorf("routed job %s ended in %s: %s", jobID, job.GetState(), job.GetErrorMessage())
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
-	return os.WriteFile(dst, buf.Bytes(), 0o644)
+	return fmt.Errorf("routed job %s did not finish before deadline", jobID)
 }
 
 func freePort(t *testing.T) int {

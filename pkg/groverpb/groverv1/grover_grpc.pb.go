@@ -19,6 +19,636 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	RelayControl_CreateForward_FullMethodName      = "/grover.v1.RelayControl/CreateForward"
+	RelayControl_GetForward_FullMethodName         = "/grover.v1.RelayControl/GetForward"
+	RelayControl_ListForwards_FullMethodName       = "/grover.v1.RelayControl/ListForwards"
+	RelayControl_DeleteForward_FullMethodName      = "/grover.v1.RelayControl/DeleteForward"
+	RelayControl_RenewForward_FullMethodName       = "/grover.v1.RelayControl/RenewForward"
+	RelayControl_StreamForwardStats_FullMethodName = "/grover.v1.RelayControl/StreamForwardStats"
+)
+
+// RelayControlClient is the client API for RelayControl service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type RelayControlClient interface {
+	CreateForward(ctx context.Context, in *CreateForwardRequest, opts ...grpc.CallOption) (*CreateForwardResponse, error)
+	GetForward(ctx context.Context, in *GetForwardRequest, opts ...grpc.CallOption) (*GetForwardResponse, error)
+	ListForwards(ctx context.Context, in *ListForwardsRequest, opts ...grpc.CallOption) (*ListForwardsResponse, error)
+	DeleteForward(ctx context.Context, in *DeleteForwardRequest, opts ...grpc.CallOption) (*DeleteForwardResponse, error)
+	RenewForward(ctx context.Context, in *RenewForwardRequest, opts ...grpc.CallOption) (*RenewForwardResponse, error)
+	StreamForwardStats(ctx context.Context, in *StreamForwardStatsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ForwardSession], error)
+}
+
+type relayControlClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewRelayControlClient(cc grpc.ClientConnInterface) RelayControlClient {
+	return &relayControlClient{cc}
+}
+
+func (c *relayControlClient) CreateForward(ctx context.Context, in *CreateForwardRequest, opts ...grpc.CallOption) (*CreateForwardResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateForwardResponse)
+	err := c.cc.Invoke(ctx, RelayControl_CreateForward_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *relayControlClient) GetForward(ctx context.Context, in *GetForwardRequest, opts ...grpc.CallOption) (*GetForwardResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetForwardResponse)
+	err := c.cc.Invoke(ctx, RelayControl_GetForward_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *relayControlClient) ListForwards(ctx context.Context, in *ListForwardsRequest, opts ...grpc.CallOption) (*ListForwardsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListForwardsResponse)
+	err := c.cc.Invoke(ctx, RelayControl_ListForwards_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *relayControlClient) DeleteForward(ctx context.Context, in *DeleteForwardRequest, opts ...grpc.CallOption) (*DeleteForwardResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteForwardResponse)
+	err := c.cc.Invoke(ctx, RelayControl_DeleteForward_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *relayControlClient) RenewForward(ctx context.Context, in *RenewForwardRequest, opts ...grpc.CallOption) (*RenewForwardResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RenewForwardResponse)
+	err := c.cc.Invoke(ctx, RelayControl_RenewForward_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *relayControlClient) StreamForwardStats(ctx context.Context, in *StreamForwardStatsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ForwardSession], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &RelayControl_ServiceDesc.Streams[0], RelayControl_StreamForwardStats_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[StreamForwardStatsRequest, ForwardSession]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RelayControl_StreamForwardStatsClient = grpc.ServerStreamingClient[ForwardSession]
+
+// RelayControlServer is the server API for RelayControl service.
+// All implementations must embed UnimplementedRelayControlServer
+// for forward compatibility.
+type RelayControlServer interface {
+	CreateForward(context.Context, *CreateForwardRequest) (*CreateForwardResponse, error)
+	GetForward(context.Context, *GetForwardRequest) (*GetForwardResponse, error)
+	ListForwards(context.Context, *ListForwardsRequest) (*ListForwardsResponse, error)
+	DeleteForward(context.Context, *DeleteForwardRequest) (*DeleteForwardResponse, error)
+	RenewForward(context.Context, *RenewForwardRequest) (*RenewForwardResponse, error)
+	StreamForwardStats(*StreamForwardStatsRequest, grpc.ServerStreamingServer[ForwardSession]) error
+	mustEmbedUnimplementedRelayControlServer()
+}
+
+// UnimplementedRelayControlServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedRelayControlServer struct{}
+
+func (UnimplementedRelayControlServer) CreateForward(context.Context, *CreateForwardRequest) (*CreateForwardResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateForward not implemented")
+}
+func (UnimplementedRelayControlServer) GetForward(context.Context, *GetForwardRequest) (*GetForwardResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetForward not implemented")
+}
+func (UnimplementedRelayControlServer) ListForwards(context.Context, *ListForwardsRequest) (*ListForwardsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListForwards not implemented")
+}
+func (UnimplementedRelayControlServer) DeleteForward(context.Context, *DeleteForwardRequest) (*DeleteForwardResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteForward not implemented")
+}
+func (UnimplementedRelayControlServer) RenewForward(context.Context, *RenewForwardRequest) (*RenewForwardResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RenewForward not implemented")
+}
+func (UnimplementedRelayControlServer) StreamForwardStats(*StreamForwardStatsRequest, grpc.ServerStreamingServer[ForwardSession]) error {
+	return status.Errorf(codes.Unimplemented, "method StreamForwardStats not implemented")
+}
+func (UnimplementedRelayControlServer) mustEmbedUnimplementedRelayControlServer() {}
+func (UnimplementedRelayControlServer) testEmbeddedByValue()                      {}
+
+// UnsafeRelayControlServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to RelayControlServer will
+// result in compilation errors.
+type UnsafeRelayControlServer interface {
+	mustEmbedUnimplementedRelayControlServer()
+}
+
+func RegisterRelayControlServer(s grpc.ServiceRegistrar, srv RelayControlServer) {
+	// If the following call pancis, it indicates UnimplementedRelayControlServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&RelayControl_ServiceDesc, srv)
+}
+
+func _RelayControl_CreateForward_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateForwardRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).CreateForward(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_CreateForward_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).CreateForward(ctx, req.(*CreateForwardRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RelayControl_GetForward_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetForwardRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).GetForward(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_GetForward_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).GetForward(ctx, req.(*GetForwardRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RelayControl_ListForwards_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListForwardsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).ListForwards(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_ListForwards_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).ListForwards(ctx, req.(*ListForwardsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RelayControl_DeleteForward_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteForwardRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).DeleteForward(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_DeleteForward_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).DeleteForward(ctx, req.(*DeleteForwardRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RelayControl_RenewForward_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RenewForwardRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RelayControlServer).RenewForward(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RelayControl_RenewForward_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RelayControlServer).RenewForward(ctx, req.(*RenewForwardRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RelayControl_StreamForwardStats_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(StreamForwardStatsRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(RelayControlServer).StreamForwardStats(m, &grpc.GenericServerStream[StreamForwardStatsRequest, ForwardSession]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RelayControl_StreamForwardStatsServer = grpc.ServerStreamingServer[ForwardSession]
+
+// RelayControl_ServiceDesc is the grpc.ServiceDesc for RelayControl service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var RelayControl_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "grover.v1.RelayControl",
+	HandlerType: (*RelayControlServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "CreateForward",
+			Handler:    _RelayControl_CreateForward_Handler,
+		},
+		{
+			MethodName: "GetForward",
+			Handler:    _RelayControl_GetForward_Handler,
+		},
+		{
+			MethodName: "ListForwards",
+			Handler:    _RelayControl_ListForwards_Handler,
+		},
+		{
+			MethodName: "DeleteForward",
+			Handler:    _RelayControl_DeleteForward_Handler,
+		},
+		{
+			MethodName: "RenewForward",
+			Handler:    _RelayControl_RenewForward_Handler,
+		},
+	},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "StreamForwardStats",
+			Handler:       _RelayControl_StreamForwardStats_Handler,
+			ServerStreams: true,
+		},
+	},
+	Metadata: "grover.proto",
+}
+
+const (
+	TransferJobControl_PrepareTransferEndpoint_FullMethodName   = "/grover.v1.TransferJobControl/PrepareTransferEndpoint"
+	TransferJobControl_StartTransferJob_FullMethodName          = "/grover.v1.TransferJobControl/StartTransferJob"
+	TransferJobControl_GetTransferJob_FullMethodName            = "/grover.v1.TransferJobControl/GetTransferJob"
+	TransferJobControl_ListTransferJobs_FullMethodName          = "/grover.v1.TransferJobControl/ListTransferJobs"
+	TransferJobControl_AbortTransferJob_FullMethodName          = "/grover.v1.TransferJobControl/AbortTransferJob"
+	TransferJobControl_UpdateTransferConcurrency_FullMethodName = "/grover.v1.TransferJobControl/UpdateTransferConcurrency"
+	TransferJobControl_StreamTransferStats_FullMethodName       = "/grover.v1.TransferJobControl/StreamTransferStats"
+)
+
+// TransferJobControlClient is the client API for TransferJobControl service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type TransferJobControlClient interface {
+	PrepareTransferEndpoint(ctx context.Context, in *PrepareTransferEndpointRequest, opts ...grpc.CallOption) (*PrepareTransferEndpointResponse, error)
+	StartTransferJob(ctx context.Context, in *StartTransferJobRequest, opts ...grpc.CallOption) (*StartTransferJobResponse, error)
+	GetTransferJob(ctx context.Context, in *GetTransferJobRequest, opts ...grpc.CallOption) (*GetTransferJobResponse, error)
+	ListTransferJobs(ctx context.Context, in *ListTransferJobsRequest, opts ...grpc.CallOption) (*ListTransferJobsResponse, error)
+	AbortTransferJob(ctx context.Context, in *AbortTransferJobRequest, opts ...grpc.CallOption) (*AbortTransferJobResponse, error)
+	UpdateTransferConcurrency(ctx context.Context, in *UpdateTransferConcurrencyRequest, opts ...grpc.CallOption) (*UpdateTransferConcurrencyResponse, error)
+	StreamTransferStats(ctx context.Context, in *StreamTransferStatsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TransferJob], error)
+}
+
+type transferJobControlClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewTransferJobControlClient(cc grpc.ClientConnInterface) TransferJobControlClient {
+	return &transferJobControlClient{cc}
+}
+
+func (c *transferJobControlClient) PrepareTransferEndpoint(ctx context.Context, in *PrepareTransferEndpointRequest, opts ...grpc.CallOption) (*PrepareTransferEndpointResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PrepareTransferEndpointResponse)
+	err := c.cc.Invoke(ctx, TransferJobControl_PrepareTransferEndpoint_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *transferJobControlClient) StartTransferJob(ctx context.Context, in *StartTransferJobRequest, opts ...grpc.CallOption) (*StartTransferJobResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StartTransferJobResponse)
+	err := c.cc.Invoke(ctx, TransferJobControl_StartTransferJob_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *transferJobControlClient) GetTransferJob(ctx context.Context, in *GetTransferJobRequest, opts ...grpc.CallOption) (*GetTransferJobResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetTransferJobResponse)
+	err := c.cc.Invoke(ctx, TransferJobControl_GetTransferJob_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *transferJobControlClient) ListTransferJobs(ctx context.Context, in *ListTransferJobsRequest, opts ...grpc.CallOption) (*ListTransferJobsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListTransferJobsResponse)
+	err := c.cc.Invoke(ctx, TransferJobControl_ListTransferJobs_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *transferJobControlClient) AbortTransferJob(ctx context.Context, in *AbortTransferJobRequest, opts ...grpc.CallOption) (*AbortTransferJobResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AbortTransferJobResponse)
+	err := c.cc.Invoke(ctx, TransferJobControl_AbortTransferJob_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *transferJobControlClient) UpdateTransferConcurrency(ctx context.Context, in *UpdateTransferConcurrencyRequest, opts ...grpc.CallOption) (*UpdateTransferConcurrencyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateTransferConcurrencyResponse)
+	err := c.cc.Invoke(ctx, TransferJobControl_UpdateTransferConcurrency_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *transferJobControlClient) StreamTransferStats(ctx context.Context, in *StreamTransferStatsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TransferJob], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &TransferJobControl_ServiceDesc.Streams[0], TransferJobControl_StreamTransferStats_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[StreamTransferStatsRequest, TransferJob]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type TransferJobControl_StreamTransferStatsClient = grpc.ServerStreamingClient[TransferJob]
+
+// TransferJobControlServer is the server API for TransferJobControl service.
+// All implementations must embed UnimplementedTransferJobControlServer
+// for forward compatibility.
+type TransferJobControlServer interface {
+	PrepareTransferEndpoint(context.Context, *PrepareTransferEndpointRequest) (*PrepareTransferEndpointResponse, error)
+	StartTransferJob(context.Context, *StartTransferJobRequest) (*StartTransferJobResponse, error)
+	GetTransferJob(context.Context, *GetTransferJobRequest) (*GetTransferJobResponse, error)
+	ListTransferJobs(context.Context, *ListTransferJobsRequest) (*ListTransferJobsResponse, error)
+	AbortTransferJob(context.Context, *AbortTransferJobRequest) (*AbortTransferJobResponse, error)
+	UpdateTransferConcurrency(context.Context, *UpdateTransferConcurrencyRequest) (*UpdateTransferConcurrencyResponse, error)
+	StreamTransferStats(*StreamTransferStatsRequest, grpc.ServerStreamingServer[TransferJob]) error
+	mustEmbedUnimplementedTransferJobControlServer()
+}
+
+// UnimplementedTransferJobControlServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedTransferJobControlServer struct{}
+
+func (UnimplementedTransferJobControlServer) PrepareTransferEndpoint(context.Context, *PrepareTransferEndpointRequest) (*PrepareTransferEndpointResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PrepareTransferEndpoint not implemented")
+}
+func (UnimplementedTransferJobControlServer) StartTransferJob(context.Context, *StartTransferJobRequest) (*StartTransferJobResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method StartTransferJob not implemented")
+}
+func (UnimplementedTransferJobControlServer) GetTransferJob(context.Context, *GetTransferJobRequest) (*GetTransferJobResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetTransferJob not implemented")
+}
+func (UnimplementedTransferJobControlServer) ListTransferJobs(context.Context, *ListTransferJobsRequest) (*ListTransferJobsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListTransferJobs not implemented")
+}
+func (UnimplementedTransferJobControlServer) AbortTransferJob(context.Context, *AbortTransferJobRequest) (*AbortTransferJobResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AbortTransferJob not implemented")
+}
+func (UnimplementedTransferJobControlServer) UpdateTransferConcurrency(context.Context, *UpdateTransferConcurrencyRequest) (*UpdateTransferConcurrencyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UpdateTransferConcurrency not implemented")
+}
+func (UnimplementedTransferJobControlServer) StreamTransferStats(*StreamTransferStatsRequest, grpc.ServerStreamingServer[TransferJob]) error {
+	return status.Errorf(codes.Unimplemented, "method StreamTransferStats not implemented")
+}
+func (UnimplementedTransferJobControlServer) mustEmbedUnimplementedTransferJobControlServer() {}
+func (UnimplementedTransferJobControlServer) testEmbeddedByValue()                            {}
+
+// UnsafeTransferJobControlServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to TransferJobControlServer will
+// result in compilation errors.
+type UnsafeTransferJobControlServer interface {
+	mustEmbedUnimplementedTransferJobControlServer()
+}
+
+func RegisterTransferJobControlServer(s grpc.ServiceRegistrar, srv TransferJobControlServer) {
+	// If the following call pancis, it indicates UnimplementedTransferJobControlServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&TransferJobControl_ServiceDesc, srv)
+}
+
+func _TransferJobControl_PrepareTransferEndpoint_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PrepareTransferEndpointRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TransferJobControlServer).PrepareTransferEndpoint(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TransferJobControl_PrepareTransferEndpoint_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TransferJobControlServer).PrepareTransferEndpoint(ctx, req.(*PrepareTransferEndpointRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TransferJobControl_StartTransferJob_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StartTransferJobRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TransferJobControlServer).StartTransferJob(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TransferJobControl_StartTransferJob_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TransferJobControlServer).StartTransferJob(ctx, req.(*StartTransferJobRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TransferJobControl_GetTransferJob_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetTransferJobRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TransferJobControlServer).GetTransferJob(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TransferJobControl_GetTransferJob_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TransferJobControlServer).GetTransferJob(ctx, req.(*GetTransferJobRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TransferJobControl_ListTransferJobs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListTransferJobsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TransferJobControlServer).ListTransferJobs(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TransferJobControl_ListTransferJobs_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TransferJobControlServer).ListTransferJobs(ctx, req.(*ListTransferJobsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TransferJobControl_AbortTransferJob_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AbortTransferJobRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TransferJobControlServer).AbortTransferJob(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TransferJobControl_AbortTransferJob_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TransferJobControlServer).AbortTransferJob(ctx, req.(*AbortTransferJobRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TransferJobControl_UpdateTransferConcurrency_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateTransferConcurrencyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TransferJobControlServer).UpdateTransferConcurrency(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TransferJobControl_UpdateTransferConcurrency_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TransferJobControlServer).UpdateTransferConcurrency(ctx, req.(*UpdateTransferConcurrencyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TransferJobControl_StreamTransferStats_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(StreamTransferStatsRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(TransferJobControlServer).StreamTransferStats(m, &grpc.GenericServerStream[StreamTransferStatsRequest, TransferJob]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type TransferJobControl_StreamTransferStatsServer = grpc.ServerStreamingServer[TransferJob]
+
+// TransferJobControl_ServiceDesc is the grpc.ServiceDesc for TransferJobControl service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var TransferJobControl_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "grover.v1.TransferJobControl",
+	HandlerType: (*TransferJobControlServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "PrepareTransferEndpoint",
+			Handler:    _TransferJobControl_PrepareTransferEndpoint_Handler,
+		},
+		{
+			MethodName: "StartTransferJob",
+			Handler:    _TransferJobControl_StartTransferJob_Handler,
+		},
+		{
+			MethodName: "GetTransferJob",
+			Handler:    _TransferJobControl_GetTransferJob_Handler,
+		},
+		{
+			MethodName: "ListTransferJobs",
+			Handler:    _TransferJobControl_ListTransferJobs_Handler,
+		},
+		{
+			MethodName: "AbortTransferJob",
+			Handler:    _TransferJobControl_AbortTransferJob_Handler,
+		},
+		{
+			MethodName: "UpdateTransferConcurrency",
+			Handler:    _TransferJobControl_UpdateTransferConcurrency_Handler,
+		},
+	},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "StreamTransferStats",
+			Handler:       _TransferJobControl_StreamTransferStats_Handler,
+			ServerStreams: true,
+		},
+	},
+	Metadata: "grover.proto",
+}
+
+const (
 	FileService_List_FullMethodName   = "/grover.v1.FileService/List"
 	FileService_Remove_FullMethodName = "/grover.v1.FileService/Remove"
 	FileService_Mkdir_FullMethodName  = "/grover.v1.FileService/Mkdir"

@@ -52,6 +52,258 @@ To keep the readers and writers fully parallel we track progress in memory and t
 This is far more complicated and writing is confusing hence I need to iron this out more.
 There are two primary connections to the grover server: grpc for management operations, and then the udp session that enables uploads/downloads
 
+## Local transfer commands
+
+Build the binaries from the repo root:
+
+```bash
+go build -o bin/grover ./cmd/grover
+go build -o bin/groverd ./cmd/groverd
+```
+
+Start a UDP groverd. This enables the UDP data plane, starts the control plane without TLS, uses jumbo MTU sizing, and increases socket buffers for high-throughput testing:
+
+```bash
+./bin/groverd \
+  --port=22444 \
+  --protocol=udp \
+  --insecure-control \
+  --log-level=warn \
+  --udp-mtu=8972 \
+  --udp-window-packets=65536 \
+  --udp-batch-packets=64 \
+  --udp-ack-every-packets=128 \
+  --udp-ack-every-ms=1 \
+  --udp-read-buffer=134217728 \
+  --udp-write-buffer=134217728
+```
+
+Start a TCP groverd:
+
+```bash
+./bin/groverd \
+  --port=22444 \
+  --protocol=tcp \
+  --insecure-control \
+  --log-level=warn
+```
+
+Start groverd with an explicit data-plane bind/advertise address and server-allocated data-port range:
+
+```bash
+./bin/groverd \
+  --port=22444 \
+  --protocol=tcp \
+  --insecure-control \
+  --data-bind-host=0.0.0.0 \
+  --data-advertise-host=192.168.1.10 \
+  --data-port-min=30000 \
+  --data-port-max=30100
+```
+
+Run a direct groverd-to-groverd transfer over UDP. The CLI only talks to the control plane; bytes move from the source groverd to the destination groverd:
+
+```bash
+./bin/grover \
+  --insecure-control \
+  transfer 192.168.1.10:22444:/home/ubuntu/data/file-1gb.bin 192.168.1.20:22444:/home/ubuntu/data/file-1gb.bin \
+  --protocol=udp \
+  --parallel-streams=1 \
+  --ui=summary \
+  --ui-interval-ms=2000
+```
+
+Run a direct groverd-to-groverd transfer over TCP:
+
+```bash
+./bin/grover \
+  --insecure-control \
+  transfer 192.168.1.10:22444:/home/ubuntu/data/file-1gb.bin 192.168.1.20:22444:/home/ubuntu/data/file-1gb.bin \
+  --protocol=tcp \
+  --parallel-streams=4 \
+  --ui=summary \
+  --ui-interval-ms=2000
+```
+
+Store groverd control endpoints as credentials, then use `name:/path` in transfers:
+
+```bash
+./bin/grover \
+  credential add-basic \
+  --name source-a \
+  --url 192.168.1.10:22444
+
+./bin/grover \
+  credential add-basic \
+  --name dest-b \
+  --url 192.168.1.20:22444
+
+./bin/grover \
+  --insecure-control \
+  transfer source-a:/home/ubuntu/data/file-1gb.bin dest-b:/home/ubuntu/data/file-1gb.bin \
+  --protocol=tcp
+```
+
+Show routed transfer observability from the source groverd:
+
+```bash
+./bin/grover \
+  --insecure-control \
+  transfer status <transfer_id> \
+  --source-server 192.168.1.10:22444
+
+./bin/grover \
+  --insecure-control \
+  transfer status <transfer_id> \
+  --source-server 192.168.1.10:22444 \
+  --watch
+```
+
+Use `--parallel-streams=1` for single-stream UDP testing and increase it, for example `--parallel-streams=4`, when testing per-file parallel streams. Server and client protocol values should match for these direct tests.
+
+## Route commands working now
+
+Prepare a relay route template under `~/.grover/routes.toml`. A route template describes the reusable network path only; file paths belong on `transfer`:
+
+```bash
+./bin/grover route prepare relay-a-b \
+  --via relay-a \
+  --via relay-b \
+  --protocol=tcp \
+  --parallel-streams=4 \
+  --concurrency=2
+```
+
+You can optionally store default endpoints on a route, but `transfer --route` can always override them:
+
+```bash
+./bin/grover route prepare relay-a-b \
+  10.0.0.10:22444:/mnt/src/default.bin \
+  10.0.0.20:22444:/mnt/dst/default.bin \
+  --via 10.0.0.15:22444 \
+  --protocol=tcp
+```
+
+Then run the transfer with the stored defaults:
+
+```bash
+./bin/grover --insecure-control transfer --route relay-a-b
+```
+
+Run a local-path transfer through the configured groverd. Both paths are resolved on the groverd host, not by the CLI process:
+
+```bash
+./bin/grover \
+  --server-url 127.0.0.1:22444 \
+  --insecure-control \
+  transfer /mnt/src/file-1gb.bin /mnt/dst/file-1gb.bin \
+  --protocol=tcp \
+  --parallel-streams=4 \
+  --concurrency=2
+```
+
+Run a direct TCP transfer from one groverd to another. The endpoint syntax is `host:port:/absolute/path`; IPv6 endpoints use brackets, for example `[::1]:22444:/tmp/file.bin`:
+
+```bash
+./bin/grover \
+  --insecure-control \
+  transfer 10.0.0.10:22444:/mnt/src/file-1gb.bin 10.0.0.20:22444:/mnt/dst/file-1gb.bin \
+  --protocol=tcp \
+  --parallel-streams=1 \
+  --concurrency=1
+```
+
+Run a TCP transfer over a prepared route:
+
+```bash
+./bin/grover \
+  --insecure-control \
+  transfer 10.0.0.10:22444:/mnt/src/file-1gb.bin 10.0.0.20:22444:/mnt/dst/file-1gb.bin \
+  --route relay-a-b \
+  --protocol=tcp \
+  --parallel-streams=1 \
+  --concurrency=1
+```
+
+Run a one-shot TCP transfer through one or more relay groverd instances without storing a route template. Relay values are groverd control-plane addresses, and each relay must be reachable by the CLI and able to reach the next hop's advertised data endpoint:
+
+```bash
+./bin/grover \
+  --insecure-control \
+  transfer 10.0.0.10:22444:/mnt/src/file-1gb.bin 10.0.0.20:22444:/mnt/dst/file-1gb.bin \
+  --via 10.0.0.15:22444 \
+  --protocol=tcp \
+  --parallel-streams=1 \
+  --concurrency=1
+```
+
+List and inspect prepared routes:
+
+```bash
+./bin/grover route list
+./bin/grover route status daily-upload
+./bin/grover route status relay-a-b --source-server 10.0.0.10:22444 --watch
+```
+
+Abort a prepared local route template. When the involved groverd instances are reachable, this also best-effort aborts active source jobs and deletes relay forwards for the route:
+
+```bash
+./bin/grover route abort relay-a-b --source-server 10.0.0.10:22444
+```
+
+Dry-run a one-shot routed transfer plan. This prints the planned source, relay, and destination hops without moving bytes:
+
+```bash
+./bin/grover transfer 10.0.0.10:22444:/mnt/src/file.bin 10.0.0.20:22444:/mnt/dst/file.bin \
+  --route relay-a-b \
+  --dry-run
+```
+
+`route start` does not copy files. Use `transfer --route <name> <source> <destination>` to move bytes over a prepared route.
+
+Credential-style paths like `source-a:/path` now resolve to groverd control endpoints from local basic credentials. New routed/direct job commands should use local paths, `host:port:/path` endpoint paths, or credential endpoint aliases.
+
+Tune a running routed transfer job on the source groverd:
+
+```bash
+./bin/grover \
+  --insecure-control \
+  transfer tune <transfer_id> \
+  --source-server 10.0.0.10:22444 \
+  --concurrency=8 \
+  --parallel-streams=4
+```
+
+Use a TOML route/job spec for dry-run planning:
+
+```toml
+source = "10.0.0.10:22444:/mnt/src/file.bin"
+destination = "10.0.0.20:22444:/mnt/dst/file.bin"
+
+[transfer]
+protocol = "tcp"
+parallel_streams = 4
+concurrency = 2
+
+[route]
+via = ["relay-a", "relay-b"]
+```
+
+```bash
+./bin/grover transfer --route-file ./route.toml --dry-run
+```
+
+Metadata commands use `--execution`, not `--via`, when forcing local or remote metadata execution:
+
+```bash
+./bin/grover backend list localfs --path ~/data --execution client
+./bin/grover backend list localfs --path /mnt/data --execution server
+```
+
+## Routed transfer status
+
+Direct groverd-local, direct two-groverd TCP/UDP, TCP/UDP relay paths, one-shot `transfer`, prepared-route `transfer --route`, route status, transfer status, and `transfer tune` are wired. Use `transfer` for direct and relay groverd job benchmarks, and use `--dry-run` for planning without moving bytes.
+
 ### network focus
 
 Ugh man in so many ways there are tons of protocols to use with various ideas, problem is I am sick of not having exactly want. A higher performance protocol that supports chunking, striping out of order packets, that does proper monitoring of itself. Using things like ftp, scp,,, leave you completely blind of whats going in the network and making certain decisions up front.

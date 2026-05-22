@@ -173,9 +173,10 @@ func Receive(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint64, e
 	acks := newAckCoalescer(cfg.AckEveryPackets, cfg.AckEvery)
 	batchTransport, useBatch := cfg.Transport.(BatchTransport)
 	useBatch = useBatch && runtime.GOOS == "linux"
+	batchMax := batchPacketCount(cfg.BatchPackets)
 	batch := make([]PacketBuffer, 0)
 	if useBatch {
-		batch = make([]PacketBuffer, defaultAckPollEvery)
+		batch = make([]PacketBuffer, batchMax)
 		for i := range batch {
 			batch[i].Bytes = make([]byte, cfg.BufferSize)
 		}
@@ -213,8 +214,12 @@ func Receive(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint64, e
 				}
 			}
 			if payloadLen > 0 {
-				if _, err := dst.WriteAt(packet.Payload[:payloadLen], int64(packet.Offset)); err != nil {
+				n, err := dst.WriteAt(packet.Payload[:payloadLen], int64(packet.Offset))
+				if err != nil {
 					return false, fmt.Errorf("write payload: %w", err)
+				}
+				if n != payloadLen {
+					return false, io.ErrShortWrite
 				}
 			}
 			end := packet.Offset + uint64(payloadLen)
@@ -388,9 +393,10 @@ func ReceiveMany(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint6
 	progress := newRangeTracker(cfg.ExpectedSize)
 	batchTransport, useBatch := cfg.Transport.(BatchTransport)
 	useBatch = useBatch && runtime.GOOS == "linux"
+	batchMax := batchPacketCount(cfg.BatchPackets)
 	batch := make([]PacketBuffer, 0)
 	if useBatch {
-		batch = make([]PacketBuffer, defaultAckPollEvery)
+		batch = make([]PacketBuffer, batchMax)
 		for i := range batch {
 			batch[i].Bytes = make([]byte, cfg.BufferSize)
 		}
@@ -433,8 +439,12 @@ func ReceiveMany(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint6
 			}
 		}
 		if payloadLen > 0 {
-			if _, err := dst.WriteAt(packet.Payload[:payloadLen], int64(packet.Offset)); err != nil {
+			n, err := dst.WriteAt(packet.Payload[:payloadLen], int64(packet.Offset))
+			if err != nil {
 				return false, fmt.Errorf("write payload: %w", err)
+			}
+			if n != payloadLen {
+				return false, io.ErrShortWrite
 			}
 		}
 		end := packet.Offset + uint64(payloadLen)

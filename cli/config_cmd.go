@@ -36,6 +36,10 @@ func configSetCommand(serverConfigPath *string) *cobra.Command {
 	var serverKey string
 	var serverCreds string
 	var serverLogLevel string
+	var dataBindHost string
+	var dataAdvertiseHost string
+	var dataPortMin int
+	var dataPortMax int
 
 	cmd := &cobra.Command{
 		Use:   "set",
@@ -49,7 +53,7 @@ func configSetCommand(serverConfigPath *string) *cobra.Command {
 			case "client":
 				return updateClientConfig(cmd, clientServerURL, clientCACert)
 			case "server":
-				return updateServerConfig(cmd, serverConfigPath, cmd.Flags(), serverPort, serverCert, serverKey, serverCreds, serverLogLevel)
+				return updateServerConfig(cmd, serverConfigPath, cmd.Flags(), serverPort, serverCert, serverKey, serverCreds, serverLogLevel, dataBindHost, dataAdvertiseHost, dataPortMin, dataPortMax)
 			default:
 				return fmt.Errorf("--target must be either client or server")
 			}
@@ -65,6 +69,10 @@ func configSetCommand(serverConfigPath *string) *cobra.Command {
 	cmd.Flags().StringVar(&serverKey, "server-key", "", "Server mode: path to TLS private key PEM")
 	cmd.Flags().StringVar(&serverCreds, "credentials-file", "", "Server mode: credential store path")
 	cmd.Flags().StringVar(&serverLogLevel, "log-level", "", "Server mode: log level (info, debug, ...)")
+	cmd.Flags().StringVar(&dataBindHost, "data-bind-host", "", "Server mode: data-plane bind host")
+	cmd.Flags().StringVar(&dataAdvertiseHost, "data-advertise-host", "", "Server mode: data-plane advertised host")
+	cmd.Flags().IntVar(&dataPortMin, "data-port-min", 0, "Server mode: minimum server-allocated data-plane port")
+	cmd.Flags().IntVar(&dataPortMax, "data-port-max", 0, "Server mode: maximum server-allocated data-plane port")
 	return cmd
 }
 
@@ -99,7 +107,7 @@ func updateClientConfig(cmd *cobra.Command, serverURL, caPath string) error {
 	return nil
 }
 
-func updateServerConfig(cmd *cobra.Command, cfgPathPtr *string, flagSet *pflag.FlagSet, port int, cert, key, credFile, logLevel string) error {
+func updateServerConfig(cmd *cobra.Command, cfgPathPtr *string, flagSet *pflag.FlagSet, port int, cert, key, credFile, logLevel, dataBindHost, dataAdvertiseHost string, dataPortMin, dataPortMax int) error {
 	path := strings.TrimSpace(*cfgPathPtr)
 	if path == "" {
 		path = defaultServerConfigPath()
@@ -131,6 +139,21 @@ func updateServerConfig(cmd *cobra.Command, cfgPathPtr *string, flagSet *pflag.F
 	}
 	if flagSet.Changed("log-level") {
 		cfg.LogLevel = logLevel
+	}
+	if flagSet.Changed("data-bind-host") {
+		cfg.DataBindHost = dataBindHost
+	}
+	if flagSet.Changed("data-advertise-host") {
+		cfg.DataAdvertiseHost = dataAdvertiseHost
+	}
+	if flagSet.Changed("data-port-min") {
+		cfg.DataPortMin = dataPortMin
+	}
+	if flagSet.Changed("data-port-max") {
+		cfg.DataPortMax = dataPortMax
+	}
+	if err := internal.ValidateDataPortRange(cfg.DataPortMin, cfg.DataPortMax); err != nil {
+		return err
 	}
 
 	if _, err := cfg.Save(path); err != nil {

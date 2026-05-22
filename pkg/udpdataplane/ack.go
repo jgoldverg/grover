@@ -28,6 +28,7 @@ func drainStatusPackets(
 	collector *metrics.TransferCollector,
 	timeout time.Duration,
 	nonBlocking bool,
+	fastRetransmitLimit int,
 	onAck func(time.Duration, int),
 ) (int, error) {
 	if len(*pending) == 0 {
@@ -87,6 +88,11 @@ func drainStatusPackets(
 		attempts = 0
 		acked := advancePendingWithAck(ackPkt, pending, collector, readStart, onAck)
 		totalAcked += acked
+		if fastRetransmitLimit > 0 {
+			if err := fastRetransmitMissing(ctx, transport, *remote, ackPkt, pending, collector, fastRetransmitLimit); err != nil {
+				return totalAcked, err
+			}
+		}
 		if nonBlocking && len(*pending) == 0 {
 			return totalAcked, nil
 		}
@@ -148,16 +154,76 @@ func advancePendingWithAck(
 	return ackedBytes
 }
 
+func fastRetransmitMissing(
+	ctx context.Context,
+	transport Transport,
+	remote *net.UDPAddr,
+	pkt *udpwire.StatusPacket,
+	pending *[]pendingPacket,
+	collector *metrics.TransferCollector,
+	limit int,
+) error {
+	if pkt == nil || pending == nil || len(*pending) == 0 || len(pkt.Sacks) == 0 || limit <= 0 {
+		return nil
+	}
+	sent := 0
+	for i := range *pending {
+		cur := &(*pending)[i]
+		if sackCovers(pkt.Sacks, cur.seq) {
+			continue
+		}
+		if !sackHasHigher(pkt.Sacks, cur.seq) {
+			continue
+		}
+		if err := retransmitOne(ctx, transport, remote, cur, collector); err != nil {
+			return err
+		}
+		sent++
+		if sent >= limit {
+			return nil
+		}
+	}
+	return nil
+}
+
+func sackCovers(sacks []udpwire.SackRange, seq uint32) bool {
+	for _, sack := range sacks {
+		if seq >= sack.Start && seq <= sack.End {
+			return true
+		}
+	}
+	return false
+}
+
+func sackHasHigher(sacks []udpwire.SackRange, seq uint32) bool {
+	for _, sack := range sacks {
+		if sack.End > seq {
+			return true
+		}
+	}
+	return false
+}
+
 func retransmitPending(ctx context.Context, transport Transport, remote *net.UDPAddr, pending *[]pendingPacket, collector *metrics.TransferCollector) error {
 	for i := range *pending {
 		pkt := &(*pending)[i]
-		if err := writePacketWithRetry(ctx, transport, remote, pkt.data); err != nil {
+		if err := retransmitOne(ctx, transport, remote, pkt, collector); err != nil {
 			return err
 		}
-		recordSendMetric(collector, pkt.payloadLen, true)
-		recordPacketSend(collector)
-		pkt.sentAt = time.Now()
 	}
+	return nil
+}
+
+func retransmitOne(ctx context.Context, transport Transport, remote *net.UDPAddr, pkt *pendingPacket, collector *metrics.TransferCollector) error {
+	if pkt == nil {
+		return nil
+	}
+	if err := writePacketWithRetry(ctx, transport, remote, pkt.data); err != nil {
+		return err
+	}
+	recordSendMetric(collector, pkt.payloadLen, true)
+	recordPacketSend(collector)
+	pkt.sentAt = time.Now()
 	return nil
 }
 
