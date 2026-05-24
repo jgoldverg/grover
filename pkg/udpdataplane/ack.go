@@ -28,6 +28,7 @@ func drainStatusPackets(
 	collector *metrics.TransferCollector,
 	timeout time.Duration,
 	nonBlocking bool,
+	stopAfterProgress bool,
 	fastRetransmitLimit int,
 	onAck func(time.Duration, int),
 ) (int, error) {
@@ -92,6 +93,9 @@ func drainStatusPackets(
 			if err := fastRetransmitMissing(ctx, transport, *remote, ackPkt, pending, collector, fastRetransmitLimit); err != nil {
 				return totalAcked, err
 			}
+		}
+		if stopAfterProgress && acked > 0 {
+			return totalAcked, nil
 		}
 		if nonBlocking && len(*pending) == 0 {
 			return totalAcked, nil

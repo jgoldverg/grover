@@ -237,12 +237,14 @@ func Receive(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint64, e
 				recordPacketReceive(cfg.Collector)
 				recordReceiveMetric(cfg.Collector, int(added))
 			}
-			internal.Debug("udp data rx", internal.Fields{
-				"session": cfg.SessionID,
-				"stream":  cfg.StreamID,
-				"seq":     packet.Seq,
-				"bytes":   payloadLen,
-			})
+			if shouldLogUDPPacket(packet.Seq) {
+				internal.Debug("udp data rx sample", internal.Fields{
+					"session": cfg.SessionID,
+					"stream":  cfg.StreamID,
+					"seq":     packet.Seq,
+					"bytes":   payloadLen,
+				})
+			}
 			beforeAck, _ := tracker.Snapshot(0, nil)
 			changed := tracker.OnPacket(packet.Seq)
 			gap := packet.Seq > beforeAck+1
@@ -462,12 +464,14 @@ func ReceiveMany(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint6
 			recordPacketReceive(cfg.Collector)
 			recordReceiveMetric(cfg.Collector, int(added))
 		}
-		internal.Debug("udp data rx", internal.Fields{
-			"session": cfg.SessionID,
-			"stream":  packet.StreamID,
-			"seq":     packet.Seq,
-			"bytes":   payloadLen,
-		})
+		if shouldLogUDPPacket(packet.Seq) {
+			internal.Debug("udp data rx sample", internal.Fields{
+				"session": cfg.SessionID,
+				"stream":  packet.StreamID,
+				"seq":     packet.Seq,
+				"bytes":   payloadLen,
+			})
+		}
 		beforeAck, _ := state.tracker.Snapshot(0, nil)
 		changed := state.tracker.OnPacket(packet.Seq)
 		gap := packet.Seq > beforeAck+1
@@ -784,6 +788,7 @@ func emitStatusPacket(
 	}
 	if desc := describeSackRanges(sacks); desc != "" {
 		fields["sacks"] = desc
+		fields["sack_count"] = len(sacks)
 	}
 	internal.Debug("udp status tx", fields)
 	if scratch != nil {
@@ -795,8 +800,13 @@ func describeSackRanges(r []udpwire.SackRange) string {
 	if len(r) == 0 {
 		return ""
 	}
+	const maxLoggedSackRanges = 16
+	limit := len(r)
+	if limit > maxLoggedSackRanges {
+		limit = maxLoggedSackRanges
+	}
 	var b strings.Builder
-	for i, rng := range r {
+	for i, rng := range r[:limit] {
 		if i > 0 {
 			b.WriteByte(',')
 		}
@@ -806,5 +816,13 @@ func describeSackRanges(r []udpwire.SackRange) string {
 		}
 		fmt.Fprintf(&b, "%d-%d", rng.Start, rng.End)
 	}
+	if len(r) > limit {
+		fmt.Fprintf(&b, ",...(+%d more)", len(r)-limit)
+	}
 	return b.String()
+}
+
+func shouldLogUDPPacket(seq uint32) bool {
+	const sampleEvery = 4096
+	return seq == 0 || seq%sampleEvery == 0
 }

@@ -30,6 +30,7 @@ func main() {
 		dataPortMin     int
 		dataPortMax     int
 		udpMTU          int
+		udpFlowControl  string
 		udpWindow       int
 		udpAckPackets   int
 		udpAckMs        int
@@ -54,6 +55,7 @@ func main() {
 	flags.IntVar(&dataPortMin, "data-port-min", 0, "Minimum server-allocated data-plane port (0 uses OS ephemeral ports)")
 	flags.IntVar(&dataPortMax, "data-port-max", 0, "Maximum server-allocated data-plane port (0 uses OS ephemeral ports)")
 	flags.IntVar(&udpMTU, "udp-mtu", 0, "UDP datagram MTU for server-sent transfers")
+	flags.StringVar(&udpFlowControl, "udp-flow-control", "", "UDP flow-control mode for server-sent transfers (fixed|bbr)")
 	flags.IntVar(&udpWindow, "udp-window-packets", 0, "UDP max in-flight packets per stream for server-sent transfers")
 	flags.IntVar(&udpAckPackets, "udp-ack-every-packets", 0, "UDP ACK every N packets for server receive path")
 	flags.IntVar(&udpAckMs, "udp-ack-every-ms", 0, "UDP ACK interval in milliseconds for server receive path")
@@ -125,6 +127,14 @@ func main() {
 	}
 	if udpMTU > 0 {
 		cfg.UDPMTUSize = udpMTU
+	}
+	if strings.TrimSpace(udpFlowControl) != "" {
+		mode := strings.ToLower(strings.TrimSpace(udpFlowControl))
+		if mode != "fixed" && mode != "bbr" {
+			fmt.Fprintf(os.Stderr, "invalid --udp-flow-control %q: must be fixed or bbr\n", udpFlowControl)
+			os.Exit(2)
+		}
+		cfg.UDPFlowControl = mode
 	}
 	if udpWindow > 0 {
 		cfg.UDPWindowPackets = udpWindow

@@ -50,6 +50,8 @@ type CopyOptions struct {
 	MTU                string
 }
 
+const defaultTransferRoutePrefix = "transfer"
+
 func SimpleCopy() *cobra.Command {
 	var opts CopyOptions
 	cmd := &cobra.Command{
@@ -148,7 +150,7 @@ func SimpleCopy() *cobra.Command {
 func startOneShotRoutedTransfer(cmd *cobra.Command, src string, dst string, opts CopyOptions) (*pb.TransferJob, error) {
 	name := strings.TrimSpace(opts.RouteName)
 	if name == "" {
-		name = fmt.Sprintf("transfer-%d", time.Now().UnixNano())
+		name = newTransferRouteName(time.Now())
 	}
 	route := storedRouteTemplate{
 		Name:            name,
@@ -163,6 +165,18 @@ func startOneShotRoutedTransfer(cmd *cobra.Command, src string, dst string, opts
 		UpdatedAt:       time.Now().UTC(),
 	}
 	return startDirectRoute(cmd, route, opts)
+}
+
+func newTransferRouteName(now time.Time) string {
+	return fmt.Sprintf("%s-%d", defaultTransferRoutePrefix, now.UnixNano())
+}
+
+func newTransferJobID(routeName string, now time.Time) string {
+	routeName = strings.TrimSpace(routeName)
+	if routeName == "" {
+		routeName = newTransferRouteName(now)
+	}
+	return fmt.Sprintf("%s-%d", routeName, now.UnixNano())
 }
 
 func applyPreparedRouteTemplate(cmd *cobra.Command, args []string, opts *CopyOptions) ([]string, error) {
@@ -350,24 +364,131 @@ func printTransferJobStatus(w io.Writer, job *pb.TransferJob) {
 	if w == nil || job == nil {
 		return
 	}
+	printTransferRouteVisualization(w, job)
+}
+
+func printTransferRouteVisualization(w io.Writer, job *pb.TransferJob) {
 	stats := job.GetStats()
-	fmt.Fprintf(w, "transfer_job: %s\n", job.GetJobId())
-	fmt.Fprintf(w, "route_id: %s\n", job.GetRouteId())
-	fmt.Fprintf(w, "state: %s\n", job.GetState().String())
+	fmt.Fprintf(w, "Transfer %s\n", job.GetJobId())
+	fmt.Fprintf(w, "  State: %-10s Route: %s\n", shortRuntimeState(job.GetState()), emptyDash(job.GetRouteId()))
 	if job.GetErrorMessage() != "" {
-		fmt.Fprintf(w, "error: %s\n", job.GetErrorMessage())
+		fmt.Fprintf(w, "  Error: %s\n", job.GetErrorMessage())
 	}
-	fmt.Fprintf(w, "protocol: %s\n", job.GetProtocol().String())
-	fmt.Fprintf(w, "good_bytes: %d\n", job.GetGoodBytes())
-	fmt.Fprintf(w, "network_bytes: %d\n", job.GetNetworkBytes())
-	fmt.Fprintf(w, "disk_read_bytes: %d\n", job.GetDiskReadBytes())
-	fmt.Fprintf(w, "disk_write_bytes: %d\n", job.GetDiskWriteBytes())
-	fmt.Fprintf(w, "files_done: %d\n", job.GetFilesDone())
-	fmt.Fprintf(w, "files_active: %d\n", job.GetFilesActive())
-	fmt.Fprintf(w, "streams_active: %d\n", job.GetStreamsActive())
-	fmt.Fprintf(w, "throughput_bps: %.0f\n", stats.GetCurrentThroughputBps())
-	fmt.Fprintf(w, "avg_throughput_bps: %.0f\n", stats.GetAverageThroughputBps())
-	fmt.Fprintf(w, "errors: %d\n", stats.GetErrors())
+	fmt.Fprintf(w, "  Source:      %s\n", endpointSummary(job.GetSource()))
+	fmt.Fprintf(w, "  Data plane:  %s -> %s\n", shortDataProtocol(job.GetProtocol()), dataEndpointSummary(job.GetDestination()))
+	fmt.Fprintf(w, "  Destination: %s\n", endpointSummary(job.GetDestination()))
+	fmt.Fprintf(w, "  Files:       done=%d active=%d streams=%d\n",
+		job.GetFilesDone(),
+		job.GetFilesActive(),
+		job.GetStreamsActive(),
+	)
+	fmt.Fprintf(w, "  Bytes:       good=%s wire=%s disk_read=%s\n",
+		formatBytes(job.GetGoodBytes()),
+		formatBytes(job.GetNetworkBytes()),
+		formatBytes(job.GetDiskReadBytes()),
+	)
+	fmt.Fprintf(w, "  Rate:        goodput=%s avg=%s rtt=%s\n",
+		formatByteRate(stats.GetCurrentThroughputBps()),
+		formatByteRate(stats.GetAverageThroughputBps()),
+		formatLatency(stats.GetLatencyMs()),
+	)
+	fmt.Fprintf(w, "  Network:     packets=%d retransmits=%d errors=%d drops=%d\n",
+		stats.GetPackets(),
+		job.GetRetransmits(),
+		stats.GetErrors(),
+		stats.GetDrops(),
+	)
+	if job.GetDestination().GetDataEndpoint() == nil {
+		fmt.Fprintf(w, "  Destination: disk_write=%s\n", formatBytes(job.GetDiskWriteBytes()))
+	} else {
+		fmt.Fprintf(w, "  Destination: expected=%s metrics=pending\n", formatBytes(job.GetGoodBytes()))
+	}
+	fmt.Fprintln(w)
+}
+
+func endpointSummary(ep *pb.TransferEndpoint) string {
+	if ep == nil {
+		return "unknown"
+	}
+	data := ep.GetDataEndpoint()
+	control := ""
+	if data != nil && strings.TrimSpace(data.GetHost()) != "" && data.GetPort() != 0 {
+		control = net.JoinHostPort(data.GetHost(), fmt.Sprintf("%d", data.GetPort()))
+	}
+	root := strings.TrimSpace(ep.GetRootPath())
+	switch {
+	case control != "" && root != "":
+		return fmt.Sprintf("%s root=%s", control, root)
+	case control != "":
+		return control
+	case root != "":
+		return fmt.Sprintf("root=%s", root)
+	default:
+		return "unknown"
+	}
+}
+
+func dataEndpointSummary(ep *pb.TransferEndpoint) string {
+	if ep == nil || ep.GetDataEndpoint() == nil {
+		return "local"
+	}
+	data := ep.GetDataEndpoint()
+	if strings.TrimSpace(data.GetHost()) == "" || data.GetPort() == 0 {
+		return "local"
+	}
+	return net.JoinHostPort(data.GetHost(), fmt.Sprintf("%d", data.GetPort()))
+}
+
+func shortRuntimeState(state pb.RuntimeState) string {
+	s := strings.TrimPrefix(state.String(), "RUNTIME_STATE_")
+	if s == "" || s == "UNSPECIFIED" {
+		return "UNKNOWN"
+	}
+	return s
+}
+
+func shortDataProtocol(protocol pb.DataProtocol) string {
+	s := strings.TrimPrefix(protocol.String(), "DATA_PROTOCOL_")
+	if s == "" || s == "UNSPECIFIED" {
+		return "UNKNOWN"
+	}
+	return s
+}
+
+func emptyDash(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "-"
+	}
+	return s
+}
+
+func formatBytes(n uint64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	value := float64(n)
+	for _, suffix := range []string{"KiB", "MiB", "GiB", "TiB", "PiB"} {
+		value /= unit
+		if value < unit {
+			return fmt.Sprintf("%.2f %s", value, suffix)
+		}
+	}
+	return fmt.Sprintf("%.2f EiB", value/unit)
+}
+
+func formatByteRate(bytesPerSecond float64) string {
+	if bytesPerSecond <= 0 {
+		return "0 B/s"
+	}
+	return fmt.Sprintf("%s/s", formatBytes(uint64(bytesPerSecond)))
+}
+
+func formatLatency(ms float64) string {
+	if ms <= 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.2fms", ms)
 }
 
 func cloneAppConfig(cfg *internal.AppConfig) *internal.AppConfig {

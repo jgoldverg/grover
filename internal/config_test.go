@@ -63,3 +63,29 @@ data_port_max = 0
 		t.Fatal("expected invalid data port range error")
 	}
 }
+
+func TestLoadServerConfigNormalizesUDPFlowControl(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "server.toml")
+	if err := os.WriteFile(path, []byte(`udp_flow_control = "bbr"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadServerConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UDPFlowControl != "bbr" {
+		t.Fatalf("udp flow control = %q, want bbr", cfg.UDPFlowControl)
+	}
+
+	path = filepath.Join(t.TempDir(), "server.toml")
+	if err := os.WriteFile(path, []byte(`udp_flow_control = "unknown"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = LoadServerConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UDPFlowControl != "fixed" {
+		t.Fatalf("udp flow control = %q, want fixed", cfg.UDPFlowControl)
+	}
+}

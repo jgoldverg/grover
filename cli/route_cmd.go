@@ -221,7 +221,7 @@ func startDirectRoute(cmd *cobra.Command, route storedRouteTemplate, opts CopyOp
 	if sourceRouted == nil || destRouted == nil {
 		return nil, fmt.Errorf("routed transfer service unavailable")
 	}
-	jobID := fmt.Sprintf("%s-%d", route.Name, time.Now().UnixNano())
+	jobID := newTransferJobID(route.Name, time.Now())
 	protocol := dataProtocol(plan.Protocol)
 	source, err := sourceRouted.PrepareTransferEndpoint(cmd.Context(), &pb.PrepareTransferEndpointRequest{
 		RouteId:  route.Name,
@@ -267,10 +267,11 @@ func monitorRoutedTransferJob(cmd *cobra.Command, routed gclient.RoutedTransferA
 		return nil, fmt.Errorf("transfer job was not returned by source groverd")
 	}
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "transfer_job: %s\n", job.GetJobId())
-	fmt.Fprintf(out, "state: %s\n", job.GetState().String())
 	if opts.uiMode() == "live" {
 		printTransferJobStatus(out, job)
+	} else {
+		fmt.Fprintf(out, "transfer_job: %s\n", job.GetJobId())
+		fmt.Fprintf(out, "state: %s\n", job.GetState().String())
 	}
 	interval := opts.uiInterval()
 	if interval <= 0 {

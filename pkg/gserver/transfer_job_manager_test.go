@@ -226,6 +226,19 @@ func TestUDPJobPayloadSizeRespectsMTUAndPacketLimit(t *testing.T) {
 	}
 }
 
+func TestNormalizedUDPTransferTuningIncludesFlowControl(t *testing.T) {
+	tuning := normalizedUDPTransferTuning(&internal.ServerConfig{UDPFlowControl: "bbr"})
+	if tuning.flowControl != "bbr" {
+		t.Fatalf("flow control = %q, want bbr", tuning.flowControl)
+	}
+	if got := udpFlowControl(&TransferExecutionContext{UDPFlow: tuning.flowControl}); got != "bbr" {
+		t.Fatalf("exec flow control = %q, want bbr", got)
+	}
+	if got := udpFlowControl(&TransferExecutionContext{UDPFlow: "unknown"}); got != "fixed" {
+		t.Fatalf("unknown flow control = %q, want fixed", got)
+	}
+}
+
 func TestUDPJobStartPacketRoundTrip(t *testing.T) {
 	packet, err := encodeUDPJobStartPacket(udpJobStartPacket{
 		sessionKey: 42,

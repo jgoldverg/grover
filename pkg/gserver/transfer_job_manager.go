@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jgoldverg/grover/internal"
 	pb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
+	"github.com/jgoldverg/grover/pkg/metrics"
 	"github.com/jgoldverg/grover/pkg/udpdataplane"
 )
 
@@ -28,13 +29,20 @@ const (
 	minUDPJobPayloadSize          = 512
 )
 
-var udpJobMagic = []byte("GROVERJOBUDP2")
-
 const (
+	tcpJobMagicV1 = "GROVERJOB1\n"
+	tcpJobMagicV2 = "GROVERJOB2\n"
+	udpJobMagicV2 = "GROVERJOBUDP2"
+
+	currentTCPJobMagic = tcpJobMagicV2
+	currentUDPJobMagic = udpJobMagicV2
+
 	udpJobPacketStart byte = 1
 	udpJobPacketReady byte = 2
 	udpJobPacketDone  byte = 3
 )
+
+var udpJobMagic = []byte(currentUDPJobMagic)
 
 type TransferEndpointRegistry interface {
 	PrepareEndpoint(context.Context, *pb.PrepareTransferEndpointRequest) (*pb.TransferEndpoint, error)
@@ -54,8 +62,10 @@ type TransferExecutionContext struct {
 	DestData    *pb.DataEndpoint
 	Protocol    pb.DataProtocol
 	UDPPayload  int
+	UDPFlow     string
 	UDPWindow   int
 	UDPBatch    int
+	Collector   *metrics.TransferCollector
 	StreamsFunc func() uint32
 	OnProgress  func(filePath string, bytesRead int)
 }
@@ -81,6 +91,7 @@ type TransferJobManager struct {
 
 type udpTransferTuning struct {
 	mtu             int
+	flowControl     string
 	windowPackets   int
 	ackEveryPackets int
 	ackEvery        time.Duration
@@ -109,6 +120,7 @@ type transferJobRuntime struct {
 	streamsPerFile uint32
 	errorMessage   string
 	startedAt      time.Time
+	collector      *metrics.TransferCollector
 
 	files     []*pb.TransferFileState
 	nextIndex int
@@ -311,6 +323,7 @@ func (m *TransferJobManager) StartJob(ctx context.Context, req *pb.StartTransfer
 		filesInFlight:  filesInFlight,
 		streamsPerFile: streamsPerFile,
 		startedAt:      time.Now(),
+		collector:      metrics.NewTransferCollector("grover"),
 		files:          make([]*pb.TransferFileState, 0, len(plans)),
 	}
 	runtime.cond = sync.NewCond(&runtime.mu)
@@ -322,6 +335,18 @@ func (m *TransferJobManager) StartJob(ctx context.Context, req *pb.StartTransfer
 			State:        pb.RuntimeState_RUNTIME_STATE_READY,
 		})
 	}
+	internal.Info(jobLogMessage(jobID, "transfer accepted"), internal.Fields{
+		"route_id":         runtime.routeID,
+		"protocol":         protocol.String(),
+		"source_root":      source.GetRootPath(),
+		"destination_root": dest.GetRootPath(),
+		"destination_data": endpointLabel(dest.GetDataEndpoint()),
+		"files":            len(plans),
+		"bytes":            totalPlannedBytes(plans),
+		"files_in_flight":  filesInFlight,
+		"streams_per_file": streamsPerFile,
+		"udp_flow_control": m.udp.flowControl,
+	})
 
 	m.mu.Lock()
 	if _, exists := m.jobs[jobID]; exists {
@@ -433,6 +458,7 @@ func closePreparedTransferEndpoint(endpoint *preparedTransferEndpoint) {
 func normalizedUDPTransferTuning(cfg *internal.ServerConfig) udpTransferTuning {
 	tuning := udpTransferTuning{
 		mtu:             1200,
+		flowControl:     "fixed",
 		windowPackets:   4096,
 		ackEveryPackets: 32,
 		ackEvery:        5 * time.Millisecond,
@@ -450,6 +476,9 @@ func normalizedUDPTransferTuning(cfg *internal.ServerConfig) udpTransferTuning {
 			tuning.mtu = minUDPJobPayloadSize
 		}
 	}
+	if strings.TrimSpace(cfg.UDPFlowControl) != "" {
+		tuning.flowControl = strings.ToLower(strings.TrimSpace(cfg.UDPFlowControl))
+	}
 	if cfg.UDPWindowPackets > 0 {
 		tuning.windowPackets = cfg.UDPWindowPackets
 	}
@@ -466,6 +495,22 @@ func normalizedUDPTransferTuning(cfg *internal.ServerConfig) udpTransferTuning {
 }
 
 func (m *TransferJobManager) runJob(ctx context.Context, runtime *transferJobRuntime, plans []TransferFilePlan) {
+	defer func() {
+		job := runtime.snapshot()
+		fields := internal.Fields{
+			"route_id":       job.GetRouteId(),
+			"state":          job.GetState().String(),
+			"good_bytes":     job.GetGoodBytes(),
+			"network_bytes":  job.GetNetworkBytes(),
+			"files_done":     job.GetFilesDone(),
+			"files_active":   job.GetFilesActive(),
+			"throughput_bps": uint64(job.GetStats().GetAverageThroughputBps()),
+		}
+		if job.GetErrorMessage() != "" {
+			fields[internal.FieldError] = job.GetErrorMessage()
+		}
+		internal.Info(jobLogMessage(job.GetJobId(), "transfer finished"), fields)
+	}()
 	var wg sync.WaitGroup
 	errCh := make(chan error, len(plans))
 	for {
@@ -496,8 +541,10 @@ func (m *TransferJobManager) runJob(ctx context.Context, runtime *transferJobRun
 				DestData:   cloneEndpoint(runtime.dest.GetDataEndpoint()),
 				Protocol:   runtime.protocol,
 				UDPPayload: m.udp.mtu,
+				UDPFlow:    m.udp.flowControl,
 				UDPWindow:  m.udp.windowPackets,
 				UDPBatch:   m.udp.batchPackets,
+				Collector:  runtime.collector,
 				StreamsFunc: func() uint32 {
 					runtime.mu.Lock()
 					defer runtime.mu.Unlock()
@@ -535,6 +582,29 @@ func (m *TransferJobManager) runJob(ctx context.Context, runtime *transferJobRun
 	runtime.state = pb.RuntimeState_RUNTIME_STATE_DONE
 }
 
+func totalPlannedBytes(plans []TransferFilePlan) uint64 {
+	var total uint64
+	for _, plan := range plans {
+		total += plan.Size
+	}
+	return total
+}
+
+func endpointLabel(ep *pb.DataEndpoint) string {
+	if ep == nil || strings.TrimSpace(ep.GetHost()) == "" || ep.GetPort() == 0 {
+		return ""
+	}
+	return net.JoinHostPort(ep.GetHost(), fmt.Sprintf("%d", ep.GetPort()))
+}
+
+func jobLogMessage(jobID, statement string) string {
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		jobID = "unknown-job"
+	}
+	return fmt.Sprintf("[%s] -> %s", jobID, statement)
+}
+
 func (r *transferJobRuntime) addProgress(index int, n uint64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -569,14 +639,40 @@ func (r *transferJobRuntime) snapshot() *pb.TransferJob {
 		cp := *f
 		files = append(files, &cp)
 		observedBytes += f.BytesDone
-		if f.State == pb.RuntimeState_RUNTIME_STATE_DONE {
-			goodBytes += f.BytesDone
-		}
+		goodBytes += f.BytesDone
 	}
 	elapsed := time.Since(r.startedAt).Seconds()
 	avg := 0.0
 	if elapsed > 0 {
 		avg = float64(observedBytes) / elapsed
+	}
+	var protocolStats metrics.TransferSnapshot
+	if r.collector != nil {
+		protocolStats = r.collector.Snapshot()
+		if protocolStats.BytesSent > 0 || protocolStats.BytesReceived > 0 || protocolStats.NetworkReceived > 0 {
+			observedBytes = protocolStats.BytesSent + protocolStats.BytesRetransmit
+			if protocolStats.BytesReceived > observedBytes {
+				observedBytes = protocolStats.BytesReceived
+			}
+			if protocolStats.NetworkReceived > observedBytes {
+				observedBytes = protocolStats.NetworkReceived
+			}
+			avg = protocolStats.GoodputBps
+			if protocolStats.BytesSent > 0 {
+				goodBytes = protocolStats.BytesSent
+			}
+			if protocolStats.BytesReceived > goodBytes {
+				goodBytes = protocolStats.BytesReceived
+			}
+		}
+	}
+	diskReadBytes := uint64(0)
+	diskWriteBytes := uint64(0)
+	if protocolStats.DiskReadBytes > 0 {
+		diskReadBytes = protocolStats.DiskReadBytes
+	}
+	if protocolStats.DiskWriteBytes > 0 {
+		diskWriteBytes = protocolStats.DiskWriteBytes
 	}
 	return &pb.TransferJob{
 		JobId:          r.jobID,
@@ -589,18 +685,21 @@ func (r *transferJobRuntime) snapshot() *pb.TransferJob {
 		StreamsPerFile: r.streamsPerFile,
 		GoodBytes:      goodBytes,
 		NetworkBytes:   observedBytes,
-		DiskReadBytes:  observedBytes,
-		DiskWriteBytes: observedBytes,
+		DiskReadBytes:  diskReadBytes,
+		DiskWriteBytes: diskWriteBytes,
 		FilesDone:      r.doneCount,
 		FilesActive:    r.active,
 		StreamsActive:  r.active * r.streamsPerFile,
+		Retransmits:    protocolStats.Retransmissions,
 		Files:          files,
 		Stats: &pb.StatsSnapshot{
 			IngressBytes:         observedBytes,
 			EgressBytes:          observedBytes,
+			Packets:              protocolStats.PacketsSent + protocolStats.PacketsReceived,
 			AverageThroughputBps: avg,
-			CurrentThroughputBps: avg,
+			CurrentThroughputBps: protocolStats.GoodputBps,
 			ActiveStreams:        r.active * r.streamsPerFile,
+			LatencyMs:            protocolStats.RttMs,
 			SampledAtUnixNano:    time.Now().UnixNano(),
 		},
 		ErrorMessage: r.errorMessage,
@@ -693,8 +792,15 @@ func (localFilesystemTransferExecutor) TransferFile(ctx context.Context, exec *T
 		}
 		n, readErr := src.Read(buf)
 		if n > 0 {
+			if exec.Collector != nil {
+				exec.Collector.ObserveDiskRead(n)
+			}
 			if err := writeFull(ctx, dst, buf[:n]); err != nil {
 				return err
+			}
+			if exec.Collector != nil {
+				exec.Collector.ObserveDiskWrite(n)
+				exec.Collector.ObserveSend(n, false)
 			}
 			if exec.OnProgress != nil {
 				exec.OnProgress(plan.SourcePath, n)
@@ -746,27 +852,32 @@ func sendFileToUDPDestination(ctx context.Context, exec *TransferExecutionContex
 	if err != nil {
 		return err
 	}
-	if err := sendUDPJobStartAndWait(ctx, conn, plan.RelativePath, plan.Size, sessionKey, streamIDs); err != nil {
+	if err := sendUDPJobStartAndWait(ctx, conn, exec, plan.RelativePath, plan.Size, sessionKey, streamIDs); err != nil {
 		return err
 	}
 	if plan.Size == 0 {
 		return waitUDPJobDone(ctx, conn, sessionKey)
 	}
 	if len(streamIDs) == 1 {
-		n, err := udpdataplane.Send(ctx, udpdataplane.SendConfig{
+		_, err := udpdataplane.Send(ctx, udpdataplane.SendConfig{
 			Transport:       udpdataplane.NewUDPConnTransport(conn),
 			SessionID:       exec.JobID,
 			SessionKey:      sessionKey,
 			StreamID:        streamIDs[0],
 			MTU:             exec.UDPPayload,
-			FlowControl:     "fixed",
+			Collector:       exec.Collector,
+			FlowControl:     udpFlowControl(exec),
 			WindowPackets:   udpWindowPackets(exec),
 			BatchPackets:    udpBatchPackets(exec),
 			RequireFinalAck: false,
-		}, src)
-		if n > 0 && exec.OnProgress != nil {
-			exec.OnProgress(plan.SourcePath, int(n))
-		}
+		}, newProgressReader(src, func(n int) {
+			if exec.Collector != nil {
+				exec.Collector.ObserveDiskRead(n)
+			}
+			if exec.OnProgress != nil {
+				exec.OnProgress(plan.SourcePath, n)
+			}
+		}))
 		if err != nil {
 			return err
 		}
@@ -806,21 +917,26 @@ func sendFileToUDPDestinationParallel(ctx context.Context, exec *TransferExecuti
 			}
 			defer conn.Close()
 			sr := io.NewSectionReader(source, br.offset, br.length)
-			n, err := udpdataplane.Send(ctx, udpdataplane.SendConfig{
+			_, err = udpdataplane.Send(ctx, udpdataplane.SendConfig{
 				Transport:       udpdataplane.NewUDPConnTransport(conn),
 				SessionID:       exec.JobID,
 				SessionKey:      sessionKey,
 				StreamID:        streamID,
 				BaseOffset:      uint64(br.offset),
 				MTU:             exec.UDPPayload,
-				FlowControl:     "fixed",
+				Collector:       exec.Collector,
+				FlowControl:     udpFlowControl(exec),
 				WindowPackets:   udpWindowPackets(exec),
 				BatchPackets:    udpBatchPackets(exec),
 				RequireFinalAck: false,
-			}, sr)
-			if n > 0 && exec.OnProgress != nil {
-				exec.OnProgress(plan.SourcePath, int(n))
-			}
+			}, newProgressReader(sr, func(n int) {
+				if exec.Collector != nil {
+					exec.Collector.ObserveDiskRead(n)
+				}
+				if exec.OnProgress != nil {
+					exec.OnProgress(plan.SourcePath, n)
+				}
+			}))
 			if err != nil {
 				errCh <- err
 			}
@@ -843,6 +959,16 @@ func udpWindowPackets(exec *TransferExecutionContext) int {
 	return 4096
 }
 
+func udpFlowControl(exec *TransferExecutionContext) string {
+	if exec != nil {
+		switch strings.ToLower(strings.TrimSpace(exec.UDPFlow)) {
+		case "bbr":
+			return "bbr"
+		}
+	}
+	return "fixed"
+}
+
 func udpBatchPackets(exec *TransferExecutionContext) int {
 	if exec != nil && exec.UDPBatch > 0 {
 		return exec.UDPBatch
@@ -855,7 +981,13 @@ func udpJobPayloadSize(exec *TransferExecutionContext, relPath string) int {
 	if exec != nil && exec.UDPPayload > 0 {
 		mtu = exec.UDPPayload
 	}
-	headerLen := len(udpJobMagic) + 4 + 8 + 8 + 1 + len([]byte(relPath))
+	jobLen := 0
+	routeLen := 0
+	if exec != nil {
+		jobLen = len([]byte(exec.JobID))
+		routeLen = len([]byte(exec.RouteID))
+	}
+	headerLen := len(udpJobMagic) + 1 + 4 + 8 + 2 + 4 + 2 + 2 + len([]byte(relPath)) + jobLen + routeLen
 	payload := mtu - headerLen
 	if payload < minUDPJobPayloadSize {
 		payload = minUDPJobPayloadSize
@@ -875,10 +1007,14 @@ type udpJobStartPacket struct {
 	size       uint64
 	streamIDs  []uint32
 	relPath    string
+	jobID      string
+	routeID    string
 }
 
 func encodeUDPJobStartPacket(start udpJobStartPacket) ([]byte, error) {
 	pathBytes := []byte(start.relPath)
+	jobBytes := []byte(strings.TrimSpace(start.jobID))
+	routeBytes := []byte(strings.TrimSpace(start.routeID))
 	if len(pathBytes) == 0 {
 		return nil, errors.New("udp job path is required")
 	}
@@ -888,11 +1024,14 @@ func encodeUDPJobStartPacket(start udpJobStartPacket) ([]byte, error) {
 	if len(start.streamIDs) > 1<<16-1 {
 		return nil, fmt.Errorf("too many udp streams: %d", len(start.streamIDs))
 	}
-	headerLen := len(udpJobMagic) + 1 + 4 + 8 + 2 + len(start.streamIDs)*4 + 4
-	if headerLen+len(pathBytes) > maxUDPDatagramPayloadSize {
-		return nil, fmt.Errorf("udp start packet exceeds datagram payload limit: path=%d streams=%d", len(pathBytes), len(start.streamIDs))
+	if len(jobBytes) > 1<<16-1 || len(routeBytes) > 1<<16-1 {
+		return nil, fmt.Errorf("udp job metadata exceeds packet limit: job_id=%d route_id=%d", len(jobBytes), len(routeBytes))
 	}
-	packet := make([]byte, headerLen+len(pathBytes))
+	headerLen := len(udpJobMagic) + 1 + 4 + 8 + 2 + len(start.streamIDs)*4 + 4 + 2 + 2
+	if headerLen+len(pathBytes)+len(jobBytes)+len(routeBytes) > maxUDPDatagramPayloadSize {
+		return nil, fmt.Errorf("udp start packet exceeds datagram payload limit: path=%d job_id=%d route_id=%d streams=%d", len(pathBytes), len(jobBytes), len(routeBytes), len(start.streamIDs))
+	}
+	packet := make([]byte, headerLen+len(pathBytes)+len(jobBytes)+len(routeBytes))
 	copy(packet, udpJobMagic)
 	pos := len(udpJobMagic)
 	packet[pos] = udpJobPacketStart
@@ -912,12 +1051,20 @@ func encodeUDPJobStartPacket(start udpJobStartPacket) ([]byte, error) {
 	}
 	binary.BigEndian.PutUint32(packet[pos:pos+4], uint32(len(pathBytes)))
 	pos += 4
+	binary.BigEndian.PutUint16(packet[pos:pos+2], uint16(len(jobBytes)))
+	pos += 2
+	binary.BigEndian.PutUint16(packet[pos:pos+2], uint16(len(routeBytes)))
+	pos += 2
 	copy(packet[pos:], pathBytes)
+	pos += len(pathBytes)
+	copy(packet[pos:], jobBytes)
+	pos += len(jobBytes)
+	copy(packet[pos:], routeBytes)
 	return packet, nil
 }
 
 func decodeUDPJobStartPacket(packet []byte) (udpJobStartPacket, bool, error) {
-	minLen := len(udpJobMagic) + 1 + 4 + 8 + 2 + 4
+	minLen := len(udpJobMagic) + 1 + 4 + 8 + 2 + 4 + 2 + 2
 	if len(packet) < minLen || string(packet[:len(udpJobMagic)]) != string(udpJobMagic) {
 		return udpJobStartPacket{}, false, nil
 	}
@@ -946,10 +1093,18 @@ func decodeUDPJobStartPacket(packet []byte) (udpJobStartPacket, bool, error) {
 	}
 	pathLen := int(binary.BigEndian.Uint32(packet[pos : pos+4]))
 	pos += 4
-	if pathLen == 0 || pos+pathLen != len(packet) {
+	jobLen := int(binary.BigEndian.Uint16(packet[pos : pos+2]))
+	pos += 2
+	routeLen := int(binary.BigEndian.Uint16(packet[pos : pos+2]))
+	pos += 2
+	if pathLen == 0 || pos+pathLen+jobLen+routeLen != len(packet) {
 		return udpJobStartPacket{}, true, errors.New("invalid udp start packet path")
 	}
 	start.relPath = string(packet[pos : pos+pathLen])
+	pos += pathLen
+	start.jobID = string(packet[pos : pos+jobLen])
+	pos += jobLen
+	start.routeID = string(packet[pos : pos+routeLen])
 	return start, true, nil
 }
 
@@ -991,12 +1146,14 @@ func isUDPJobControlPacket(packet []byte, kind byte, sessionKey uint32) bool {
 	return binary.BigEndian.Uint32(packet[pos:pos+4]) == sessionKey
 }
 
-func sendUDPJobStartAndWait(ctx context.Context, conn *net.UDPConn, relPath string, size uint64, sessionKey uint32, streamIDs []uint32) error {
+func sendUDPJobStartAndWait(ctx context.Context, conn *net.UDPConn, exec *TransferExecutionContext, relPath string, size uint64, sessionKey uint32, streamIDs []uint32) error {
 	packet, err := encodeUDPJobStartPacket(udpJobStartPacket{
 		sessionKey: sessionKey,
 		size:       size,
 		streamIDs:  streamIDs,
 		relPath:    relPath,
+		jobID:      exec.JobID,
+		routeID:    exec.RouteID,
 	})
 	if err != nil {
 		return err
@@ -1085,6 +1242,23 @@ func randomUint32() (uint32, error) {
 	}
 }
 
+type progressReader struct {
+	r      io.Reader
+	onRead func(int)
+}
+
+func newProgressReader(r io.Reader, onRead func(int)) io.Reader {
+	return progressReader{r: r, onRead: onRead}
+}
+
+func (r progressReader) Read(p []byte) (int, error) {
+	n, err := r.r.Read(p)
+	if n > 0 && r.onRead != nil {
+		r.onRead(n)
+	}
+	return n, err
+}
+
 func writeFull(ctx context.Context, w io.Writer, p []byte) error {
 	for len(p) > 0 {
 		if err := ctx.Err(); err != nil {
@@ -1120,16 +1294,29 @@ func sendFileToTCPDestination(ctx context.Context, exec *TransferExecutionContex
 	if len(pathBytes) > 1<<20 {
 		return fmt.Errorf("relative path too long: %s", plan.RelativePath)
 	}
-	if err := writeFull(ctx, conn, []byte("GROVERJOB1\n")); err != nil {
+	if err := writeFull(ctx, conn, []byte(currentTCPJobMagic)); err != nil {
 		return err
 	}
-	var header [12]byte
+	jobBytes := []byte(strings.TrimSpace(exec.JobID))
+	routeBytes := []byte(strings.TrimSpace(exec.RouteID))
+	if len(jobBytes) > 1<<16-1 || len(routeBytes) > 1<<16-1 {
+		return fmt.Errorf("tcp job metadata too long: job_id=%d route_id=%d", len(jobBytes), len(routeBytes))
+	}
+	var header [16]byte
 	binary.BigEndian.PutUint32(header[:4], uint32(len(pathBytes)))
 	binary.BigEndian.PutUint64(header[4:], plan.Size)
+	binary.BigEndian.PutUint16(header[12:14], uint16(len(jobBytes)))
+	binary.BigEndian.PutUint16(header[14:16], uint16(len(routeBytes)))
 	if err := writeFull(ctx, conn, header[:]); err != nil {
 		return err
 	}
 	if err := writeFull(ctx, conn, pathBytes); err != nil {
+		return err
+	}
+	if err := writeFull(ctx, conn, jobBytes); err != nil {
+		return err
+	}
+	if err := writeFull(ctx, conn, routeBytes); err != nil {
 		return err
 	}
 	buf := make([]byte, defaultTransferCopyBufferSize)
@@ -1139,8 +1326,14 @@ func sendFileToTCPDestination(ctx context.Context, exec *TransferExecutionContex
 		}
 		n, readErr := src.Read(buf)
 		if n > 0 {
+			if exec.Collector != nil {
+				exec.Collector.ObserveDiskRead(n)
+			}
 			if err := writeFull(ctx, conn, buf[:n]); err != nil {
 				return err
+			}
+			if exec.Collector != nil {
+				exec.Collector.ObserveSend(n, false)
 			}
 			if exec.OnProgress != nil {
 				exec.OnProgress(plan.SourcePath, n)
@@ -1172,6 +1365,7 @@ func serveTransferEndpointTCP(listener *net.TCPListener, root string) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
+			internal.Debug("tcp transfer listener closed", internal.Fields{internal.FieldError: err.Error()})
 			return
 		}
 		go receiveTransferFileTCP(conn, root)
@@ -1193,11 +1387,11 @@ func serveTransferEndpointUDP(conn *net.UDPConn, root string, tuning udpTransfer
 			continue
 		}
 		if err != nil {
-			internal.Debug("drop udp transfer start packet", internal.Fields{internal.FieldError: err.Error()})
+			internal.Warn("drop invalid udp transfer start packet", internal.Fields{internal.FieldError: err.Error(), "remote": addr.String()})
 			continue
 		}
 		if err := receiveUDPJobFile(context.Background(), conn, root, addr, start, tuning); err != nil {
-			internal.Debug("drop udp transfer packet", internal.Fields{internal.FieldError: err.Error()})
+			internal.Warn("udp transfer receive failed", internal.Fields{internal.FieldError: err.Error(), "remote": addr.String()})
 		}
 	}
 }
@@ -1206,6 +1400,7 @@ func receiveUDPJobFile(ctx context.Context, conn *net.UDPConn, root string, remo
 	if remote == nil {
 		return errors.New("udp transfer start missing remote address")
 	}
+	jobID := start.jobID
 	relPath := filepath.Clean(filepath.FromSlash(start.relPath))
 	if filepath.IsAbs(relPath) || strings.HasPrefix(relPath, "..") {
 		return fmt.Errorf("invalid relative path %q", relPath)
@@ -1214,6 +1409,15 @@ func receiveUDPJobFile(ctx context.Context, conn *net.UDPConn, root string, remo
 	if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
 		return err
 	}
+	internal.Info(jobLogMessage(jobID, "udp receive started"), internal.Fields{
+		"route_id":   start.routeID,
+		"remote":     remote.String(),
+		"root":       root,
+		"path":       relPath,
+		"bytes":      start.size,
+		"streams":    len(start.streamIDs),
+		"session_id": start.sessionKey,
+	})
 	f, err := os.OpenFile(dstPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
@@ -1233,6 +1437,14 @@ func receiveUDPJobFile(ctx context.Context, conn *net.UDPConn, root string, remo
 			return err
 		}
 		sendUDPJobDoneBurst(conn, remote, start.sessionKey)
+		internal.Info(jobLogMessage(jobID, "udp receive completed"), internal.Fields{
+			"route_id":   start.routeID,
+			"remote":     remote.String(),
+			"path":       relPath,
+			"bytes":      start.size,
+			"streams":    len(start.streamIDs),
+			"session_id": start.sessionKey,
+		})
 		return nil
 	}
 	cfg := udpdataplane.ReceiveConfig{
@@ -1261,6 +1473,14 @@ func receiveUDPJobFile(ctx context.Context, conn *net.UDPConn, root string, remo
 		return err
 	}
 	sendUDPJobDoneBurst(conn, remote, start.sessionKey)
+	internal.Info(jobLogMessage(jobID, "udp receive completed"), internal.Fields{
+		"route_id":   start.routeID,
+		"remote":     remote.String(),
+		"path":       relPath,
+		"bytes":      start.size,
+		"streams":    len(start.streamIDs),
+		"session_id": start.sessionKey,
+	})
 	return nil
 }
 
@@ -1288,44 +1508,101 @@ func sendUDPJobDoneBurst(conn *net.UDPConn, remote *net.UDPAddr, sessionKey uint
 
 func receiveTransferFileTCP(conn net.Conn, root string) {
 	defer conn.Close()
+	remote := conn.RemoteAddr().String()
 	reader := bufio.NewReader(conn)
 	magic, err := reader.ReadString('\n')
-	if err != nil || magic != "GROVERJOB1\n" {
+	if err != nil || (magic != tcpJobMagicV1 && magic != tcpJobMagicV2) {
+		fields := internal.Fields{"remote": remote}
+		if err != nil {
+			fields[internal.FieldError] = err.Error()
+		} else {
+			fields["magic"] = strings.TrimSpace(magic)
+		}
+		internal.Warn("drop invalid tcp transfer header", fields)
 		return
 	}
-	var header [12]byte
-	if _, err := io.ReadFull(reader, header[:]); err != nil {
+	var header [16]byte
+	headerLen := 12
+	if magic == tcpJobMagicV2 {
+		headerLen = 16
+	}
+	if _, err := io.ReadFull(reader, header[:headerLen]); err != nil {
+		internal.Warn("tcp transfer header read failed", internal.Fields{internal.FieldError: err.Error(), "remote": remote})
 		return
 	}
 	pathLen := binary.BigEndian.Uint32(header[:4])
 	size := binary.BigEndian.Uint64(header[4:])
+	jobLen := uint16(0)
+	routeLen := uint16(0)
+	if magic == tcpJobMagicV2 {
+		jobLen = binary.BigEndian.Uint16(header[12:14])
+		routeLen = binary.BigEndian.Uint16(header[14:16])
+	}
 	if pathLen == 0 || pathLen > 1<<20 {
+		internal.Warn("drop invalid tcp transfer path length", internal.Fields{"remote": remote, "path_len": pathLen})
 		return
 	}
 	pathBytes := make([]byte, pathLen)
 	if _, err := io.ReadFull(reader, pathBytes); err != nil {
+		internal.Warn("tcp transfer path read failed", internal.Fields{internal.FieldError: err.Error(), "remote": remote})
 		return
+	}
+	jobID := ""
+	if jobLen > 0 {
+		jobBytes := make([]byte, jobLen)
+		if _, err := io.ReadFull(reader, jobBytes); err != nil {
+			internal.Warn("tcp transfer job metadata read failed", internal.Fields{internal.FieldError: err.Error(), "remote": remote})
+			return
+		}
+		jobID = string(jobBytes)
+	}
+	routeID := ""
+	if routeLen > 0 {
+		routeBytes := make([]byte, routeLen)
+		if _, err := io.ReadFull(reader, routeBytes); err != nil {
+			internal.Warn("tcp transfer route metadata read failed", internal.Fields{internal.FieldError: err.Error(), "remote": remote})
+			return
+		}
+		routeID = string(routeBytes)
 	}
 	rel := filepath.Clean(filepath.FromSlash(string(pathBytes)))
 	if filepath.IsAbs(rel) || rel == "." || strings.HasPrefix(rel, "..") {
+		internal.Warn("drop invalid tcp transfer path", internal.Fields{"remote": remote, "path": rel})
 		return
 	}
 	dstPath := filepath.Join(root, rel)
 	if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
+		internal.Warn("tcp transfer destination mkdir failed", internal.Fields{internal.FieldError: err.Error(), "remote": remote, "path": rel})
 		return
 	}
 	dst, err := os.OpenFile(dstPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
+		internal.Warn("tcp transfer destination open failed", internal.Fields{internal.FieldError: err.Error(), "remote": remote, "path": rel})
 		return
 	}
 	defer dst.Close()
+	internal.Info(jobLogMessage(jobID, "tcp receive started"), internal.Fields{
+		"route_id": routeID,
+		"remote":   remote,
+		"root":     root,
+		"path":     rel,
+		"bytes":    size,
+	})
 	if _, err := io.CopyN(dst, reader, int64(size)); err != nil {
+		internal.Warn("tcp transfer receive failed", internal.Fields{internal.FieldError: err.Error(), "remote": remote, "path": rel, "bytes": size})
 		return
 	}
 	if err := dst.Sync(); err != nil {
+		internal.Warn("tcp transfer sync failed", internal.Fields{internal.FieldError: err.Error(), "remote": remote, "path": rel})
 		return
 	}
 	_ = writeFull(context.Background(), conn, []byte("OK"))
+	internal.Info(jobLogMessage(jobID, "tcp receive completed"), internal.Fields{
+		"route_id": routeID,
+		"remote":   remote,
+		"path":     rel,
+		"bytes":    size,
+	})
 }
 
 func cloneTransferEndpoint(ep *pb.TransferEndpoint) *pb.TransferEndpoint {

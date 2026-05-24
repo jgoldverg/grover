@@ -106,6 +106,7 @@ type ServerConfig struct {
 	UDPReadBufferSize     int    `mapstructure:"udp_read_buffer_size"`
 	UDPWriteBufferSize    int    `mapstructure:"udp_write_buffer_size"`
 	UDPMTUSize            int    `mapstructure:"udp_mtu_size"`
+	UDPFlowControl        string `mapstructure:"udp_flow_control"`
 	UDPWindowPackets      int    `mapstructure:"udp_window_packets"`
 	UDPAckEveryPackets    int    `mapstructure:"udp_ack_every_packets"`
 	UDPAckEveryMs         int    `mapstructure:"udp_ack_every_ms"`
@@ -141,6 +142,7 @@ func LoadServerConfig(configPath string) (*ServerConfig, error) {
 	v.SetDefault("udp_read_buffer_size", 8<<20)
 	v.SetDefault("udp_write_buffer_size", 8<<20)
 	v.SetDefault("udp_mtu_size", 1500)
+	v.SetDefault("udp_flow_control", "fixed")
 	v.SetDefault("udp_window_packets", 4096)
 	v.SetDefault("udp_ack_every_packets", 32)
 	v.SetDefault("udp_ack_every_ms", 5)
@@ -161,6 +163,7 @@ func LoadServerConfig(configPath string) (*ServerConfig, error) {
 	cfg.ServerKeyPath = expandPath(cfg.ServerKeyPath)
 	cfg.CredentialsFile = expandPath(cfg.CredentialsFile)
 	cfg.TransferProtocol = normalizeTransferProtocol(cfg.TransferProtocol)
+	cfg.UDPFlowControl = normalizeUDPFlowControl(cfg.UDPFlowControl)
 
 	Info("TLS cert paths", Fields{
 		ServerCertificatePath: cfg.ServerCertificatePath,
@@ -284,6 +287,7 @@ func (cfg *ServerConfig) Save(path string) (string, error) {
 	v.Set("udp_read_buffer_size", cfg.UDPReadBufferSize)
 	v.Set("udp_write_buffer_size", cfg.UDPWriteBufferSize)
 	v.Set("udp_mtu_size", cfg.UDPMTUSize)
+	v.Set("udp_flow_control", cfg.UDPFlowControl)
 	v.Set("udp_window_packets", cfg.UDPWindowPackets)
 	v.Set("udp_ack_every_packets", cfg.UDPAckEveryPackets)
 	v.Set("udp_ack_every_ms", cfg.UDPAckEveryMs)
@@ -318,6 +322,15 @@ func normalizeTransferProtocol(v string) string {
 		return "tcp"
 	default:
 		return "udp"
+	}
+}
+
+func normalizeUDPFlowControl(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "bbr":
+		return "bbr"
+	default:
+		return "fixed"
 	}
 }
 
