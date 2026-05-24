@@ -52,6 +52,19 @@ type CopyOptions struct {
 
 const defaultTransferRoutePrefix = "transfer"
 
+type transferRateSample struct {
+	NowBps float64
+	AvgBps float64
+	Trend  string
+	Valid  bool
+}
+
+type transferRateSampler struct {
+	lastBytes uint64
+	lastTime  time.Time
+	lastBps   float64
+}
+
 func SimpleCopy() *cobra.Command {
 	var opts CopyOptions
 	cmd := &cobra.Command{
@@ -336,19 +349,20 @@ func TransferStatusCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				printTransferJobStatus(cmd.OutOrStdout(), job)
+				printTransferJobStatus(cmd.OutOrStdout(), job, transferRateSample{})
 				return nil
 			}
 			stream, err := routed.StreamTransferStats(cmd.Context(), args[0], "")
 			if err != nil {
 				return err
 			}
+			sampler := &transferRateSampler{}
 			for {
 				job, err := stream.Recv()
 				if err != nil {
 					return err
 				}
-				printTransferJobStatus(cmd.OutOrStdout(), job)
+				printTransferJobStatus(cmd.OutOrStdout(), job, sampler.Observe(job, time.Now()))
 				if job.GetState() != pb.RuntimeState_RUNTIME_STATE_RUNNING && job.GetState() != pb.RuntimeState_RUNTIME_STATE_PREPARING {
 					return nil
 				}
@@ -360,43 +374,98 @@ func TransferStatusCommand() *cobra.Command {
 	return cmd
 }
 
-func printTransferJobStatus(w io.Writer, job *pb.TransferJob) {
+func (s *transferRateSampler) Observe(job *pb.TransferJob, now time.Time) transferRateSample {
+	if job == nil {
+		return transferRateSample{}
+	}
+	bytes := job.GetGoodBytes()
+	avg := job.GetStats().GetAverageThroughputBps()
+	if s.lastTime.IsZero() {
+		s.lastBytes = bytes
+		s.lastTime = now
+		s.lastBps = 0
+		return transferRateSample{AvgBps: avg}
+	}
+	elapsed := now.Sub(s.lastTime).Seconds()
+	if elapsed <= 0 {
+		return transferRateSample{AvgBps: avg}
+	}
+	delta := uint64(0)
+	if bytes >= s.lastBytes {
+		delta = bytes - s.lastBytes
+	}
+	current := float64(delta) / elapsed
+	trend := "flat"
+	if s.lastBps > 0 {
+		switch {
+		case current > s.lastBps*1.10:
+			trend = "up"
+		case current < s.lastBps*0.90:
+			trend = "down"
+		}
+	}
+	s.lastBytes = bytes
+	s.lastTime = now
+	s.lastBps = current
+	return transferRateSample{NowBps: current, AvgBps: avg, Trend: trend, Valid: true}
+}
+
+func printTransferJobStatus(w io.Writer, job *pb.TransferJob, sample transferRateSample) {
 	if w == nil || job == nil {
 		return
 	}
-	printTransferRouteVisualization(w, job)
+	printTransferRouteVisualization(w, job, sample)
 }
 
-func printTransferRouteVisualization(w io.Writer, job *pb.TransferJob) {
+func printTransferRouteVisualization(w io.Writer, job *pb.TransferJob, sample transferRateSample) {
 	stats := job.GetStats()
+	totalBytes := transferTotalBytes(job)
+	progressPercent := percentComplete(job.GetGoodBytes(), totalBytes)
+	nowRate := stats.GetCurrentThroughputBps()
+	avgRate := stats.GetAverageThroughputBps()
+	trend := "warmup"
+	if sample.Valid {
+		nowRate = sample.NowBps
+		avgRate = sample.AvgBps
+		trend = sample.Trend
+	}
+
 	fmt.Fprintf(w, "Transfer %s\n", job.GetJobId())
-	fmt.Fprintf(w, "  State: %-10s Route: %s\n", shortRuntimeState(job.GetState()), emptyDash(job.GetRouteId()))
+	fmt.Fprintf(w, "  State:       %-10s Route: %s\n", shortRuntimeState(job.GetState()), emptyDash(job.GetRouteId()))
 	if job.GetErrorMessage() != "" {
 		fmt.Fprintf(w, "  Error: %s\n", job.GetErrorMessage())
 	}
-	fmt.Fprintf(w, "  Source:      %s\n", endpointSummary(job.GetSource()))
-	fmt.Fprintf(w, "  Data plane:  %s -> %s\n", shortDataProtocol(job.GetProtocol()), dataEndpointSummary(job.GetDestination()))
-	fmt.Fprintf(w, "  Destination: %s\n", endpointSummary(job.GetDestination()))
-	fmt.Fprintf(w, "  Files:       done=%d active=%d streams=%d\n",
+	fmt.Fprintf(w, "  Transferred: %s / %s, %s, now %s, avg %s, ETA %s, trend %s\n",
+		formatBytes(job.GetGoodBytes()),
+		formatTotalBytes(totalBytes),
+		formatPercent(progressPercent),
+		formatByteRate(nowRate),
+		formatByteRate(avgRate),
+		formatETA(remainingBytes(job.GetGoodBytes(), totalBytes), nowRate),
+		trend,
+	)
+	fmt.Fprintf(w, "  Files:       %d done / %d total, %d active, %d streams\n",
 		job.GetFilesDone(),
+		len(job.GetFiles()),
 		job.GetFilesActive(),
 		job.GetStreamsActive(),
+	)
+	printActiveTransferFiles(w, job, nowRate)
+	fmt.Fprintf(w, "\n")
+	fmt.Fprintf(w, "Grover network\n")
+	fmt.Fprintf(w, "  Path:        %s -> %s -> %s\n", endpointSummary(job.GetSource()), shortDataProtocol(job.GetProtocol()), endpointSummary(job.GetDestination()))
+	fmt.Fprintf(w, "  Health:      rtt=%s packets=%d retransmits=%d drops=%d errors=%d efficiency=%s\n",
+		formatLatency(stats.GetLatencyMs()),
+		stats.GetPackets(),
+		job.GetRetransmits(),
+		stats.GetDrops(),
+		stats.GetErrors(),
+		formatEfficiency(job.GetGoodBytes(), job.GetNetworkBytes()),
 	)
 	fmt.Fprintf(w, "  Bytes:       good=%s wire=%s disk_read=%s\n",
 		formatBytes(job.GetGoodBytes()),
 		formatBytes(job.GetNetworkBytes()),
 		formatBytes(job.GetDiskReadBytes()),
-	)
-	fmt.Fprintf(w, "  Rate:        goodput=%s avg=%s rtt=%s\n",
-		formatByteRate(stats.GetCurrentThroughputBps()),
-		formatByteRate(stats.GetAverageThroughputBps()),
-		formatLatency(stats.GetLatencyMs()),
-	)
-	fmt.Fprintf(w, "  Network:     packets=%d retransmits=%d errors=%d drops=%d\n",
-		stats.GetPackets(),
-		job.GetRetransmits(),
-		stats.GetErrors(),
-		stats.GetDrops(),
 	)
 	if job.GetDestination().GetDataEndpoint() == nil {
 		fmt.Fprintf(w, "  Destination: disk_write=%s\n", formatBytes(job.GetDiskWriteBytes()))
@@ -404,6 +473,64 @@ func printTransferRouteVisualization(w io.Writer, job *pb.TransferJob) {
 		fmt.Fprintf(w, "  Destination: expected=%s metrics=pending\n", formatBytes(job.GetGoodBytes()))
 	}
 	fmt.Fprintln(w)
+}
+
+func transferTotalBytes(job *pb.TransferJob) uint64 {
+	var total uint64
+	for _, file := range job.GetFiles() {
+		total += file.GetSize()
+	}
+	return total
+}
+
+func remainingBytes(done, total uint64) uint64 {
+	if total == 0 || done >= total {
+		return 0
+	}
+	return total - done
+}
+
+func percentComplete(done, total uint64) float64 {
+	if total == 0 {
+		return 0
+	}
+	if done >= total {
+		return 100
+	}
+	return float64(done) * 100 / float64(total)
+}
+
+func printActiveTransferFiles(w io.Writer, job *pb.TransferJob, nowRate float64) {
+	active := 0
+	for _, file := range job.GetFiles() {
+		if file.GetState() != pb.RuntimeState_RUNTIME_STATE_RUNNING {
+			continue
+		}
+		active++
+		if active == 1 {
+			fmt.Fprintln(w, "  Transferring:")
+		}
+		fmt.Fprintf(w, "   * %s: %s / %s, %s, ETA %s\n",
+			fileDisplayPath(file.GetRelativePath(), file.GetPath()),
+			formatBytes(file.GetBytesDone()),
+			formatTotalBytes(file.GetSize()),
+			formatPercent(percentComplete(file.GetBytesDone(), file.GetSize())),
+			formatETA(remainingBytes(file.GetBytesDone(), file.GetSize()), nowRate),
+		)
+		if active >= 3 {
+			break
+		}
+	}
+}
+
+func fileDisplayPath(relativePath, fullPath string) string {
+	if strings.TrimSpace(relativePath) != "" {
+		return relativePath
+	}
+	if strings.TrimSpace(fullPath) != "" {
+		return fullPath
+	}
+	return "unknown"
 }
 
 func endpointSummary(ep *pb.TransferEndpoint) string {
@@ -477,6 +604,13 @@ func formatBytes(n uint64) string {
 	return fmt.Sprintf("%.2f EiB", value/unit)
 }
 
+func formatTotalBytes(n uint64) string {
+	if n == 0 {
+		return "?"
+	}
+	return formatBytes(n)
+}
+
 func formatByteRate(bytesPerSecond float64) string {
 	if bytesPerSecond <= 0 {
 		return "0 B/s"
@@ -484,11 +618,55 @@ func formatByteRate(bytesPerSecond float64) string {
 	return fmt.Sprintf("%s/s", formatBytes(uint64(bytesPerSecond)))
 }
 
+func formatPercent(v float64) string {
+	if v <= 0 {
+		return "0%"
+	}
+	if v >= 100 {
+		return "100%"
+	}
+	return fmt.Sprintf("%.1f%%", v)
+}
+
+func formatETA(remaining uint64, bytesPerSecond float64) string {
+	if remaining == 0 {
+		return "-"
+	}
+	if bytesPerSecond <= 0 {
+		return "?"
+	}
+	return formatDuration(time.Duration(float64(time.Second) * (float64(remaining) / bytesPerSecond)))
+}
+
+func formatDuration(d time.Duration) string {
+	if d <= 0 {
+		return "-"
+	}
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	if d < time.Minute {
+		return d.Truncate(100 * time.Millisecond).String()
+	}
+	return d.Truncate(time.Second).String()
+}
+
 func formatLatency(ms float64) string {
 	if ms <= 0 {
 		return "-"
 	}
 	return fmt.Sprintf("%.2fms", ms)
+}
+
+func formatEfficiency(goodBytes, networkBytes uint64) string {
+	if goodBytes == 0 || networkBytes == 0 {
+		return "-"
+	}
+	eff := float64(goodBytes) * 100 / float64(networkBytes)
+	if eff > 100 {
+		eff = 100
+	}
+	return fmt.Sprintf("%.2f%%", eff)
 }
 
 func cloneAppConfig(cfg *internal.AppConfig) *internal.AppConfig {

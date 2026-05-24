@@ -267,8 +267,9 @@ func monitorRoutedTransferJob(cmd *cobra.Command, routed gclient.RoutedTransferA
 		return nil, fmt.Errorf("transfer job was not returned by source groverd")
 	}
 	out := cmd.OutOrStdout()
+	sampler := &transferRateSampler{}
 	if opts.uiMode() == "live" {
-		printTransferJobStatus(out, job)
+		printTransferJobStatus(out, job, sampler.Observe(job, time.Now()))
 	} else {
 		fmt.Fprintf(out, "transfer_job: %s\n", job.GetJobId())
 		fmt.Fprintf(out, "state: %s\n", job.GetState().String())
@@ -291,7 +292,7 @@ func monitorRoutedTransferJob(cmd *cobra.Command, routed gclient.RoutedTransferA
 		}
 		job = next
 		if opts.uiMode() == "live" {
-			printTransferJobStatus(out, job)
+			printTransferJobStatus(out, job, sampler.Observe(job, time.Now()))
 		}
 	}
 	return job, nil
