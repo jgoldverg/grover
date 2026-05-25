@@ -517,10 +517,45 @@ func printActiveTransferFiles(w io.Writer, job *pb.TransferJob, nowRate float64)
 			formatPercent(percentComplete(file.GetBytesDone(), file.GetSize())),
 			formatETA(remainingBytes(file.GetBytesDone(), file.GetSize()), nowRate),
 		)
+		printActiveTransferStreams(w, file)
 		if active >= 3 {
 			break
 		}
 	}
+}
+
+func printActiveTransferStreams(w io.Writer, file *pb.TransferFileState) {
+	printed := 0
+	for _, stream := range file.GetStreams() {
+		if stream.GetState() != pb.RuntimeState_RUNTIME_STATE_RUNNING {
+			continue
+		}
+		fmt.Fprintf(w, "     - stream %d: %s / %s, now %s, avg %s, offset %s\n",
+			stream.GetStreamId(),
+			formatBytes(stream.GetBytesDone()),
+			formatTotalBytes(stream.GetSize()),
+			formatByteRate(stream.GetCurrentThroughputBps()),
+			formatByteRate(stream.GetAverageThroughputBps()),
+			formatBytes(stream.GetOffset()),
+		)
+		printed++
+		if printed >= 4 {
+			if remaining := countActiveTransferStreams(file) - printed; remaining > 0 {
+				fmt.Fprintf(w, "     - ... %d more active streams\n", remaining)
+			}
+			return
+		}
+	}
+}
+
+func countActiveTransferStreams(file *pb.TransferFileState) int {
+	count := 0
+	for _, stream := range file.GetStreams() {
+		if stream.GetState() == pb.RuntimeState_RUNTIME_STATE_RUNNING {
+			count++
+		}
+	}
+	return count
 }
 
 func fileDisplayPath(relativePath, fullPath string) string {

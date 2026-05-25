@@ -71,6 +71,21 @@ func TestTransferJobManagerLocalFilesystemLifecycle(t *testing.T) {
 	if job.GetStreamsPerFile() != 3 {
 		t.Fatalf("streams per file = %d, want 3", job.GetStreamsPerFile())
 	}
+	for _, file := range job.GetFiles() {
+		if len(file.GetStreams()) != 3 {
+			t.Fatalf("file %s streams = %d, want 3", file.GetRelativePath(), len(file.GetStreams()))
+		}
+		var streamBytes uint64
+		for _, stream := range file.GetStreams() {
+			if stream.GetState() != pb.RuntimeState_RUNTIME_STATE_DONE {
+				t.Fatalf("file %s stream %d state = %s, want done", file.GetRelativePath(), stream.GetStreamId(), stream.GetState())
+			}
+			streamBytes += stream.GetBytesDone()
+		}
+		if streamBytes != file.GetSize() {
+			t.Fatalf("file %s stream bytes = %d, want %d", file.GetRelativePath(), streamBytes, file.GetSize())
+		}
+	}
 	assertFileBytes(t, filepath.Join(dst, "a.txt"), []byte("alpha"))
 	assertFileBytes(t, filepath.Join(dst, "nested", "b.txt"), []byte("beta"))
 
@@ -100,10 +115,30 @@ func TestLocalFilesystemTransferExecutorPlansRootFileAsBaseName(t *testing.T) {
 	}
 }
 
+func TestResolveDestinationFilePathUsesExplicitFileTarget(t *testing.T) {
+	dir := t.TempDir()
+	got, err := resolveDestinationFilePath(filepath.Join(dir, "file-1g.bin"), "file-1g.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(dir, "file-1g.bin"); got != want {
+		t.Fatalf("destination = %q, want %q", got, want)
+	}
+
+	got, err = resolveDestinationFilePath(dir, "nested/file-1g.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(dir, "nested", "file-1g.bin"); got != want {
+		t.Fatalf("destination = %q, want %q", got, want)
+	}
+}
+
 func TestTransferJobManagerDirectTCPBetweenManagers(t *testing.T) {
 	src := t.TempDir()
 	dst := t.TempDir()
-	if err := os.WriteFile(filepath.Join(src, "file.txt"), []byte("over the wire"), 0o600); err != nil {
+	payload := []byte("over the wire across multiple tcp ranges")
+	if err := os.WriteFile(filepath.Join(src, "file.txt"), payload, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cfg := &internal.ServerConfig{DataBindHost: "127.0.0.1", DataAdvertiseHost: "127.0.0.1"}
@@ -138,12 +173,23 @@ func TestTransferJobManagerDirectTCPBetweenManagers(t *testing.T) {
 		Source:         source,
 		Destination:    dest,
 		FilesInFlight:  1,
-		StreamsPerFile: 1,
+		StreamsPerFile: 3,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	waitForTransferJobState(t, sourceManager, "job-direct", pb.RuntimeState_RUNTIME_STATE_DONE)
-	assertFileBytes(t, filepath.Join(dst, "file.txt"), []byte("over the wire"))
+	job := waitForTransferJobState(t, sourceManager, "job-direct", pb.RuntimeState_RUNTIME_STATE_DONE)
+	if len(job.GetFiles()) != 1 || len(job.GetFiles()[0].GetStreams()) != 3 {
+		t.Fatalf("tcp streams = %+v, want 3 streams on one file", job.GetFiles())
+	}
+	for _, stream := range job.GetFiles()[0].GetStreams() {
+		if stream.GetState() != pb.RuntimeState_RUNTIME_STATE_DONE {
+			t.Fatalf("stream %d state = %s, want done", stream.GetStreamId(), stream.GetState())
+		}
+		if stream.GetBytesDone() == 0 {
+			t.Fatalf("stream %d did not record progress: %+v", stream.GetStreamId(), stream)
+		}
+	}
+	assertFileBytes(t, filepath.Join(dst, "file.txt"), payload)
 }
 
 func TestTransferJobManagerDirectTCPRootFileBetweenManagers(t *testing.T) {
@@ -242,6 +288,14 @@ func TestTransferJobManagerDirectUDPBetweenManagers(t *testing.T) {
 	}
 	if job.GetStats().GetEgressBytes() == 0 || job.GetStats().GetSampledAtUnixNano() == 0 {
 		t.Fatalf("job stats not populated: %+v", job.GetStats())
+	}
+	if len(job.GetFiles()) != 1 || len(job.GetFiles()[0].GetStreams()) != 3 {
+		t.Fatalf("udp streams = %+v, want 3 streams on one file", job.GetFiles())
+	}
+	for _, stream := range job.GetFiles()[0].GetStreams() {
+		if stream.GetBytesDone() == 0 {
+			t.Fatalf("stream %d did not record progress: %+v", stream.GetStreamId(), stream)
+		}
 	}
 	assertEventuallyFileBytes(t, filepath.Join(dst, "file.txt"), []byte("udp over the wire"))
 }

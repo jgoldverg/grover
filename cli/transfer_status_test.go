@@ -62,6 +62,14 @@ func TestPrintTransferJobStatusShowsNowAverageAndTrend(t *testing.T) {
 			Size:         4096,
 			BytesDone:    2048,
 			State:        pb.RuntimeState_RUNTIME_STATE_RUNNING,
+			Streams: []*pb.TransferStreamState{{
+				StreamId:             1,
+				Size:                 4096,
+				BytesDone:            2048,
+				State:                pb.RuntimeState_RUNTIME_STATE_RUNNING,
+				CurrentThroughputBps: 1024,
+				AverageThroughputBps: 512,
+			}},
 		}},
 	}
 	var out bytes.Buffer
@@ -73,6 +81,7 @@ func TestPrintTransferJobStatusShowsNowAverageAndTrend(t *testing.T) {
 		"trend up",
 		"Transferring:",
 		"* file.bin: 2.00 KiB / 4.00 KiB, 50.0%",
+		"stream 1: 2.00 KiB / 4.00 KiB, now 1.00 KiB/s, avg 512 B/s",
 		"Grover network",
 		"efficiency=100.00%",
 	} {

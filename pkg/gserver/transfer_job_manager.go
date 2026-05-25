@@ -32,9 +32,10 @@ const (
 const (
 	tcpJobMagicV1 = "GROVERJOB1\n"
 	tcpJobMagicV2 = "GROVERJOB2\n"
+	tcpJobMagicV3 = "GROVERJOB3\n"
 	udpJobMagicV2 = "GROVERJOBUDP2"
 
-	currentTCPJobMagic = tcpJobMagicV2
+	currentTCPJobMagic = tcpJobMagicV3
 	currentUDPJobMagic = udpJobMagicV2
 
 	udpJobPacketStart byte = 1
@@ -55,25 +56,34 @@ type TransferJobExecutor interface {
 }
 
 type TransferExecutionContext struct {
-	JobID       string
-	RouteID     string
-	SourceRoot  string
-	DestRoot    string
-	DestData    *pb.DataEndpoint
-	Protocol    pb.DataProtocol
-	UDPPayload  int
-	UDPFlow     string
-	UDPWindow   int
-	UDPBatch    int
-	Collector   *metrics.TransferCollector
-	StreamsFunc func() uint32
-	OnProgress  func(filePath string, bytesRead int)
+	JobID            string
+	RouteID          string
+	SourceRoot       string
+	DestRoot         string
+	DestData         *pb.DataEndpoint
+	Protocol         pb.DataProtocol
+	UDPPayload       int
+	UDPFlow          string
+	UDPWindow        int
+	UDPBatch         int
+	Collector        *metrics.TransferCollector
+	StreamsFunc      func() uint32
+	OnProgress       func(filePath string, bytesRead int)
+	OnStreamStart    func(filePath string, stream TransferStreamPlan)
+	OnStreamProgress func(filePath string, streamID uint32, bytesRead int)
+	OnStreamDone     func(filePath string, streamID uint32, state pb.RuntimeState, errText string)
 }
 
 type TransferFilePlan struct {
 	SourcePath   string
 	RelativePath string
 	Size         uint64
+}
+
+type TransferStreamPlan struct {
+	StreamID uint32
+	Offset   uint64
+	Size     uint64
 }
 
 type TransferJobManager struct {
@@ -126,9 +136,17 @@ type transferJobRuntime struct {
 	nextIndex int
 	active    uint32
 	doneCount uint32
+
+	streamStartedAt map[transferStreamKey]time.Time
+	streamLastAt    map[transferStreamKey]time.Time
 }
 
 type localFilesystemTransferExecutor struct{}
+
+type transferStreamKey struct {
+	fileIndex int
+	streamID  uint32
+}
 
 func NewTransferJobManager(cfg *internal.ServerConfig, executor TransferJobExecutor) *TransferJobManager {
 	if executor == nil {
@@ -313,18 +331,20 @@ func (m *TransferJobManager) StartJob(ctx context.Context, req *pb.StartTransfer
 
 	jobCtx, cancel := context.WithCancel(context.Background())
 	runtime := &transferJobRuntime{
-		cancel:         cancel,
-		jobID:          jobID,
-		routeID:        strings.TrimSpace(req.GetRouteId()),
-		protocol:       protocol,
-		source:         source,
-		dest:           dest,
-		state:          pb.RuntimeState_RUNTIME_STATE_RUNNING,
-		filesInFlight:  filesInFlight,
-		streamsPerFile: streamsPerFile,
-		startedAt:      time.Now(),
-		collector:      metrics.NewTransferCollector("grover"),
-		files:          make([]*pb.TransferFileState, 0, len(plans)),
+		cancel:          cancel,
+		jobID:           jobID,
+		routeID:         strings.TrimSpace(req.GetRouteId()),
+		protocol:        protocol,
+		source:          source,
+		dest:            dest,
+		state:           pb.RuntimeState_RUNTIME_STATE_RUNNING,
+		filesInFlight:   filesInFlight,
+		streamsPerFile:  streamsPerFile,
+		startedAt:       time.Now(),
+		collector:       metrics.NewTransferCollector("grover"),
+		files:           make([]*pb.TransferFileState, 0, len(plans)),
+		streamStartedAt: make(map[transferStreamKey]time.Time),
+		streamLastAt:    make(map[transferStreamKey]time.Time),
 	}
 	runtime.cond = sync.NewCond(&runtime.mu)
 	for _, plan := range plans {
@@ -553,6 +573,15 @@ func (m *TransferJobManager) runJob(ctx context.Context, runtime *transferJobRun
 				OnProgress: func(filePath string, bytesRead int) {
 					runtime.addProgress(index, uint64(bytesRead))
 				},
+				OnStreamStart: func(filePath string, stream TransferStreamPlan) {
+					runtime.startStream(index, stream)
+				},
+				OnStreamProgress: func(filePath string, streamID uint32, bytesRead int) {
+					runtime.addStreamProgress(index, streamID, uint64(bytesRead))
+				},
+				OnStreamDone: func(filePath string, streamID uint32, state pb.RuntimeState, errText string) {
+					runtime.finishStream(index, streamID, state, errText)
+				},
 			}
 			if err := m.executor.TransferFile(ctx, execCtx, plans[index]); err != nil {
 				errCh <- err
@@ -613,12 +642,129 @@ func (r *transferJobRuntime) addProgress(index int, n uint64) {
 	}
 }
 
+func (r *transferJobRuntime) startStream(index int, plan TransferStreamPlan) {
+	if plan.StreamID == 0 {
+		plan.StreamID = 1
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if index < 0 || index >= len(r.files) {
+		return
+	}
+	streams := r.files[index].Streams
+	for _, stream := range streams {
+		if stream.GetStreamId() == plan.StreamID {
+			stream.State = pb.RuntimeState_RUNTIME_STATE_RUNNING
+			stream.Offset = plan.Offset
+			stream.Size = plan.Size
+			stream.ErrorMessage = ""
+			key := transferStreamKey{fileIndex: index, streamID: plan.StreamID}
+			now := time.Now()
+			r.streamStartedAt[key] = now
+			r.streamLastAt[key] = now
+			return
+		}
+	}
+	now := time.Now()
+	key := transferStreamKey{fileIndex: index, streamID: plan.StreamID}
+	r.files[index].Streams = append(r.files[index].Streams, &pb.TransferStreamState{
+		StreamId: plan.StreamID,
+		Offset:   plan.Offset,
+		Size:     plan.Size,
+		State:    pb.RuntimeState_RUNTIME_STATE_RUNNING,
+	})
+	r.streamStartedAt[key] = now
+	r.streamLastAt[key] = now
+}
+
+func (r *transferJobRuntime) addStreamProgress(index int, streamID uint32, n uint64) {
+	if streamID == 0 {
+		streamID = 1
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if index < 0 || index >= len(r.files) {
+		return
+	}
+	stream := r.findOrCreateStreamLocked(index, streamID)
+	if stream == nil {
+		return
+	}
+	now := time.Now()
+	key := transferStreamKey{fileIndex: index, streamID: streamID}
+	startedAt := r.streamStartedAt[key]
+	if startedAt.IsZero() {
+		startedAt = now
+		r.streamStartedAt[key] = now
+	}
+	lastAt := r.streamLastAt[key]
+	stream.BytesDone += n
+	stream.NetworkBytes += n
+	if !lastAt.IsZero() {
+		if elapsed := now.Sub(lastAt).Seconds(); elapsed > 0 {
+			stream.CurrentThroughputBps = float64(n) / elapsed
+		}
+	}
+	if elapsed := now.Sub(startedAt).Seconds(); elapsed > 0 {
+		stream.AverageThroughputBps = float64(stream.BytesDone) / elapsed
+	}
+	stream.State = pb.RuntimeState_RUNTIME_STATE_RUNNING
+	r.streamLastAt[key] = now
+}
+
+func (r *transferJobRuntime) finishStream(index int, streamID uint32, state pb.RuntimeState, errText string) {
+	if streamID == 0 {
+		streamID = 1
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if index < 0 || index >= len(r.files) {
+		return
+	}
+	stream := r.findOrCreateStreamLocked(index, streamID)
+	if stream == nil {
+		return
+	}
+	stream.State = state
+	stream.ErrorMessage = errText
+	key := transferStreamKey{fileIndex: index, streamID: streamID}
+	if startedAt := r.streamStartedAt[key]; !startedAt.IsZero() {
+		if elapsed := time.Since(startedAt).Seconds(); elapsed > 0 {
+			stream.AverageThroughputBps = float64(stream.BytesDone) / elapsed
+		}
+	}
+}
+
+func (r *transferJobRuntime) findOrCreateStreamLocked(index int, streamID uint32) *pb.TransferStreamState {
+	for _, stream := range r.files[index].Streams {
+		if stream.GetStreamId() == streamID {
+			return stream
+		}
+	}
+	now := time.Now()
+	key := transferStreamKey{fileIndex: index, streamID: streamID}
+	stream := &pb.TransferStreamState{
+		StreamId: streamID,
+		State:    pb.RuntimeState_RUNTIME_STATE_RUNNING,
+	}
+	r.files[index].Streams = append(r.files[index].Streams, stream)
+	r.streamStartedAt[key] = now
+	r.streamLastAt[key] = now
+	return stream
+}
+
 func (r *transferJobRuntime) finishFile(index int, state pb.RuntimeState, errText string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if index >= 0 && index < len(r.files) {
 		r.files[index].State = state
 		r.files[index].ErrorMessage = errText
+		for _, stream := range r.files[index].Streams {
+			if stream.GetState() == pb.RuntimeState_RUNTIME_STATE_RUNNING {
+				stream.State = state
+				stream.ErrorMessage = errText
+			}
+		}
 		if state == pb.RuntimeState_RUNTIME_STATE_DONE {
 			r.doneCount++
 		}
@@ -635,8 +781,19 @@ func (r *transferJobRuntime) snapshot() *pb.TransferJob {
 	files := make([]*pb.TransferFileState, 0, len(r.files))
 	var goodBytes uint64
 	var observedBytes uint64
+	var activeStreams uint32
 	for _, f := range r.files {
 		cp := *f
+		if len(f.Streams) > 0 {
+			cp.Streams = make([]*pb.TransferStreamState, 0, len(f.Streams))
+			for _, stream := range f.Streams {
+				if stream.GetState() == pb.RuntimeState_RUNTIME_STATE_RUNNING {
+					activeStreams++
+				}
+				streamCopy := *stream
+				cp.Streams = append(cp.Streams, &streamCopy)
+			}
+		}
 		files = append(files, &cp)
 		observedBytes += f.BytesDone
 		goodBytes += f.BytesDone
@@ -689,7 +846,7 @@ func (r *transferJobRuntime) snapshot() *pb.TransferJob {
 		DiskWriteBytes: diskWriteBytes,
 		FilesDone:      r.doneCount,
 		FilesActive:    r.active,
-		StreamsActive:  r.active * r.streamsPerFile,
+		StreamsActive:  activeStreams,
 		Retransmits:    protocolStats.Retransmissions,
 		Files:          files,
 		Stats: &pb.StatsSnapshot{
@@ -698,7 +855,7 @@ func (r *transferJobRuntime) snapshot() *pb.TransferJob {
 			Packets:              protocolStats.PacketsSent + protocolStats.PacketsReceived,
 			AverageThroughputBps: avg,
 			CurrentThroughputBps: protocolStats.GoodputBps,
-			ActiveStreams:        r.active * r.streamsPerFile,
+			ActiveStreams:        activeStreams,
 			LatencyMs:            protocolStats.RttMs,
 			SampledAtUnixNano:    time.Now().UnixNano(),
 		},
@@ -775,6 +932,24 @@ func (localFilesystemTransferExecutor) PlanFiles(ctx context.Context, source *pb
 	return plans, nil
 }
 
+func resolveDestinationFilePath(root, relPath string) (string, error) {
+	root = filepath.Clean(root)
+	rel := filepath.Clean(filepath.FromSlash(relPath))
+	if root == "" || root == "." {
+		return "", errors.New("destination root is required")
+	}
+	if filepath.IsAbs(rel) || rel == "." || strings.HasPrefix(rel, "..") {
+		return "", fmt.Errorf("invalid transfer relative path %q", rel)
+	}
+	if info, err := os.Stat(root); err == nil && info.IsDir() {
+		return filepath.Join(root, rel), nil
+	}
+	if filepath.Base(root) == filepath.Base(rel) {
+		return root, nil
+	}
+	return filepath.Join(root, rel), nil
+}
+
 func (localFilesystemTransferExecutor) TransferFile(ctx context.Context, exec *TransferExecutionContext, plan TransferFilePlan) error {
 	if exec.DestData != nil && strings.TrimSpace(exec.DestData.GetHost()) != "" && exec.DestData.GetPort() != 0 {
 		if exec.Protocol == pb.DataProtocol_DATA_PROTOCOL_UDP {
@@ -782,7 +957,10 @@ func (localFilesystemTransferExecutor) TransferFile(ctx context.Context, exec *T
 		}
 		return sendFileToTCPDestination(ctx, exec, plan)
 	}
-	dstPath := filepath.Join(exec.DestRoot, filepath.FromSlash(plan.RelativePath))
+	dstPath, err := resolveDestinationFilePath(exec.DestRoot, plan.RelativePath)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
 		return err
 	}
@@ -796,9 +974,11 @@ func (localFilesystemTransferExecutor) TransferFile(ctx context.Context, exec *T
 		return err
 	}
 	defer dst.Close()
+	reportStreamStart(exec, plan, 1, 0, plan.Size)
 	buf := make([]byte, defaultTransferCopyBufferSize)
 	for {
 		if err := ctx.Err(); err != nil {
+			reportStreamDone(exec, plan, 1, pb.RuntimeState_RUNTIME_STATE_ABORTED, err.Error())
 			return err
 		}
 		n, readErr := src.Read(buf)
@@ -807,22 +987,51 @@ func (localFilesystemTransferExecutor) TransferFile(ctx context.Context, exec *T
 				exec.Collector.ObserveDiskRead(n)
 			}
 			if err := writeFull(ctx, dst, buf[:n]); err != nil {
+				reportStreamDone(exec, plan, 1, pb.RuntimeState_RUNTIME_STATE_FAILED, err.Error())
 				return err
 			}
 			if exec.Collector != nil {
 				exec.Collector.ObserveDiskWrite(n)
 				exec.Collector.ObserveSend(n, false)
 			}
-			if exec.OnProgress != nil {
-				exec.OnProgress(plan.SourcePath, n)
-			}
+			reportStreamProgress(exec, plan, 1, n)
 		}
 		if readErr == io.EOF {
-			return dst.Sync()
+			if err := dst.Sync(); err != nil {
+				reportStreamDone(exec, plan, 1, pb.RuntimeState_RUNTIME_STATE_FAILED, err.Error())
+				return err
+			}
+			reportStreamDone(exec, plan, 1, pb.RuntimeState_RUNTIME_STATE_DONE, "")
+			return nil
 		}
 		if readErr != nil {
+			reportStreamDone(exec, plan, 1, pb.RuntimeState_RUNTIME_STATE_FAILED, readErr.Error())
 			return readErr
 		}
+	}
+}
+
+func reportStreamStart(exec *TransferExecutionContext, plan TransferFilePlan, streamID uint32, offset uint64, size uint64) {
+	if exec != nil && exec.OnStreamStart != nil {
+		exec.OnStreamStart(plan.SourcePath, TransferStreamPlan{StreamID: streamID, Offset: offset, Size: size})
+	}
+}
+
+func reportStreamProgress(exec *TransferExecutionContext, plan TransferFilePlan, streamID uint32, n int) {
+	if exec == nil || n <= 0 {
+		return
+	}
+	if exec.OnProgress != nil {
+		exec.OnProgress(plan.SourcePath, n)
+	}
+	if exec.OnStreamProgress != nil {
+		exec.OnStreamProgress(plan.SourcePath, streamID, n)
+	}
+}
+
+func reportStreamDone(exec *TransferExecutionContext, plan TransferFilePlan, streamID uint32, state pb.RuntimeState, errText string) {
+	if exec != nil && exec.OnStreamDone != nil {
+		exec.OnStreamDone(plan.SourcePath, streamID, state, errText)
 	}
 }
 
@@ -867,9 +1076,16 @@ func sendFileToUDPDestination(ctx context.Context, exec *TransferExecutionContex
 		return err
 	}
 	if plan.Size == 0 {
-		return waitUDPJobDone(ctx, conn, sessionKey)
+		reportStreamStart(exec, plan, streamIDs[0], 0, 0)
+		if err := waitUDPJobDone(ctx, conn, sessionKey); err != nil {
+			reportStreamDone(exec, plan, streamIDs[0], pb.RuntimeState_RUNTIME_STATE_FAILED, err.Error())
+			return err
+		}
+		reportStreamDone(exec, plan, streamIDs[0], pb.RuntimeState_RUNTIME_STATE_DONE, "")
+		return nil
 	}
 	if len(streamIDs) == 1 {
+		reportStreamStart(exec, plan, streamIDs[0], 0, plan.Size)
 		_, err := udpdataplane.Send(ctx, udpdataplane.SendConfig{
 			Transport:       udpdataplane.NewUDPConnTransport(conn),
 			SessionID:       exec.JobID,
@@ -885,14 +1101,18 @@ func sendFileToUDPDestination(ctx context.Context, exec *TransferExecutionContex
 			if exec.Collector != nil {
 				exec.Collector.ObserveDiskRead(n)
 			}
-			if exec.OnProgress != nil {
-				exec.OnProgress(plan.SourcePath, n)
-			}
+			reportStreamProgress(exec, plan, streamIDs[0], n)
 		}))
 		if err != nil {
+			reportStreamDone(exec, plan, streamIDs[0], pb.RuntimeState_RUNTIME_STATE_FAILED, err.Error())
 			return err
 		}
-		return waitUDPJobDone(ctx, conn, sessionKey)
+		if err := waitUDPJobDone(ctx, conn, sessionKey); err != nil {
+			reportStreamDone(exec, plan, streamIDs[0], pb.RuntimeState_RUNTIME_STATE_FAILED, err.Error())
+			return err
+		}
+		reportStreamDone(exec, plan, streamIDs[0], pb.RuntimeState_RUNTIME_STATE_DONE, "")
+		return nil
 	}
 	if err := sendFileToUDPDestinationParallel(ctx, exec, plan, sessionKey, streamIDs); err != nil {
 		return err
@@ -921,8 +1141,10 @@ func sendFileToUDPDestinationParallel(ctx context.Context, exec *TransferExecuti
 		wg.Add(1)
 		go func(streamID uint32, br byteRange) {
 			defer wg.Done()
+			reportStreamStart(exec, plan, streamID, uint64(br.offset), uint64(br.length))
 			conn, err := net.DialUDP("udp", nil, addr)
 			if err != nil {
+				reportStreamDone(exec, plan, streamID, pb.RuntimeState_RUNTIME_STATE_FAILED, err.Error())
 				errCh <- err
 				return
 			}
@@ -944,13 +1166,14 @@ func sendFileToUDPDestinationParallel(ctx context.Context, exec *TransferExecuti
 				if exec.Collector != nil {
 					exec.Collector.ObserveDiskRead(n)
 				}
-				if exec.OnProgress != nil {
-					exec.OnProgress(plan.SourcePath, n)
-				}
+				reportStreamProgress(exec, plan, streamID, n)
 			}))
 			if err != nil {
+				reportStreamDone(exec, plan, streamID, pb.RuntimeState_RUNTIME_STATE_FAILED, err.Error())
 				errCh <- err
+				return
 			}
+			reportStreamDone(exec, plan, streamID, pb.RuntimeState_RUNTIME_STATE_DONE, "")
 		}(streamID, br)
 	}
 	wg.Wait()
@@ -1290,17 +1513,78 @@ func writeFull(ctx context.Context, w io.Writer, p []byte) error {
 }
 
 func sendFileToTCPDestination(ctx context.Context, exec *TransferExecutionContext, plan TransferFilePlan) error {
+	streamCount := 1
+	if exec.StreamsFunc != nil {
+		streamCount = int(exec.StreamsFunc())
+	}
+	if streamCount <= 0 || plan.Size == 0 {
+		streamCount = 1
+	}
+	if uint64(streamCount) > plan.Size && plan.Size > 0 {
+		streamCount = int(plan.Size)
+	}
+	ranges, err := planByteRanges(int64(plan.Size), streamCount)
+	if err != nil {
+		return err
+	}
+	if len(ranges) == 0 {
+		ranges = []byteRange{{offset: 0, length: 0}}
+	}
+	if len(ranges) == 1 {
+		return sendTCPRange(ctx, exec, plan, 1, ranges[0])
+	}
+
+	errCh := make(chan error, len(ranges))
+	var wg sync.WaitGroup
+	for i, br := range ranges {
+		streamID := uint32(i + 1)
+		wg.Add(1)
+		go func(streamID uint32, br byteRange) {
+			defer wg.Done()
+			if err := sendTCPRange(ctx, exec, plan, streamID, br); err != nil {
+				errCh <- err
+			}
+		}(streamID, br)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func sendTCPRange(ctx context.Context, exec *TransferExecutionContext, plan TransferFilePlan, streamID uint32, br byteRange) (err error) {
+	if streamID == 0 {
+		streamID = 1
+	}
+	if br.offset < 0 || br.length < 0 {
+		return fmt.Errorf("invalid tcp byte range: offset=%d length=%d", br.offset, br.length)
+	}
 	src, err := os.Open(plan.SourcePath)
 	if err != nil {
 		return err
 	}
 	defer src.Close()
+
+	reportStreamStart(exec, plan, streamID, uint64(br.offset), uint64(br.length))
+	defer func() {
+		if err != nil {
+			reportStreamDone(exec, plan, streamID, pb.RuntimeState_RUNTIME_STATE_FAILED, err.Error())
+			return
+		}
+		reportStreamDone(exec, plan, streamID, pb.RuntimeState_RUNTIME_STATE_DONE, "")
+	}()
+
 	dialer := net.Dialer{}
 	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(exec.DestData.GetHost(), fmt.Sprintf("%d", exec.DestData.GetPort())))
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
+
 	pathBytes := []byte(plan.RelativePath)
 	if len(pathBytes) > 1<<20 {
 		return fmt.Errorf("relative path too long: %s", plan.RelativePath)
@@ -1313,11 +1597,14 @@ func sendFileToTCPDestination(ctx context.Context, exec *TransferExecutionContex
 	if len(jobBytes) > 1<<16-1 || len(routeBytes) > 1<<16-1 {
 		return fmt.Errorf("tcp job metadata too long: job_id=%d route_id=%d", len(jobBytes), len(routeBytes))
 	}
-	var header [16]byte
+	var header [36]byte
 	binary.BigEndian.PutUint32(header[:4], uint32(len(pathBytes)))
-	binary.BigEndian.PutUint64(header[4:], plan.Size)
-	binary.BigEndian.PutUint16(header[12:14], uint16(len(jobBytes)))
-	binary.BigEndian.PutUint16(header[14:16], uint16(len(routeBytes)))
+	binary.BigEndian.PutUint64(header[4:12], plan.Size)
+	binary.BigEndian.PutUint64(header[12:20], uint64(br.offset))
+	binary.BigEndian.PutUint64(header[20:28], uint64(br.length))
+	binary.BigEndian.PutUint32(header[28:32], streamID)
+	binary.BigEndian.PutUint16(header[32:34], uint16(len(jobBytes)))
+	binary.BigEndian.PutUint16(header[34:36], uint16(len(routeBytes)))
 	if err := writeFull(ctx, conn, header[:]); err != nil {
 		return err
 	}
@@ -1330,12 +1617,14 @@ func sendFileToTCPDestination(ctx context.Context, exec *TransferExecutionContex
 	if err := writeFull(ctx, conn, routeBytes); err != nil {
 		return err
 	}
+
+	reader := io.NewSectionReader(src, br.offset, br.length)
 	buf := make([]byte, defaultTransferCopyBufferSize)
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		n, readErr := src.Read(buf)
+		n, readErr := reader.Read(buf)
 		if n > 0 {
 			if exec.Collector != nil {
 				exec.Collector.ObserveDiskRead(n)
@@ -1346,9 +1635,7 @@ func sendFileToTCPDestination(ctx context.Context, exec *TransferExecutionContex
 			if exec.Collector != nil {
 				exec.Collector.ObserveSend(n, false)
 			}
-			if exec.OnProgress != nil {
-				exec.OnProgress(plan.SourcePath, n)
-			}
+			reportStreamProgress(exec, plan, streamID, n)
 		}
 		if readErr == io.EOF {
 			if cw, ok := conn.(interface{ CloseWrite() error }); ok {
@@ -1416,7 +1703,10 @@ func receiveUDPJobFile(ctx context.Context, conn *net.UDPConn, root string, remo
 	if filepath.IsAbs(relPath) || relPath == "." || strings.HasPrefix(relPath, "..") {
 		return fmt.Errorf("invalid relative path %q", relPath)
 	}
-	dstPath := filepath.Join(root, filepath.FromSlash(relPath))
+	dstPath, err := resolveDestinationFilePath(root, relPath)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
 		return err
 	}
@@ -1522,7 +1812,7 @@ func receiveTransferFileTCP(conn net.Conn, root string) {
 	remote := conn.RemoteAddr().String()
 	reader := bufio.NewReader(conn)
 	magic, err := reader.ReadString('\n')
-	if err != nil || (magic != tcpJobMagicV1 && magic != tcpJobMagicV2) {
+	if err != nil || (magic != tcpJobMagicV1 && magic != tcpJobMagicV2 && magic != tcpJobMagicV3) {
 		fields := internal.Fields{"remote": remote}
 		if err != nil {
 			fields[internal.FieldError] = err.Error()
@@ -1532,10 +1822,12 @@ func receiveTransferFileTCP(conn net.Conn, root string) {
 		internal.Warn("drop invalid tcp transfer header", fields)
 		return
 	}
-	var header [16]byte
+	var header [36]byte
 	headerLen := 12
 	if magic == tcpJobMagicV2 {
 		headerLen = 16
+	} else if magic == tcpJobMagicV3 {
+		headerLen = 36
 	}
 	if _, err := io.ReadFull(reader, header[:headerLen]); err != nil {
 		internal.Warn("tcp transfer header read failed", internal.Fields{internal.FieldError: err.Error(), "remote": remote})
@@ -1543,14 +1835,38 @@ func receiveTransferFileTCP(conn net.Conn, root string) {
 	}
 	pathLen := binary.BigEndian.Uint32(header[:4])
 	size := binary.BigEndian.Uint64(header[4:])
+	totalSize := size
+	offset := uint64(0)
+	streamID := uint32(1)
 	jobLen := uint16(0)
 	routeLen := uint16(0)
 	if magic == tcpJobMagicV2 {
 		jobLen = binary.BigEndian.Uint16(header[12:14])
 		routeLen = binary.BigEndian.Uint16(header[14:16])
+	} else if magic == tcpJobMagicV3 {
+		totalSize = binary.BigEndian.Uint64(header[4:12])
+		offset = binary.BigEndian.Uint64(header[12:20])
+		size = binary.BigEndian.Uint64(header[20:28])
+		streamID = binary.BigEndian.Uint32(header[28:32])
+		jobLen = binary.BigEndian.Uint16(header[32:34])
+		routeLen = binary.BigEndian.Uint16(header[34:36])
 	}
 	if pathLen == 0 || pathLen > 1<<20 {
 		internal.Warn("drop invalid tcp transfer path length", internal.Fields{"remote": remote, "path_len": pathLen})
+		return
+	}
+	if streamID == 0 || offset > totalSize || size > totalSize-offset {
+		internal.Warn("drop invalid tcp transfer range", internal.Fields{
+			"remote":    remote,
+			"stream_id": streamID,
+			"offset":    offset,
+			"bytes":     size,
+			"total":     totalSize,
+		})
+		return
+	}
+	if totalSize > uint64(1<<63-1) || offset > uint64(1<<63-1) {
+		internal.Warn("drop oversized tcp transfer range", internal.Fields{"remote": remote, "offset": offset, "total": totalSize})
 		return
 	}
 	pathBytes := make([]byte, pathLen)
@@ -1581,23 +1897,43 @@ func receiveTransferFileTCP(conn net.Conn, root string) {
 		internal.Warn("drop invalid tcp transfer path", internal.Fields{"remote": remote, "path": rel})
 		return
 	}
-	dstPath := filepath.Join(root, rel)
+	dstPath, err := resolveDestinationFilePath(root, rel)
+	if err != nil {
+		internal.Warn("tcp transfer destination path failed", internal.Fields{internal.FieldError: err.Error(), "remote": remote, "path": rel})
+		return
+	}
 	if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
 		internal.Warn("tcp transfer destination mkdir failed", internal.Fields{internal.FieldError: err.Error(), "remote": remote, "path": rel})
 		return
 	}
-	dst, err := os.OpenFile(dstPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	flags := os.O_CREATE | os.O_WRONLY
+	if magic != tcpJobMagicV3 {
+		flags |= os.O_TRUNC
+	}
+	dst, err := os.OpenFile(dstPath, flags, 0o644)
 	if err != nil {
 		internal.Warn("tcp transfer destination open failed", internal.Fields{internal.FieldError: err.Error(), "remote": remote, "path": rel})
 		return
 	}
 	defer dst.Close()
+	if magic == tcpJobMagicV3 {
+		if err := dst.Truncate(int64(totalSize)); err != nil {
+			internal.Warn("tcp transfer destination truncate failed", internal.Fields{internal.FieldError: err.Error(), "remote": remote, "path": rel, "bytes": totalSize})
+			return
+		}
+		if _, err := dst.Seek(int64(offset), io.SeekStart); err != nil {
+			internal.Warn("tcp transfer destination seek failed", internal.Fields{internal.FieldError: err.Error(), "remote": remote, "path": rel, "offset": offset})
+			return
+		}
+	}
 	internal.Info(jobLogMessage(jobID, "tcp receive started"), internal.Fields{
-		"route_id": routeID,
-		"remote":   remote,
-		"root":     root,
-		"path":     rel,
-		"bytes":    size,
+		"route_id":  routeID,
+		"remote":    remote,
+		"root":      root,
+		"path":      rel,
+		"bytes":     size,
+		"offset":    offset,
+		"stream_id": streamID,
 	})
 	if _, err := io.CopyN(dst, reader, int64(size)); err != nil {
 		internal.Warn("tcp transfer receive failed", internal.Fields{internal.FieldError: err.Error(), "remote": remote, "path": rel, "bytes": size})
@@ -1609,10 +1945,12 @@ func receiveTransferFileTCP(conn net.Conn, root string) {
 	}
 	_ = writeFull(context.Background(), conn, []byte("OK"))
 	internal.Info(jobLogMessage(jobID, "tcp receive completed"), internal.Fields{
-		"route_id": routeID,
-		"remote":   remote,
-		"path":     rel,
-		"bytes":    size,
+		"route_id":  routeID,
+		"remote":    remote,
+		"path":      rel,
+		"bytes":     size,
+		"offset":    offset,
+		"stream_id": streamID,
 	})
 }
 
