@@ -80,6 +80,26 @@ func TestTransferJobManagerLocalFilesystemLifecycle(t *testing.T) {
 	}
 }
 
+func TestLocalFilesystemTransferExecutorPlansRootFileAsBaseName(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "file-1g.bin")
+	if err := os.WriteFile(src, []byte("payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plans, err := (localFilesystemTransferExecutor{}).PlanFiles(context.Background(), &pb.TransferEndpoint{
+		RootPath: src,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 1 {
+		t.Fatalf("plans = %d, want 1", len(plans))
+	}
+	if plans[0].RelativePath != "file-1g.bin" {
+		t.Fatalf("relative path = %q, want file-1g.bin", plans[0].RelativePath)
+	}
+}
+
 func TestTransferJobManagerDirectTCPBetweenManagers(t *testing.T) {
 	src := t.TempDir()
 	dst := t.TempDir()
@@ -124,6 +144,54 @@ func TestTransferJobManagerDirectTCPBetweenManagers(t *testing.T) {
 	}
 	waitForTransferJobState(t, sourceManager, "job-direct", pb.RuntimeState_RUNTIME_STATE_DONE)
 	assertFileBytes(t, filepath.Join(dst, "file.txt"), []byte("over the wire"))
+}
+
+func TestTransferJobManagerDirectTCPRootFileBetweenManagers(t *testing.T) {
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+	srcFile := filepath.Join(srcDir, "file-1g.bin")
+	if err := os.WriteFile(srcFile, []byte("over the wire"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dstFile := filepath.Join(dstDir, "file-1g.bin")
+	cfg := &internal.ServerConfig{DataBindHost: "127.0.0.1", DataAdvertiseHost: "127.0.0.1"}
+	sourceManager := NewTransferJobManager(cfg, nil)
+	destManager := NewTransferJobManager(cfg, nil)
+	source, err := sourceManager.PrepareEndpoint(context.Background(), &pb.PrepareTransferEndpointRequest{
+		RouteId:  "direct-file",
+		JobId:    "job-direct-file",
+		Role:     pb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_SOURCE,
+		Protocol: pb.DataProtocol_DATA_PROTOCOL_TCP,
+		RootPath: srcFile,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest, err := destManager.PrepareEndpoint(context.Background(), &pb.PrepareTransferEndpointRequest{
+		RouteId:  "direct-file",
+		JobId:    "job-direct-file",
+		Role:     pb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_DESTINATION,
+		Protocol: pb.DataProtocol_DATA_PROTOCOL_TCP,
+		RootPath: dstFile,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sourceManager.StartJob(context.Background(), &pb.StartTransferJobRequest{
+		RouteId:        "direct-file",
+		JobId:          "job-direct-file",
+		Source:         source,
+		Destination:    dest,
+		FilesInFlight:  1,
+		StreamsPerFile: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	job := waitForTransferJobState(t, sourceManager, "job-direct-file", pb.RuntimeState_RUNTIME_STATE_DONE)
+	if job.GetFilesDone() != 1 {
+		t.Fatalf("files done = %d, want 1", job.GetFilesDone())
+	}
+	assertEventuallyFileBytes(t, dstFile, []byte("over the wire"))
 }
 
 func TestTransferJobManagerDirectUDPBetweenManagers(t *testing.T) {

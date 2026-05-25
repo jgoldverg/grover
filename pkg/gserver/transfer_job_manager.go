@@ -709,6 +709,17 @@ func (r *transferJobRuntime) snapshot() *pb.TransferJob {
 func (localFilesystemTransferExecutor) PlanFiles(ctx context.Context, source *pb.TransferEndpoint, paths []string) ([]TransferFilePlan, error) {
 	root := filepath.Clean(source.GetRootPath())
 	var plans []TransferFilePlan
+	relativePathForFile := func(full string) (string, error) {
+		rel, err := filepath.Rel(root, full)
+		if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+			rel = filepath.Base(full)
+		}
+		rel = filepath.Clean(rel)
+		if rel == "." || filepath.IsAbs(rel) || strings.HasPrefix(rel, "..") {
+			return "", fmt.Errorf("invalid transfer relative path %q for %q", rel, full)
+		}
+		return filepath.ToSlash(rel), nil
+	}
 	addPath := func(p string) error {
 		select {
 		case <-ctx.Done():
@@ -735,19 +746,19 @@ func (localFilesystemTransferExecutor) PlanFiles(ctx context.Context, source *pb
 				if err != nil {
 					return err
 				}
-				rel, err := filepath.Rel(root, path)
+				rel, err := relativePathForFile(path)
 				if err != nil {
 					return err
 				}
-				plans = append(plans, TransferFilePlan{SourcePath: path, RelativePath: filepath.ToSlash(rel), Size: uint64(info.Size())})
+				plans = append(plans, TransferFilePlan{SourcePath: path, RelativePath: rel, Size: uint64(info.Size())})
 				return nil
 			})
 		}
-		rel, err := filepath.Rel(root, full)
-		if err != nil || strings.HasPrefix(rel, "..") {
-			rel = filepath.Base(full)
+		rel, err := relativePathForFile(full)
+		if err != nil {
+			return err
 		}
-		plans = append(plans, TransferFilePlan{SourcePath: full, RelativePath: filepath.ToSlash(rel), Size: uint64(info.Size())})
+		plans = append(plans, TransferFilePlan{SourcePath: full, RelativePath: rel, Size: uint64(info.Size())})
 		return nil
 	}
 	if len(paths) == 0 {
@@ -1402,7 +1413,7 @@ func receiveUDPJobFile(ctx context.Context, conn *net.UDPConn, root string, remo
 	}
 	jobID := start.jobID
 	relPath := filepath.Clean(filepath.FromSlash(start.relPath))
-	if filepath.IsAbs(relPath) || strings.HasPrefix(relPath, "..") {
+	if filepath.IsAbs(relPath) || relPath == "." || strings.HasPrefix(relPath, "..") {
 		return fmt.Errorf("invalid relative path %q", relPath)
 	}
 	dstPath := filepath.Join(root, filepath.FromSlash(relPath))
