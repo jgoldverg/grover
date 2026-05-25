@@ -139,6 +139,8 @@ type transferJobRuntime struct {
 
 	streamStartedAt map[transferStreamKey]time.Time
 	streamLastAt    map[transferStreamKey]time.Time
+	streamSampleAt  map[transferStreamKey]time.Time
+	streamSample    map[transferStreamKey]uint64
 }
 
 type localFilesystemTransferExecutor struct{}
@@ -345,6 +347,8 @@ func (m *TransferJobManager) StartJob(ctx context.Context, req *pb.StartTransfer
 		files:           make([]*pb.TransferFileState, 0, len(plans)),
 		streamStartedAt: make(map[transferStreamKey]time.Time),
 		streamLastAt:    make(map[transferStreamKey]time.Time),
+		streamSampleAt:  make(map[transferStreamKey]time.Time),
+		streamSample:    make(map[transferStreamKey]uint64),
 	}
 	runtime.cond = sync.NewCond(&runtime.mu)
 	for _, plan := range plans {
@@ -662,6 +666,8 @@ func (r *transferJobRuntime) startStream(index int, plan TransferStreamPlan) {
 			now := time.Now()
 			r.streamStartedAt[key] = now
 			r.streamLastAt[key] = now
+			r.streamSampleAt[key] = now
+			r.streamSample[key] = stream.GetBytesDone()
 			return
 		}
 	}
@@ -675,6 +681,8 @@ func (r *transferJobRuntime) startStream(index int, plan TransferStreamPlan) {
 	})
 	r.streamStartedAt[key] = now
 	r.streamLastAt[key] = now
+	r.streamSampleAt[key] = now
+	r.streamSample[key] = 0
 }
 
 func (r *transferJobRuntime) addStreamProgress(index int, streamID uint32, n uint64) {
@@ -697,14 +705,8 @@ func (r *transferJobRuntime) addStreamProgress(index int, streamID uint32, n uin
 		startedAt = now
 		r.streamStartedAt[key] = now
 	}
-	lastAt := r.streamLastAt[key]
 	stream.BytesDone += n
 	stream.NetworkBytes += n
-	if !lastAt.IsZero() {
-		if elapsed := now.Sub(lastAt).Seconds(); elapsed > 0 {
-			stream.CurrentThroughputBps = float64(n) / elapsed
-		}
-	}
 	if elapsed := now.Sub(startedAt).Seconds(); elapsed > 0 {
 		stream.AverageThroughputBps = float64(stream.BytesDone) / elapsed
 	}
@@ -750,6 +752,8 @@ func (r *transferJobRuntime) findOrCreateStreamLocked(index int, streamID uint32
 	r.files[index].Streams = append(r.files[index].Streams, stream)
 	r.streamStartedAt[key] = now
 	r.streamLastAt[key] = now
+	r.streamSampleAt[key] = now
+	r.streamSample[key] = 0
 	return stream
 }
 
@@ -778,6 +782,7 @@ func (r *transferJobRuntime) finishFile(index int, state pb.RuntimeState, errTex
 func (r *transferJobRuntime) snapshot() *pb.TransferJob {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	now := time.Now()
 	files := make([]*pb.TransferFileState, 0, len(r.files))
 	var goodBytes uint64
 	var observedBytes uint64
@@ -789,6 +794,9 @@ func (r *transferJobRuntime) snapshot() *pb.TransferJob {
 			for _, stream := range f.Streams {
 				if stream.GetState() == pb.RuntimeState_RUNTIME_STATE_RUNNING {
 					activeStreams++
+					r.sampleStreamRateLocked(now, f, stream)
+				} else {
+					stream.CurrentThroughputBps = 0
 				}
 				streamCopy := *stream
 				cp.Streams = append(cp.Streams, &streamCopy)
@@ -857,10 +865,49 @@ func (r *transferJobRuntime) snapshot() *pb.TransferJob {
 			CurrentThroughputBps: protocolStats.GoodputBps,
 			ActiveStreams:        activeStreams,
 			LatencyMs:            protocolStats.RttMs,
-			SampledAtUnixNano:    time.Now().UnixNano(),
+			SampledAtUnixNano:    now.UnixNano(),
 		},
 		ErrorMessage: r.errorMessage,
 	}
+}
+
+func (r *transferJobRuntime) sampleStreamRateLocked(now time.Time, file *pb.TransferFileState, stream *pb.TransferStreamState) {
+	if file == nil || stream == nil {
+		return
+	}
+	key := transferStreamKey{streamID: stream.GetStreamId()}
+	for i, candidate := range r.files {
+		if candidate == file {
+			key.fileIndex = i
+			break
+		}
+	}
+	startedAt := r.streamStartedAt[key]
+	if !startedAt.IsZero() {
+		if elapsed := now.Sub(startedAt).Seconds(); elapsed > 0 {
+			stream.AverageThroughputBps = float64(stream.GetBytesDone()) / elapsed
+		}
+	}
+	lastAt := r.streamSampleAt[key]
+	lastBytes := r.streamSample[key]
+	if lastAt.IsZero() {
+		r.streamSampleAt[key] = now
+		r.streamSample[key] = stream.GetBytesDone()
+		stream.CurrentThroughputBps = 0
+		return
+	}
+	elapsed := now.Sub(lastAt).Seconds()
+	if elapsed <= 0 {
+		return
+	}
+	bytesDone := stream.GetBytesDone()
+	if bytesDone >= lastBytes {
+		stream.CurrentThroughputBps = float64(bytesDone-lastBytes) / elapsed
+	} else {
+		stream.CurrentThroughputBps = 0
+	}
+	r.streamSampleAt[key] = now
+	r.streamSample[key] = bytesDone
 }
 
 func (localFilesystemTransferExecutor) PlanFiles(ctx context.Context, source *pb.TransferEndpoint, paths []string) ([]TransferFilePlan, error) {
