@@ -3,6 +3,7 @@ package gserver
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,6 +93,131 @@ func TestTransferJobManagerLocalFilesystemLifecycle(t *testing.T) {
 	list := manager.ListJobs("route-1")
 	if len(list) != 1 || list[0].GetJobId() != "job-1" {
 		t.Fatalf("unexpected job list: %+v", list)
+	}
+}
+
+func TestTransferJobManagerWritesHistoricalJobLog(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "a.txt"), []byte("alpha"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logRoot := t.TempDir()
+	manager := NewTransferJobManager(&internal.ServerConfig{JobLogDir: logRoot}, nil)
+	jobID := "job/history:one"
+	if _, err := manager.StartJob(context.Background(), &pb.StartTransferJobRequest{
+		RouteId:        "route-history",
+		JobId:          jobID,
+		Source:         &pb.TransferEndpoint{RootPath: src, Protocol: pb.DataProtocol_DATA_PROTOCOL_TCP},
+		Destination:    &pb.TransferEndpoint{RootPath: dst, Protocol: pb.DataProtocol_DATA_PROTOCOL_TCP},
+		FilesInFlight:  1,
+		StreamsPerFile: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitForTransferJobState(t, manager, jobID, pb.RuntimeState_RUNTIME_STATE_DONE)
+
+	jobLogDir := filepath.Join(logRoot, "job_history_one")
+	manifestBytes, err := os.ReadFile(filepath.Join(jobLogDir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest transferJobManifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.JobID != jobID || manifest.RouteID != "route-history" || manifest.TotalFiles != 1 {
+		t.Fatalf("unexpected manifest: %+v", manifest)
+	}
+	if _, err := os.Stat(filepath.Join(jobLogDir, "final.json")); err != nil {
+		t.Fatal(err)
+	}
+	snapshots, err := os.ReadFile(filepath.Join(jobLogDir, "snapshots.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lines := strings.Count(strings.TrimSpace(string(snapshots)), "\n") + 1; lines < 2 {
+		t.Fatalf("snapshot lines = %d, want at least initial and final", lines)
+	}
+}
+
+func TestTransferJobManagerWritesEnergyCSVWhenEnabled(t *testing.T) {
+	raplRoot := t.TempDir()
+	writeFakeRAPLDomain(t, raplRoot, "intel-rapl:0", "package-0", "1000")
+	writeFakeRAPLDomain(t, filepath.Join(raplRoot, "intel-rapl:0"), "intel-rapl:0:0", "dram", "250")
+	t.Setenv("GROVER_RAPL_ROOT", raplRoot)
+
+	src := t.TempDir()
+	dst := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "a.txt"), []byte("alpha"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logRoot := t.TempDir()
+	manager := NewTransferJobManager(&internal.ServerConfig{
+		JobLogDir:      logRoot,
+		EnergyMonitor:  true,
+		EnergySampleMs: 10,
+	}, nil)
+	jobID := "job-energy"
+	if _, err := manager.StartJob(context.Background(), &pb.StartTransferJobRequest{
+		RouteId:        "route-energy",
+		JobId:          jobID,
+		Source:         &pb.TransferEndpoint{RootPath: src, Protocol: pb.DataProtocol_DATA_PROTOCOL_TCP},
+		Destination:    &pb.TransferEndpoint{RootPath: dst, Protocol: pb.DataProtocol_DATA_PROTOCOL_TCP},
+		FilesInFlight:  1,
+		StreamsPerFile: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitForTransferJobState(t, manager, jobID, pb.RuntimeState_RUNTIME_STATE_DONE)
+
+	energyCSV, err := os.ReadFile(filepath.Join(logRoot, jobID, "energy.csv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(energyCSV)
+	if !strings.Contains(got, "energy_uj_pkg,energy_uj_dram,energy_uj_sum_all,energy_uj_total") {
+		t.Fatalf("energy csv missing header: %s", got)
+	}
+	if !strings.Contains(got, "1000,250,1250,1250") {
+		t.Fatalf("energy csv missing sample: %s", got)
+	}
+}
+
+func TestTransferJobManagerSyntheticSourceLifecycle(t *testing.T) {
+	dst := t.TempDir()
+	manager := NewTransferJobManager(nil, nil)
+	job, err := manager.StartJob(context.Background(), &pb.StartTransferJobRequest{
+		RouteId:        "route-synthetic",
+		JobId:          "job-synthetic",
+		Source:         &pb.TransferEndpoint{RootPath: "/unused", Protocol: pb.DataProtocol_DATA_PROTOCOL_TCP},
+		Destination:    &pb.TransferEndpoint{RootPath: dst, Protocol: pb.DataProtocol_DATA_PROTOCOL_TCP},
+		Paths:          []string{"synthetic://4096/schedule/tacc_buff/job-1.bin"},
+		FilesInFlight:  1,
+		StreamsPerFile: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.GetState() != pb.RuntimeState_RUNTIME_STATE_RUNNING {
+		t.Fatalf("initial job state = %s, want running", job.GetState())
+	}
+	job = waitForTransferJobState(t, manager, "job-synthetic", pb.RuntimeState_RUNTIME_STATE_DONE)
+	if job.GetGoodBytes() != 4096 {
+		t.Fatalf("good bytes = %d, want 4096", job.GetGoodBytes())
+	}
+	out := filepath.Join(dst, "schedule", "tacc_buff", "job-1.bin")
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 4096 {
+		t.Fatalf("synthetic output length = %d, want 4096", len(got))
+	}
+	for i, b := range got {
+		if b != 0 {
+			t.Fatalf("synthetic output byte[%d] = %d, want 0", i, b)
+		}
 	}
 }
 
@@ -190,6 +316,249 @@ func TestTransferJobManagerDirectTCPBetweenManagers(t *testing.T) {
 		}
 	}
 	assertFileBytes(t, filepath.Join(dst, "file.txt"), payload)
+}
+
+func TestTransferJobManagerReverseTCPBetweenManagers(t *testing.T) {
+	routeSourceDst := t.TempDir()
+	routeDestinationSrc := t.TempDir()
+	payload := []byte("reverse direction over prepared tcp route")
+	if err := os.WriteFile(filepath.Join(routeDestinationSrc, "file.txt"), payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &internal.ServerConfig{DataBindHost: "127.0.0.1", DataAdvertiseHost: "127.0.0.1"}
+	routeSourceManager := NewTransferJobManager(cfg, nil)
+	routeDestinationManager := NewTransferJobManager(cfg, nil)
+	reverseSource, err := routeDestinationManager.PrepareEndpoint(context.Background(), &pb.PrepareTransferEndpointRequest{
+		RouteId:  "bidirectional",
+		JobId:    "session-bidi",
+		Role:     pb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_SOURCE,
+		Protocol: pb.DataProtocol_DATA_PROTOCOL_TCP,
+		RootPath: routeDestinationSrc,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reverseDest, err := routeSourceManager.PrepareEndpoint(context.Background(), &pb.PrepareTransferEndpointRequest{
+		RouteId:  "bidirectional",
+		JobId:    "session-bidi",
+		Role:     pb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_DESTINATION,
+		Protocol: pb.DataProtocol_DATA_PROTOCOL_TCP,
+		RootPath: routeSourceDst,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := routeDestinationManager.StartJob(context.Background(), &pb.StartTransferJobRequest{
+		RouteId:        "bidirectional",
+		JobId:          "job-reverse",
+		SessionId:      "session-bidi",
+		Source:         reverseSource,
+		Destination:    reverseDest,
+		FilesInFlight:  1,
+		StreamsPerFile: 2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	job := waitForTransferJobState(t, routeDestinationManager, "job-reverse", pb.RuntimeState_RUNTIME_STATE_DONE)
+	if len(job.GetFiles()) != 1 || len(job.GetFiles()[0].GetStreams()) != 2 {
+		t.Fatalf("tcp streams = %+v, want 2 streams on one file", job.GetFiles())
+	}
+	assertFileBytes(t, filepath.Join(routeSourceDst, "file.txt"), payload)
+}
+
+func TestTransferJobManagerDestinationOriginDirectTCPBetweenManagers(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	payload := []byte("destination originated the tcp connection")
+	if err := os.WriteFile(filepath.Join(src, "file.txt"), payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &internal.ServerConfig{DataBindHost: "127.0.0.1", DataAdvertiseHost: "127.0.0.1"}
+	sourceManager := NewTransferJobManager(cfg, nil)
+	defer sourceManager.Close()
+	destManager := NewTransferJobManager(cfg, nil)
+	defer destManager.Close()
+
+	source, err := sourceManager.PrepareEndpoint(context.Background(), &pb.PrepareTransferEndpointRequest{
+		RouteId:          "edu-direct",
+		JobId:            "job-edu-direct",
+		Role:             pb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_SOURCE,
+		Protocol:         pb.DataProtocol_DATA_PROTOCOL_TCP,
+		RootPath:         src,
+		ConnectionOrigin: pb.ConnectionOrigin_CONNECTION_ORIGIN_DESTINATION,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.GetDataEndpoint().GetPort() == 0 {
+		t.Fatalf("source reverse data endpoint not allocated: %+v", source)
+	}
+	dest, err := destManager.PrepareEndpoint(context.Background(), &pb.PrepareTransferEndpointRequest{
+		RouteId:          "edu-direct",
+		JobId:            "job-edu-direct",
+		Role:             pb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_DESTINATION,
+		Protocol:         pb.DataProtocol_DATA_PROTOCOL_TCP,
+		RootPath:         dst,
+		Bind:             source.GetDataEndpoint(),
+		ConnectionOrigin: pb.ConnectionOrigin_CONNECTION_ORIGIN_DESTINATION,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sourceManager.StartJob(context.Background(), &pb.StartTransferJobRequest{
+		RouteId:          "edu-direct",
+		JobId:            "job-edu-direct",
+		Source:           source,
+		Destination:      dest,
+		FilesInFlight:    1,
+		StreamsPerFile:   2,
+		ConnectionOrigin: pb.ConnectionOrigin_CONNECTION_ORIGIN_DESTINATION,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	job := waitForTransferJobState(t, sourceManager, "job-edu-direct", pb.RuntimeState_RUNTIME_STATE_DONE)
+	if len(job.GetFiles()) != 1 || len(job.GetFiles()[0].GetStreams()) != 2 {
+		t.Fatalf("tcp streams = %+v, want 2 streams on one file", job.GetFiles())
+	}
+	assertEventuallyFileBytes(t, filepath.Join(dst, "file.txt"), payload)
+}
+
+func TestTransferJobManagerDestinationOriginTCPViaRelayForward(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	payload := []byte("destination originated tcp through relay")
+	if err := os.WriteFile(filepath.Join(src, "file.txt"), payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &internal.ServerConfig{DataBindHost: "127.0.0.1", DataAdvertiseHost: "127.0.0.1"}
+	sourceManager := NewTransferJobManager(cfg, nil)
+	defer sourceManager.Close()
+	destManager := NewTransferJobManager(cfg, nil)
+	defer destManager.Close()
+	relayManager, err := NewForwardSessionManager(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer relayManager.Close()
+
+	source, err := sourceManager.PrepareEndpoint(context.Background(), &pb.PrepareTransferEndpointRequest{
+		RouteId:          "edu-relay",
+		JobId:            "job-edu-relay",
+		Role:             pb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_SOURCE,
+		Protocol:         pb.DataProtocol_DATA_PROTOCOL_TCP,
+		RootPath:         src,
+		ConnectionOrigin: pb.ConnectionOrigin_CONNECTION_ORIGIN_DESTINATION,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	forward, err := relayManager.Create(context.Background(), &pb.CreateForwardRequest{
+		RouteId:    "edu-relay",
+		JobId:      "job-edu-relay",
+		Protocol:   pb.DataProtocol_DATA_PROTOCOL_TCP,
+		Egress:     source.GetDataEndpoint(),
+		TtlSeconds: 60,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest, err := destManager.PrepareEndpoint(context.Background(), &pb.PrepareTransferEndpointRequest{
+		RouteId:          "edu-relay",
+		JobId:            "job-edu-relay",
+		Role:             pb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_DESTINATION,
+		Protocol:         pb.DataProtocol_DATA_PROTOCOL_TCP,
+		RootPath:         dst,
+		Bind:             forward.GetIngress(),
+		ConnectionOrigin: pb.ConnectionOrigin_CONNECTION_ORIGIN_DESTINATION,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sourceManager.StartJob(context.Background(), &pb.StartTransferJobRequest{
+		RouteId:          "edu-relay",
+		JobId:            "job-edu-relay",
+		Source:           source,
+		Destination:      dest,
+		FilesInFlight:    1,
+		StreamsPerFile:   2,
+		ConnectionOrigin: pb.ConnectionOrigin_CONNECTION_ORIGIN_DESTINATION,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitForTransferJobState(t, sourceManager, "job-edu-relay", pb.RuntimeState_RUNTIME_STATE_DONE)
+	assertEventuallyFileBytes(t, filepath.Join(dst, "file.txt"), payload)
+	snapshot, err := relayManager.Get(forward.GetForwardId())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.GetStats().GetIngressBytes() == 0 {
+		t.Fatalf("relay stats did not record destination-origin traffic: %+v", snapshot.GetStats())
+	}
+}
+
+func TestTransferJobManagerPreparedTCPRouteSessionCanRunSerialTransfers(t *testing.T) {
+	srcOne := t.TempDir()
+	dstOne := t.TempDir()
+	srcTwo := t.TempDir()
+	dstTwo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(srcOne, "one.txt"), []byte("one"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcTwo, "two.txt"), []byte("two"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &internal.ServerConfig{DataBindHost: "127.0.0.1", DataAdvertiseHost: "127.0.0.1"}
+	sourceManager := NewTransferJobManager(cfg, nil)
+	defer sourceManager.Close()
+	destManager := NewTransferJobManager(cfg, nil)
+	defer destManager.Close()
+
+	sourceSession, err := sourceManager.PrepareEndpoint(context.Background(), &pb.PrepareTransferEndpointRequest{
+		RouteId:   "prepared-direct",
+		JobId:     "session-direct",
+		SessionId: "session-direct",
+		Role:      pb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_SOURCE,
+		Protocol:  pb.DataProtocol_DATA_PROTOCOL_TCP,
+		RootPath:  string(os.PathSeparator),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	destSession, err := destManager.PrepareEndpoint(context.Background(), &pb.PrepareTransferEndpointRequest{
+		RouteId:   "prepared-direct",
+		JobId:     "session-direct",
+		SessionId: "session-direct",
+		Role:      pb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_DESTINATION,
+		Protocol:  pb.DataProtocol_DATA_PROTOCOL_TCP,
+		RootPath:  string(os.PathSeparator),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(jobID, srcRoot, dstRoot, fileName string, want []byte) {
+		t.Helper()
+		source := cloneTransferEndpoint(sourceSession)
+		dest := cloneTransferEndpoint(destSession)
+		source.RootPath = srcRoot
+		dest.RootPath = dstRoot
+		if _, err := sourceManager.StartJob(context.Background(), &pb.StartTransferJobRequest{
+			RouteId:        "prepared-direct",
+			JobId:          jobID,
+			SessionId:      "session-direct",
+			Source:         source,
+			Destination:    dest,
+			FilesInFlight:  1,
+			StreamsPerFile: 1,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		waitForTransferJobState(t, sourceManager, jobID, pb.RuntimeState_RUNTIME_STATE_DONE)
+		assertEventuallyFileBytes(t, filepath.Join(dstRoot, fileName), want)
+	}
+
+	run("job-one", srcOne, dstOne, "one.txt", []byte("one"))
+	run("job-two", srcTwo, dstTwo, "two.txt", []byte("two"))
 }
 
 func TestTransferJobManagerDirectTCPRootFileBetweenManagers(t *testing.T) {
@@ -510,7 +879,7 @@ func TestTransferJobManagerUDPViaRelayForward(t *testing.T) {
 		Source:         source,
 		Destination:    dest,
 		FilesInFlight:  1,
-		StreamsPerFile: 1,
+		StreamsPerFile: 3,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -639,6 +1008,20 @@ func assertEventuallyFileBytes(t *testing.T, path string, want []byte) {
 			t.Fatalf("%s = %q, want %q", path, got, want)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func writeFakeRAPLDomain(t *testing.T, root string, name string, domainName string, energy string) {
+	t.Helper()
+	dir := filepath.Join(root, name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "name"), []byte(domainName), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "energy_uj"), []byte(energy), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 

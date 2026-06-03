@@ -91,6 +91,210 @@ func TestRoutedTransferJobDirectRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRoutedTransferJobOneRelayRoundTrip(t *testing.T) {
+	for _, protocol := range []string{"tcp", "udp"} {
+		t.Run(protocol, func(t *testing.T) {
+			ctx := context.Background()
+			sourceServer := startTestServer(t, protocol)
+			relayServer := startTestServer(t, protocol)
+			destServer := startTestServer(t, protocol)
+			sourceClient := newTestClient(t, ctx, sourceServer)
+			defer sourceClient.Close()
+			relayClient := newTestClient(t, ctx, relayServer)
+			defer relayClient.Close()
+			destClient := newTestClient(t, ctx, destServer)
+			defer destClient.Close()
+
+			sourceRoot := filepath.Join(sourceServer.tmp, "source-root")
+			destRoot := filepath.Join(destServer.tmp, "dest-root")
+			if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(destRoot, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			src := filepath.Join(sourceRoot, "file.bin")
+			makeDeterministicBlob(t, src, 1024*1024+333)
+
+			sourceAPI := sourceClient.RoutedTransfer()
+			relayAPI := relayClient.RelayControl()
+			destAPI := destClient.RoutedTransfer()
+			if sourceAPI == nil || relayAPI == nil || destAPI == nil {
+				t.Fatal("routed transfer or relay service unavailable")
+			}
+			pbProtocol := groverpb.DataProtocol_DATA_PROTOCOL_TCP
+			if protocol == "udp" {
+				pbProtocol = groverpb.DataProtocol_DATA_PROTOCOL_UDP
+			}
+			routeID := "routed-one-relay-" + protocol
+			jobID := routeID + "-job"
+			source, err := sourceAPI.PrepareTransferEndpoint(ctx, &groverpb.PrepareTransferEndpointRequest{
+				RouteId:  routeID,
+				JobId:    jobID,
+				Role:     groverpb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_SOURCE,
+				Protocol: pbProtocol,
+				RootPath: sourceRoot,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			dest, err := destAPI.PrepareTransferEndpoint(ctx, &groverpb.PrepareTransferEndpointRequest{
+				RouteId:  routeID,
+				JobId:    jobID,
+				Role:     groverpb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_DESTINATION,
+				Protocol: pbProtocol,
+				RootPath: destRoot,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			forward, err := relayAPI.CreateForward(ctx, &groverpb.CreateForwardRequest{
+				RouteId:    routeID,
+				JobId:      jobID,
+				HopIndex:   1,
+				Protocol:   pbProtocol,
+				Egress:     dest.GetDataEndpoint(),
+				TtlSeconds: 60,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			dest.DataEndpoint = forward.GetIngress()
+			if _, err := sourceAPI.StartTransferJob(ctx, &groverpb.StartTransferJobRequest{
+				RouteId:        routeID,
+				JobId:          jobID,
+				Source:         source,
+				Destination:    dest,
+				FilesInFlight:  1,
+				StreamsPerFile: 3,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			waitForRoutedJobDone(t, ctx, sourceAPI, jobID)
+			assertSameFile(t, "routed one-relay "+protocol, filepath.Join(destRoot, "file.bin"), src)
+
+			snapshot, err := relayAPI.GetForward(ctx, forward.GetForwardId())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if snapshot.GetStats().GetIngressBytes() == 0 || snapshot.GetStats().GetEgressBytes() == 0 {
+				t.Fatalf("relay stats did not record traffic: %+v", snapshot.GetStats())
+			}
+		})
+	}
+}
+
+func TestRoutedTransferJobMultiRelayRoundTrip(t *testing.T) {
+	for _, protocol := range []string{"tcp", "udp"} {
+		t.Run(protocol, func(t *testing.T) {
+			ctx := context.Background()
+			sourceServer := startTestServer(t, protocol)
+			relayOneServer := startTestServer(t, protocol)
+			relayTwoServer := startTestServer(t, protocol)
+			destServer := startTestServer(t, protocol)
+			sourceClient := newTestClient(t, ctx, sourceServer)
+			defer sourceClient.Close()
+			relayOneClient := newTestClient(t, ctx, relayOneServer)
+			defer relayOneClient.Close()
+			relayTwoClient := newTestClient(t, ctx, relayTwoServer)
+			defer relayTwoClient.Close()
+			destClient := newTestClient(t, ctx, destServer)
+			defer destClient.Close()
+
+			sourceRoot := filepath.Join(sourceServer.tmp, "source-root")
+			destRoot := filepath.Join(destServer.tmp, "dest-root")
+			if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(destRoot, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			src := filepath.Join(sourceRoot, "file.bin")
+			makeDeterministicBlob(t, src, 512*1024+777)
+
+			sourceAPI := sourceClient.RoutedTransfer()
+			relayOneAPI := relayOneClient.RelayControl()
+			relayTwoAPI := relayTwoClient.RelayControl()
+			destAPI := destClient.RoutedTransfer()
+			if sourceAPI == nil || relayOneAPI == nil || relayTwoAPI == nil || destAPI == nil {
+				t.Fatal("routed transfer or relay service unavailable")
+			}
+			pbProtocol := groverpb.DataProtocol_DATA_PROTOCOL_TCP
+			if protocol == "udp" {
+				pbProtocol = groverpb.DataProtocol_DATA_PROTOCOL_UDP
+			}
+			routeID := "routed-multi-relay-" + protocol
+			jobID := routeID + "-job"
+			source, err := sourceAPI.PrepareTransferEndpoint(ctx, &groverpb.PrepareTransferEndpointRequest{
+				RouteId:  routeID,
+				JobId:    jobID,
+				Role:     groverpb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_SOURCE,
+				Protocol: pbProtocol,
+				RootPath: sourceRoot,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			dest, err := destAPI.PrepareTransferEndpoint(ctx, &groverpb.PrepareTransferEndpointRequest{
+				RouteId:  routeID,
+				JobId:    jobID,
+				Role:     groverpb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_DESTINATION,
+				Protocol: pbProtocol,
+				RootPath: destRoot,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			secondForward, err := relayTwoAPI.CreateForward(ctx, &groverpb.CreateForwardRequest{
+				RouteId:    routeID,
+				JobId:      jobID,
+				HopIndex:   2,
+				Protocol:   pbProtocol,
+				Egress:     dest.GetDataEndpoint(),
+				TtlSeconds: 60,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			firstForward, err := relayOneAPI.CreateForward(ctx, &groverpb.CreateForwardRequest{
+				RouteId:    routeID,
+				JobId:      jobID,
+				HopIndex:   1,
+				Protocol:   pbProtocol,
+				Egress:     secondForward.GetIngress(),
+				TtlSeconds: 60,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			dest.DataEndpoint = firstForward.GetIngress()
+			if _, err := sourceAPI.StartTransferJob(ctx, &groverpb.StartTransferJobRequest{
+				RouteId:        routeID,
+				JobId:          jobID,
+				Source:         source,
+				Destination:    dest,
+				FilesInFlight:  1,
+				StreamsPerFile: 3,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			waitForRoutedJobDone(t, ctx, sourceAPI, jobID)
+			assertSameFile(t, "routed multi-relay "+protocol, filepath.Join(destRoot, "file.bin"), src)
+			forwardOne, err := relayOneAPI.GetForward(ctx, firstForward.GetForwardId())
+			if err != nil {
+				t.Fatal(err)
+			}
+			forwardTwo, err := relayTwoAPI.GetForward(ctx, secondForward.GetForwardId())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if forwardOne.GetStats().GetIngressBytes() == 0 || forwardTwo.GetStats().GetIngressBytes() == 0 {
+				t.Fatalf("relay stats missing traffic: relay1=%+v relay2=%+v", forwardOne.GetStats(), forwardTwo.GetStats())
+			}
+		})
+	}
+}
+
 func TestRoutedTransferJobDirectMultiSizeUDP(t *testing.T) {
 	ctx := context.Background()
 	sourceServer := startTestServer(t, "udp")

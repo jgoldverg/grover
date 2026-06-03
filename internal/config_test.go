@@ -89,3 +89,44 @@ func TestLoadServerConfigNormalizesUDPFlowControl(t *testing.T) {
 		t.Fatalf("udp flow control = %q, want fixed", cfg.UDPFlowControl)
 	}
 }
+
+func TestLoadServerConfigDefaultsJobLogDir(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "server.toml")
+	if err := os.WriteFile(path, []byte(`port = 22444`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadServerConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.JobLogDir != "/var/log/grover" {
+		t.Fatalf("job log dir = %q, want /var/log/grover", cfg.JobLogDir)
+	}
+	if got, want := cfg.RouteStoreFile, filepath.Join(os.Getenv("HOME"), ".grover", "routes.json"); got != want {
+		t.Fatalf("route store file = %q, want %q", got, want)
+	}
+	if cfg.EnergyMonitor {
+		t.Fatal("energy monitor should be disabled unless requested")
+	}
+	if cfg.EnergySampleMs != 1000 {
+		t.Fatalf("energy sample ms = %d, want 1000", cfg.EnergySampleMs)
+	}
+
+	override := filepath.Join(t.TempDir(), "jobs")
+	path = filepath.Join(t.TempDir(), "server.toml")
+	routeStore := filepath.Join(t.TempDir(), "routes.json")
+	if err := os.WriteFile(path, []byte(`job_log_dir = "`+override+`"
+route_store_file = "`+routeStore+`"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = LoadServerConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.JobLogDir != override {
+		t.Fatalf("job log dir = %q, want %q", cfg.JobLogDir, override)
+	}
+	if cfg.RouteStoreFile != routeStore {
+		t.Fatalf("route store file = %q, want %q", cfg.RouteStoreFile, routeStore)
+	}
+}

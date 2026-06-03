@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/jgoldverg/grover/internal"
+	"github.com/jgoldverg/grover/pkg/energy"
 	gs "github.com/jgoldverg/grover/pkg/gserver"
 	"github.com/spf13/pflag"
 )
@@ -29,6 +30,10 @@ func main() {
 		dataAdvertise   string
 		dataPortMin     int
 		dataPortMax     int
+		routeStoreFile  string
+		jobLogDir       string
+		energyMonitor   bool
+		energySampleMs  int
 		udpMTU          int
 		udpFlowControl  string
 		udpWindow       int
@@ -54,6 +59,10 @@ func main() {
 	flags.StringVar(&dataAdvertise, "data-advertise-host", "", "Data-plane advertised host")
 	flags.IntVar(&dataPortMin, "data-port-min", 0, "Minimum server-allocated data-plane port (0 uses OS ephemeral ports)")
 	flags.IntVar(&dataPortMax, "data-port-max", 0, "Maximum server-allocated data-plane port (0 uses OS ephemeral ports)")
+	flags.StringVar(&routeStoreFile, "route-store-file", "", "Path to server route JSON file")
+	flags.StringVar(&jobLogDir, "job-log-dir", "", "Directory for historical transfer job logs")
+	flags.BoolVar(&energyMonitor, "energy-monitor", false, "Enable per-job Intel RAPL energy capture; server startup fails if RAPL is unavailable")
+	flags.IntVar(&energySampleMs, "energy-sample-ms", 0, "Per-job energy sampling interval in milliseconds")
 	flags.IntVar(&udpMTU, "udp-mtu", 0, "UDP datagram MTU for server-sent transfers")
 	flags.StringVar(&udpFlowControl, "udp-flow-control", "", "UDP flow-control mode for server-sent transfers (fixed|bbr)")
 	flags.IntVar(&udpWindow, "udp-window-packets", 0, "UDP max in-flight packets per stream for server-sent transfers")
@@ -125,6 +134,18 @@ func main() {
 	if dataPortMax != 0 {
 		cfg.DataPortMax = dataPortMax
 	}
+	if strings.TrimSpace(routeStoreFile) != "" {
+		cfg.RouteStoreFile = routeStoreFile
+	}
+	if strings.TrimSpace(jobLogDir) != "" {
+		cfg.JobLogDir = jobLogDir
+	}
+	if flags.Changed("energy-monitor") {
+		cfg.EnergyMonitor = energyMonitor
+	}
+	if energySampleMs > 0 {
+		cfg.EnergySampleMs = energySampleMs
+	}
 	if udpMTU > 0 {
 		cfg.UDPMTUSize = udpMTU
 	}
@@ -157,6 +178,21 @@ func main() {
 	if err := internal.ConfigureLogger(cfg.LogLevel); err != nil {
 		internal.Warn("invalid log level in server config, defaulting to info", internal.Fields{
 			internal.FieldError: err.Error(),
+		})
+	}
+	if cfg.EnergyMonitor {
+		monitor, err := energy.NewRAPLMonitor("")
+		if err != nil {
+			internal.Error("energy monitor requested but unavailable", internal.Fields{
+				internal.FieldError: err.Error(),
+			})
+			os.Exit(1)
+		}
+		internal.Info("energy monitor enabled", internal.Fields{
+			"domains":          len(monitor.Domains()),
+			"sample_interval":  cfg.EnergySampleMs,
+			"job_log_dir":      cfg.JobLogDir,
+			"powercap_backend": "rapl",
 		})
 	}
 	server := gs.NewGroverServer(ctx, cfg)

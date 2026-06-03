@@ -117,6 +117,67 @@ service RelayControl {
   rpc StreamForwardStats (StreamForwardStatsRequest) returns (stream ForwardSession);
 }
 
+enum ConnectionOrigin {
+  CONNECTION_ORIGIN_UNSPECIFIED = 0;
+  CONNECTION_ORIGIN_SOURCE = 1;
+  CONNECTION_ORIGIN_DESTINATION = 2;
+}
+
+enum DataDirection {
+  DATA_DIRECTION_UNSPECIFIED = 0;
+  DATA_DIRECTION_SOURCE_TO_DESTINATION = 1;
+  DATA_DIRECTION_DESTINATION_TO_SOURCE = 2;
+}
+
+message RouteConfig {
+  string name = 1;
+  string source = 2;
+  string destination = 3;
+  repeated string via = 4;
+  DataProtocol protocol = 5;
+  ConnectionOrigin connection_origin = 6;
+  DataDirection data_direction = 7;
+  int64 created_at_unix_nano = 8;
+  int64 updated_at_unix_nano = 9;
+}
+
+message PutRouteRequest {
+  RouteConfig route = 1;
+}
+
+message PutRouteResponse {
+  RouteConfig route = 1;
+}
+
+message GetRouteRequest {
+  string name = 1;
+}
+
+message GetRouteResponse {
+  RouteConfig route = 1;
+}
+
+message ListRoutesRequest {}
+
+message ListRoutesResponse {
+  repeated RouteConfig routes = 1;
+}
+
+message DeleteRouteRequest {
+  string name = 1;
+}
+
+message DeleteRouteResponse {
+  bool ok = 1;
+}
+
+service RouteConfigControl {
+  rpc PutRoute (PutRouteRequest) returns (PutRouteResponse);
+  rpc GetRoute (GetRouteRequest) returns (GetRouteResponse);
+  rpc ListRoutes (ListRoutesRequest) returns (ListRoutesResponse);
+  rpc DeleteRoute (DeleteRouteRequest) returns (DeleteRouteResponse);
+}
+
 enum TransferEndpointRole {
   TRANSFER_ENDPOINT_ROLE_UNSPECIFIED = 0;
   TRANSFER_ENDPOINT_ROLE_SOURCE = 1;
@@ -133,6 +194,116 @@ message TransferEndpoint {
   string root_path = 7;
   uint32 ttl_seconds = 8;
   int64 expires_at_unix = 9;
+  string session_id = 10;
+}
+
+message RouteSessionHop {
+  uint32 hop_index = 1;
+  string node_id = 2;
+  string control_endpoint = 3;
+  DataEndpoint ingress = 4;
+  DataEndpoint egress = 5;
+  RuntimeState state = 6;
+  StatsSnapshot stats = 7;
+  string error_message = 8;
+}
+
+message RouteSession {
+  string session_id = 1;
+  string route_id = 2;
+  string job_id = 3;
+  DataProtocol protocol = 4;
+  ConnectionOrigin connection_origin = 5;
+  DataDirection data_direction = 6;
+  TransferEndpoint source = 7;
+  TransferEndpoint destination = 8;
+  repeated RouteSessionHop hops = 9;
+  RuntimeState state = 10;
+  StatsSnapshot stats = 11;
+  string error_message = 12;
+  int64 created_at_unix_nano = 13;
+  int64 updated_at_unix_nano = 14;
+  TransferEndpoint reverse_source = 15;
+  TransferEndpoint reverse_destination = 16;
+  repeated RouteSessionHop reverse_hops = 17;
+}
+
+message CreateRouteSessionRequest {
+  string session_id = 1;
+  string route_id = 2;
+  string job_id = 3;
+  DataProtocol protocol = 4;
+  ConnectionOrigin connection_origin = 5;
+  DataDirection data_direction = 6;
+  TransferEndpoint source = 7;
+  TransferEndpoint destination = 8;
+  repeated RouteSessionHop hops = 9;
+  TransferEndpoint reverse_source = 10;
+  TransferEndpoint reverse_destination = 11;
+  repeated RouteSessionHop reverse_hops = 12;
+}
+
+message CreateRouteSessionResponse {
+  RouteSession session = 1;
+}
+
+message GetRouteSessionRequest {
+  string session_id = 1;
+}
+
+message GetRouteSessionResponse {
+  RouteSession session = 1;
+}
+
+message ListRouteSessionsRequest {
+  string route_id = 1;
+  string job_id = 2;
+}
+
+message ListRouteSessionsResponse {
+  repeated RouteSession sessions = 1;
+}
+
+message DeleteRouteSessionRequest {
+  string session_id = 1;
+}
+
+message DeleteRouteSessionResponse {
+  bool ok = 1;
+}
+
+message AbortRouteSessionRequest {
+  string session_id = 1;
+}
+
+message AbortRouteSessionResponse {
+  RouteSession session = 1;
+}
+
+message UpdateRouteSessionStateRequest {
+  string session_id = 1;
+  RuntimeState state = 2;
+  string error_message = 3;
+}
+
+message UpdateRouteSessionStateResponse {
+  RouteSession session = 1;
+}
+
+message StreamRouteSessionStatsRequest {
+  string session_id = 1;
+  string route_id = 2;
+  string job_id = 3;
+}
+
+service RouteSessionControl {
+  rpc CreateRouteSession (CreateRouteSessionRequest) returns (CreateRouteSessionResponse);
+  rpc GetRouteSession (GetRouteSessionRequest) returns (GetRouteSessionResponse);
+  rpc ListRouteSessions (ListRouteSessionsRequest) returns (ListRouteSessionsResponse);
+  rpc DeleteRouteSession (DeleteRouteSessionRequest) returns (DeleteRouteSessionResponse);
+  rpc AbortRouteSession (AbortRouteSessionRequest) returns (AbortRouteSessionResponse);
+  rpc UpdateRouteSessionState (UpdateRouteSessionStateRequest) returns (UpdateRouteSessionStateResponse);
+  rpc StreamRouteSessionStats (StreamRouteSessionStatsRequest) returns (stream RouteSession);
 }
 
 message TransferStreamState {
@@ -180,6 +351,7 @@ message TransferJob {
   repeated TransferFileState files = 17;
   StatsSnapshot stats = 18;
   string error_message = 19;
+  string session_id = 20;
 }
 
 message PrepareTransferEndpointRequest {
@@ -190,6 +362,8 @@ message PrepareTransferEndpointRequest {
   string root_path = 5;
   DataEndpoint bind = 6;
   uint32 ttl_seconds = 7;
+  ConnectionOrigin connection_origin = 8;
+  string session_id = 9;
 }
 
 message PrepareTransferEndpointResponse {
@@ -204,6 +378,8 @@ message StartTransferJobRequest {
   repeated string paths = 5;
   uint32 files_in_flight = 6;
   uint32 streams_per_file = 7;
+  ConnectionOrigin connection_origin = 8;
+  string session_id = 9;
 }
 
 message StartTransferJobResponse {

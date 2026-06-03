@@ -52,6 +52,23 @@ type RelayControlAPI interface {
 	StreamForwardStats(ctx context.Context, forwardID, routeID, jobID string) (groverpb.RelayControl_StreamForwardStatsClient, error)
 }
 
+type RouteSessionAPI interface {
+	CreateRouteSession(ctx context.Context, req *groverpb.CreateRouteSessionRequest) (*groverpb.RouteSession, error)
+	GetRouteSession(ctx context.Context, sessionID string) (*groverpb.RouteSession, error)
+	ListRouteSessions(ctx context.Context, routeID, jobID string) ([]*groverpb.RouteSession, error)
+	DeleteRouteSession(ctx context.Context, sessionID string) (bool, error)
+	AbortRouteSession(ctx context.Context, sessionID string) (*groverpb.RouteSession, error)
+	UpdateRouteSessionState(ctx context.Context, sessionID string, state groverpb.RuntimeState, errText string) (*groverpb.RouteSession, error)
+	StreamRouteSessionStats(ctx context.Context, sessionID, routeID, jobID string) (groverpb.RouteSessionControl_StreamRouteSessionStatsClient, error)
+}
+
+type RouteConfigAPI interface {
+	PutRoute(ctx context.Context, route *groverpb.RouteConfig) (*groverpb.RouteConfig, error)
+	GetRoute(ctx context.Context, name string) (*groverpb.RouteConfig, error)
+	ListRoutes(ctx context.Context) ([]*groverpb.RouteConfig, error)
+	DeleteRoute(ctx context.Context, name string) (bool, error)
+}
+
 type Client struct {
 	cfg  internal.AppConfig
 	conn *grpc.ClientConn
@@ -60,6 +77,8 @@ type Client struct {
 	credentials CredentialsAPI
 	routed      RoutedTransferAPI
 	relay       RelayControlAPI
+	route       RouteSessionAPI
+	routeConfig RouteConfigAPI
 }
 
 func NewClient(cfg internal.AppConfig) *Client {
@@ -73,6 +92,10 @@ func (c *Client) Credentials() CredentialsAPI { return c.credentials }
 func (c *Client) RoutedTransfer() RoutedTransferAPI { return c.routed }
 
 func (c *Client) RelayControl() RelayControlAPI { return c.relay }
+
+func (c *Client) RouteSessionControl() RouteSessionAPI { return c.route }
+
+func (c *Client) RouteConfigControl() RouteConfigAPI { return c.routeConfig }
 
 func (c *Client) Initialize(ctx context.Context, policy util.RoutePolicy) error {
 	var (
@@ -111,9 +134,13 @@ func (c *Client) Initialize(ctx context.Context, policy util.RoutePolicy) error 
 	if c.conn != nil {
 		c.routed = NewRoutedTransferService(c.conn)
 		c.relay = NewRelayControlService(c.conn)
+		c.route = NewRouteSessionService(c.conn)
+		c.routeConfig = NewRouteConfigService(c.conn)
 	} else {
 		c.routed = nil
 		c.relay = nil
+		c.route = nil
+		c.routeConfig = nil
 	}
 
 	fileStore, err := backend.NewTomlCredentialStorage(c.cfg.CredentialsFile)

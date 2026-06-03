@@ -66,6 +66,30 @@ func TestBuildTransferRoutePlanDirect(t *testing.T) {
 	if plan.Protocol != "tcp" || plan.ParallelStreams != 4 || plan.Concurrency != 2 {
 		t.Fatalf("unexpected plan: %+v", plan)
 	}
+	if plan.ConnectionOrigin != "source" || plan.DataDirection != "source-to-destination" {
+		t.Fatalf("unexpected session metadata: %+v", plan)
+	}
+}
+
+func TestBuildTransferRoutePlanSessionMetadata(t *testing.T) {
+	src, err := parseLocation("10.0.0.1:22444:/file.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dst, err := parseLocation("10.0.0.2:22444:/data/file.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := buildTransferRoutePlan(src, dst, CopyOptions{
+		ConnectionOrigin: "destination",
+		DataDirection:    "destination_to_source",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.ConnectionOrigin != "destination" || plan.DataDirection != "destination-to-source" {
+		t.Fatalf("unexpected plan metadata: %+v", plan)
+	}
 }
 
 func TestBuildTransferRoutePlanBridge(t *testing.T) {
@@ -127,6 +151,8 @@ func TestPrintTransferRoutePlan(t *testing.T) {
 		"route: 10.0.0.1:22444 -> relay-a -> relay-b -> 10.0.0.2:22444",
 		"mode: bridge",
 		"direction: remote-to-remote",
+		"connection_origin: source",
+		"data_direction: source-to-destination",
 		"protocol: udp",
 		"parallel_streams: 4",
 		"concurrency: 1",
@@ -243,6 +269,28 @@ func TestTransferRouteWithoutArgsRequiresDefaults(t *testing.T) {
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "has no source/destination defaults") {
 		t.Fatalf("transfer --route error = %v, want defaults guidance", err)
+	}
+}
+
+func TestRouteEndpointLocationMapsAbsolutePathToConfiguredControlEndpoint(t *testing.T) {
+	got, err := routeEndpointLocation("10.0.0.10:22444", "/data/src", "source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "10.0.0.10:22444:/data/src" {
+		t.Fatalf("endpoint location = %q", got)
+	}
+
+	remote, err := routeEndpointLocation("10.0.0.10:22444", "10.0.0.20:22444:/already/remote", "source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remote != "10.0.0.20:22444:/already/remote" {
+		t.Fatalf("remote endpoint should pass through, got %q", remote)
+	}
+
+	if _, err := routeEndpointLocation("10.0.0.10:22444", "relative/path", "source"); err == nil {
+		t.Fatal("expected relative route path to be rejected")
 	}
 }
 

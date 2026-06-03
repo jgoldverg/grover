@@ -86,6 +86,7 @@ func NewRootCommand() *cobra.Command {
 	rootCmd.AddCommand(CredentialCommand())
 	rootCmd.AddCommand(SimpleCopy())
 	rootCmd.AddCommand(RouteCommand())
+	rootCmd.AddCommand(ScheduleCommand())
 	rootCmd.AddCommand(ConfigCommand())
 
 	return rootCmd

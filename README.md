@@ -1,94 +1,103 @@
-# Whats the Point of this you will probably ask?? Not sure
+# Grover
 
+Grover is an experimental groverd-owned file transfer system. The CLI is the control plane: it resolves endpoints, prepares routes, starts jobs, and prints observability. File bytes move between `groverd` processes, not through the CLI process.
 
-## The overarhcing goal of this work
+The current focus is benchmarking direct and relay transfers across real nodes, including throughput, per-stream progress, UDP protocol counters, historical job logs, and optional Intel RAPL energy capture.
 
-There are 3 cases for file transfers:
-Downloading/uploading using the client to a supported endpoint or the server here.
-Moving data between two servers that you launch, just hit one with the pb command or maybe i could write some cli support for this. Overlay network
-Multiple server based file transfers.
+## Build
 
-Tbh I have no idea how I can construct such a system. Look at it, client -> server or client <- server is simple more or less. Nothing crazy to say the least but when you start optimizing it heavily:
-1. Parallel chunk sending per file
-2. Multiple file transfers in parallel
-3. Somehow get zero-copy
-4. Write the UDP protocol
-5. Try and use eBPF for the server with XDP
-6. We need to include metrics reporting as well: network metrics that we drive up via eBPF from the server side.
-7. Can we utilize multiple nic's if they are available as well to split traffic across?
-Hence the expectation this is a very slow burn of a project and one where I just simply play around with and try build something that craps on onedatashare and globus.
-
-
-## Major things to work on still
-
-### cli
-There are many commands to add but to summarize we should support min: list(done), mkdir, touch, rename, move, transfer, sync, stream
-
-These are just implementing the calls to backend using cobra but are crucial for actually doing integration testing and see how the protocol works.
-
-All are simple aside from:
-move - is simply moving a directory on the local file system like the Unix command.
-sync - means that as changes to a file they are reflected on the upstream server, or the opposite.
-transfer - an actual data transfer. It gets complicated when you want to do a broadcast or a gather of various files from various servers. Not sure how we are gonna do this but I think its just figuring out to associate together parts of file transfer to different servers. Hence we really call these two cases scatter and gather.
-
-stream - means that we constantly read from a file or a socket in general and push that data to a destination. This I haven't specifically thought about much but if we have a directory with a file that gets say log entries every second we want to read and push that data deleting the original.
-
-Management commands:
-- credentials: here there isnt much for the Toml format of credentials but we can for example add encryption or password or jwt access.
-
-### backend
-This is where we have protocol implementations that the client's(cli for ex) and server will use to conduct the operations. It completely encapsulates all protocol based code, we really only have the concet of readers and writers and operating on chunks of data, we can include support for stream operations as well.
-
-#### Checkpoint persistence for transfers
-
-To keep the readers and writers fully parallel we track progress in memory and trickle it to disk in the background:
-- Use a sharded map-of-maps: `file -> worker/thread -> chunk progress` so hot files do not serialize on one lock. Each entry keeps last read/written chunk, byte counters, status, and a seq number.
-- Every update just bumps the in-memory structure; a background flusher waits for ~10 updates (or a time threshold) per file, then writes a snapshot to disk. Snapshots go to a temp file and get atomically `rename`d so crashes never leave partial JSON/binary artifacts.
-- While a file is active we keep its state in memory; once the transfer finishes we force one last synchronous flush, drop the in-memory entry, and archive a compact `file.done` record. A tiny append-only index answers "is this file done?" without reloading snapshots.
-- If redo cost needs to be near-zero, pair the periodic snapshot with a lightweight delta journal that appends each update; on recovery we load the latest snapshot and replay the tail of the journal to reconstruct exact state.
-- Startup just scans active snapshots + journal to rebuild the map. Instrument the flush queue so we can add backpressure or spin up more flush workers if disk persistence ever lags behind the hot path.
-
-### server
-This is far more complicated and writing is confusing hence I need to iron this out more.
-There are two primary connections to the grover server: grpc for management operations, and then the udp session that enables uploads/downloads
-
-## Local transfer commands
-
-Build the binaries from the repo root:
+Use `make all` from the repo root. It builds both binaries into `./bin`.
 
 ```bash
-go build -o bin/grover ./cmd/grover
-go build -o bin/groverd ./cmd/groverd
+make all
 ```
 
-Start a UDP groverd. This enables the UDP data plane, starts the control plane without TLS, uses jumbo MTU sizing, and increases socket buffers for high-throughput testing:
+Run tests with:
 
 ```bash
-./bin/groverd \
-  --port=22444 \
-  --protocol=udp \
-  --insecure-control \
-  --log-level=warn \
-  --udp-mtu=8972 \
-  --udp-window-packets=65536 \
-  --udp-batch-packets=64 \
-  --udp-ack-every-packets=128 \
-  --udp-ack-every-ms=1 \
-  --udp-read-buffer=134217728 \
-  --udp-write-buffer=134217728
+make test
 ```
 
-Start a TCP groverd:
+`make clean` only removes `bin/grover` and `bin/groverd`.
+
+## Start Groverd
+
+Use one `groverd` for each node that can own files, receive data, or act as a relay. Data ports are allocated by the server from the configured range.
+
+### Source Node
+
+Use this on the node that has source files. The control plane listens on `22444`; data sockets bind on all interfaces and advertise the 100G-facing address.
 
 ```bash
 ./bin/groverd \
   --port=22444 \
   --protocol=tcp \
   --insecure-control \
-  --log-level=warn
+  --log-level=info \
+  --data-bind-host=0.0.0.0 \
+  --data-advertise-host=10.137.1.2 \
+  --data-port-min=30000 \
+  --data-port-max=30099 \
+  --job-log-dir=/var/log/grover \
+  --credentials-file=$HOME/.grover/source-credentials.toml
 ```
 
-Start groverd with an explicit data-plane bind/advertise address and server-allocated data-port range:
+Reason: this exposes the source file tree to routed transfer jobs and gives the destination or relay a stable data endpoint to connect to.
+
+### Destination Node
+
+Use a different data port range on the destination so concurrent local testing does not collide.
+
+```bash
+./bin/groverd \
+  --port=22444 \
+  --protocol=tcp \
+  --insecure-control \
+  --log-level=info \
+  --data-bind-host=0.0.0.0 \
+  --data-advertise-host=10.137.132.2 \
+  --data-port-min=30100 \
+  --data-port-max=30199 \
+  --job-log-dir=/var/log/grover \
+  --credentials-file=$HOME/.grover/dest-credentials.toml
+```
+
+Reason: destination groverd allocates receive endpoints and writes the incoming files to its local filesystem.
+
+### UDP With BBR-Style Flow Control
+
+Use UDP when testing Grover's userspace transport behavior. On jumbo-MTU links, set the interface MTU first and then use a payload below the link MTU.
+
+```bash
+sudo ip link set dev enp6s0 mtu 9000
+```
+
+```bash
+./bin/groverd \
+  --port=22444 \
+  --protocol=udp \
+  --udp-flow-control=bbr \
+  --insecure-control \
+  --log-level=info \
+  --data-bind-host=0.0.0.0 \
+  --data-advertise-host=10.137.1.2 \
+  --data-port-min=30000 \
+  --data-port-max=30099 \
+  --udp-mtu=8972 \
+  --udp-window-packets=65536 \
+  --udp-batch-packets=64 \
+  --udp-ack-every-packets=128 \
+  --udp-ack-every-ms=1 \
+  --udp-read-buffer=134217728 \
+  --udp-write-buffer=134217728 \
+  --job-log-dir=/var/log/grover
+```
+
+Reason: this enables the experimental UDP path, ACK/SACK-driven counters, BBR-like flow control, and larger socket buffers for high-throughput experiments.
+
+### Energy Capture
+
+Enable energy monitoring only on bare metal nodes with readable Intel RAPL counters.
 
 ```bash
 ./bin/groverd \
@@ -96,227 +105,370 @@ Start groverd with an explicit data-plane bind/advertise address and server-allo
   --protocol=tcp \
   --insecure-control \
   --data-bind-host=0.0.0.0 \
-  --data-advertise-host=192.168.1.10 \
-  --data-port-min=30000 \
-  --data-port-max=30100
+  --data-advertise-host=10.137.1.2 \
+  --job-log-dir=/var/log/grover \
+  --energy-monitor \
+  --energy-sample-ms=1000
 ```
 
-Run a direct groverd-to-groverd transfer over UDP. The CLI only talks to the control plane; bytes move from the source groverd to the destination groverd:
+Reason: when enabled, groverd samples RAPL per job and writes `energy.csv` under `/var/log/grover/<job_id>/`. Startup fails if RAPL is unavailable so experiments do not silently miss energy data.
+
+## Direct Transfers
+
+Run these from any machine that can reach both groverd control-plane addresses.
+
+### Direct TCP
 
 ```bash
-./bin/grover \
-  --insecure-control \
-  transfer 192.168.1.10:22444:/home/ubuntu/data/file-1gb.bin 192.168.1.20:22444:/home/ubuntu/data/file-1gb.bin \
+./bin/grover --insecure-control \
+  transfer 10.137.1.2:22444:/home/ubuntu/data/grover-src/file-20g.bin \
+           10.137.132.2:22444:/home/ubuntu/data/grover-dst/file-20g.bin \
+  --protocol=tcp \
+  --parallel-streams=6 \
+  --concurrency=1 \
+  --ui=live \
+  --ui-interval-ms=1000
+```
+
+Reason: this benchmarks a direct source-groverd to destination-groverd TCP transfer. `--parallel-streams` splits a large file into concurrent byte ranges; `--concurrency` controls files in flight.
+
+### Direct UDP
+
+```bash
+./bin/grover --insecure-control \
+  transfer 10.137.1.2:22444:/home/ubuntu/data/grover-src/file-20g.bin \
+           10.137.132.2:22444:/home/ubuntu/data/grover-dst/file-20g.bin \
   --protocol=udp \
-  --parallel-streams=1 \
-  --ui=summary \
-  --ui-interval-ms=2000
+  --parallel-streams=4 \
+  --concurrency=1 \
+  --ui=live \
+  --ui-interval-ms=1000
 ```
 
-Run a direct groverd-to-groverd transfer over TCP:
+Reason: this exercises Grover's UDP data plane and exposes protocol counters such as packets, retransmits, drops, and RTT when available.
+
+### Directory Transfer
 
 ```bash
-./bin/grover \
-  --insecure-control \
-  transfer 192.168.1.10:22444:/home/ubuntu/data/file-1gb.bin 192.168.1.20:22444:/home/ubuntu/data/file-1gb.bin \
+./bin/grover --insecure-control \
+  transfer 10.137.1.2:22444:/home/ubuntu/data/grover-src/ \
+           10.137.132.2:22444:/home/ubuntu/data/grover-dst/ \
   --protocol=tcp \
   --parallel-streams=4 \
-  --ui=summary \
-  --ui-interval-ms=2000
+  --concurrency=3 \
+  --ui=live
 ```
 
-Store groverd control endpoints as credentials, then use `name:/path` in transfers:
+Reason: this transfers every file under the source directory and shows file-level plus stream-level progress.
+
+### Local Two-Server Test
+
+Start two local groverd instances:
 
 ```bash
-./bin/grover \
-  credential add-basic \
-  --name source-a \
-  --url 192.168.1.10:22444
-
-./bin/grover \
-  credential add-basic \
-  --name dest-b \
-  --url 192.168.1.20:22444
-
-./bin/grover \
+./bin/groverd \
+  --port=22444 \
+  --protocol=tcp \
   --insecure-control \
-  transfer source-a:/home/ubuntu/data/file-1gb.bin dest-b:/home/ubuntu/data/file-1gb.bin \
+  --log-level=debug \
+  --data-bind-host=127.0.0.1 \
+  --data-advertise-host=127.0.0.1 \
+  --data-port-min=30000 \
+  --data-port-max=30099
+```
+
+```bash
+./bin/groverd \
+  --port=22445 \
+  --protocol=tcp \
+  --insecure-control \
+  --log-level=debug \
+  --data-bind-host=127.0.0.1 \
+  --data-advertise-host=127.0.0.1 \
+  --data-port-min=30100 \
+  --data-port-max=30199
+```
+
+Then transfer local test data:
+
+```bash
+./bin/grover --insecure-control \
+  transfer 127.0.0.1:22444:$HOME/testData/src/ \
+           127.0.0.1:22445:$HOME/testData/dst/ \
+  --protocol=tcp \
+  --parallel-streams=4 \
+  --concurrency=2 \
+  --ui=live
+```
+
+Reason: this verifies the groverd-owned path without needing multiple hosts.
+
+## Credentials
+
+Store groverd control endpoints as credential aliases when you do not want to type addresses.
+
+```bash
+./bin/grover credential add-basic \
+  --name uc \
+  --url 10.137.1.2:22444
+
+./bin/grover credential add-basic \
+  --name edu \
+  --url 10.137.132.2:22444
+```
+
+Then use `name:/absolute/path`:
+
+```bash
+./bin/grover --insecure-control \
+  transfer uc:/home/ubuntu/data/grover-src/file-20g.bin \
+           edu:/home/ubuntu/data/grover-dst/file-20g.bin \
+  --protocol=tcp \
+  --parallel-streams=6 \
+  --ui=live
+```
+
+Reason: this matches the rclone-style endpoint pattern while still resolving to groverd control addresses.
+
+## Routes And Relays
+
+Routes are named network paths stored on `groverd` as JSON. They are not file jobs. A route stores source/destination control endpoints, optional relay hops, protocol, connection origin, and data direction. File paths are supplied when a transfer runs.
+
+Start the source-side groverd with an explicit route JSON file:
+
+```bash
+./bin/groverd \
+  --port=22444 \
+  --protocol=tcp \
+  --insecure-control \
+  --data-bind-host=0.0.0.0 \
+  --data-advertise-host=10.137.1.2 \
+  --data-port-min=30000 \
+  --data-port-max=30099 \
+  --route-store-file=$HOME/.grover/routes.json
+```
+
+Store a direct route on that server:
+
+```bash
+./bin/grover --server-url 10.137.1.2:22444 --insecure-control \
+  route put uc-to-edu \
+  --source 10.137.1.2:22444 \
+  --destination 10.137.132.2:22444 \
   --protocol=tcp
 ```
 
-Show routed transfer observability from the source groverd:
+For an EDU/private destination that can make outbound connections but cannot accept inbound data connections, configure the route with destination-origin TCP:
 
 ```bash
-./bin/grover \
-  --insecure-control \
-  transfer status <transfer_id> \
-  --source-server 192.168.1.10:22444
+./bin/grover --server-url 10.137.1.2:22444 --insecure-control \
+  route put uc-to-edu-pull \
+  --source 10.137.1.2:22444 \
+  --destination 10.137.132.2:22444 \
+  --protocol=tcp \
+  --connection-origin=destination \
+  --data-direction=source-to-destination
+```
 
-./bin/grover \
-  --insecure-control \
+Prepare the route session, then run the transfer over that prepared session:
+
+```bash
+./bin/grover --server-url 10.137.1.2:22444 --insecure-control \
+  route prepare uc-to-edu-pull --session-id edu-pull-001
+```
+
+```bash
+./bin/grover --server-url 10.137.1.2:22444 --insecure-control \
+  transfer --route uc-to-edu-pull \
+  /home/ubuntu/data/grover-src/file-20g.bin \
+  /home/ubuntu/data/grover-dst/file-20g.bin \
+  --session-id edu-pull-001 \
+  --parallel-streams=6 \
+  --ui=live
+```
+
+Reason: route preparation opens the sockets first. The transfer then only supplies file paths and stream/concurrency settings. For destination-origin TCP, the destination groverd dials out to the prepared source endpoint and the source sends bytes over those destination-originated TCP connections.
+
+Store a one-relay route:
+
+```bash
+./bin/grover --server-url 10.137.1.2:22444 --insecure-control \
+  route put uc-to-edu-via-tacc \
+  --source 10.137.1.2:22444 \
+  --destination 10.137.132.2:22444 \
+  --via 10.133.3.2:22444 \
+  --protocol=tcp
+```
+
+Prepare and run a transfer over that route:
+
+```bash
+./bin/grover --server-url 10.137.1.2:22444 --insecure-control \
+  route prepare uc-to-edu-via-tacc --session-id relay-test-001
+```
+
+```bash
+./bin/grover --server-url 10.137.1.2:22444 --insecure-control \
+  transfer --route uc-to-edu-via-tacc \
+  /home/ubuntu/data/grover-src/file-20g.bin \
+  /home/ubuntu/data/grover-dst/file-20g.bin \
+  --session-id relay-test-001 \
+  --parallel-streams=6 \
+  --ui=live
+```
+
+Reason: the route supplies the node path; `route prepare` materializes sockets and relay forwards; `transfer --route` uses the prepared session.
+
+Inspect route state:
+
+```bash
+./bin/grover --server-url 10.137.1.2:22444 --insecure-control route list
+./bin/grover --server-url 10.137.1.2:22444 --insecure-control route get uc-to-edu-via-tacc --json
+./bin/grover route status uc-to-edu-via-tacc --source-server 10.137.1.2:22444 --watch
+```
+
+Reason: route status shows the source-owned route session, transfer job state, and relay forwards for the route.
+
+Abort route runtime resources:
+
+```bash
+./bin/grover route abort uc-to-edu-via-tacc --source-server 10.137.1.2:22444
+```
+
+Close prepared route sessions when you are done:
+
+```bash
+./bin/grover --server-url 10.137.1.2:22444 --insecure-control \
+  route close uc-to-edu-via-tacc --session-id relay-test-001
+```
+
+`route start` intentionally does not copy files. Use `route prepare <name>` to open the data path, then `transfer --route <name> --session-id <id> <source-path> <destination-path>` to move bytes over it.
+
+## Observability
+
+The live UI follows rclone-style progress with Grover network metrics attached.
+
+```bash
+./bin/grover --insecure-control \
   transfer status <transfer_id> \
-  --source-server 192.168.1.10:22444 \
+  --source-server 10.137.1.2:22444 \
   --watch
 ```
 
-Use `--parallel-streams=1` for single-stream UDP testing and increase it, for example `--parallel-streams=4`, when testing per-file parallel streams. Server and client protocol values should match for these direct tests.
+Important fields:
 
-## Route commands working now
+- `Transferred`: total good bytes, current rate (`now`), average rate (`avg`), ETA, and trend.
+- `Transferring`: active files and per-stream byte-range progress.
+- `Grover network`: packets, retransmits, drops, errors, RTT when available, and good/wire byte efficiency.
+- `Destination`: expected bytes sent toward the destination. Destination-side metrics are still being expanded.
 
-Prepare a relay route template under `~/.grover/routes.toml`. A route template describes the reusable network path only; file paths belong on `transfer`:
+Historical logs are written by groverd when `--job-log-dir` is set:
 
 ```bash
-./bin/grover route prepare relay-a-b \
-  --via relay-a \
-  --via relay-b \
-  --protocol=tcp \
-  --parallel-streams=4 \
-  --concurrency=2
+sudo ls /var/log/grover/<job_id>
+sudo cat /var/log/grover/<job_id>/manifest.json
+sudo tail -f /var/log/grover/<job_id>/snapshots.jsonl
+sudo cat /var/log/grover/<job_id>/final.json
+sudo cat /var/log/grover/<job_id>/energy.csv
 ```
 
-You can optionally store default endpoints on a route, but `transfer --route` can always override them:
+Reason: CLI output is for live operation; `/var/log/grover/<job_id>` is for reproducible experiment records.
+
+## Schedule Execution
+
+The schedule runner executes GreenTransferScheduler CSV rows as synthetic Grover transfers. It sends zero bytes of the requested size, so the benchmark measures network and groverd behavior without requiring real files for each row.
+
+Configure a route whose name matches the schedule route key:
 
 ```bash
-./bin/grover route prepare relay-a-b \
-  10.0.0.10:22444:/mnt/src/default.bin \
-  10.0.0.20:22444:/mnt/dst/default.bin \
-  --via 10.0.0.15:22444 \
+./bin/grover --server-url 10.137.1.2:22444 --insecure-control \
+  route put tacc_buff \
+  --source 10.137.1.2:22444 \
+  --destination 10.137.132.2:22444 \
   --protocol=tcp
 ```
 
-Then run the transfer with the stored defaults:
+Dry-run a few rows:
 
 ```bash
-./bin/grover --insecure-control transfer --route relay-a-b
-```
-
-Run a local-path transfer through the configured groverd. Both paths are resolved on the groverd host, not by the CLI process:
-
-```bash
-./bin/grover \
-  --server-url 127.0.0.1:22444 \
-  --insecure-control \
-  transfer /mnt/src/file-1gb.bin /mnt/dst/file-1gb.bin \
-  --protocol=tcp \
-  --parallel-streams=4 \
-  --concurrency=2
-```
-
-Run a direct TCP transfer from one groverd to another. The endpoint syntax is `host:port:/absolute/path`; IPv6 endpoints use brackets, for example `[::1]:22444:/tmp/file.bin`:
-
-```bash
-./bin/grover \
-  --insecure-control \
-  transfer 10.0.0.10:22444:/mnt/src/file-1gb.bin 10.0.0.20:22444:/mnt/dst/file-1gb.bin \
-  --protocol=tcp \
-  --parallel-streams=1 \
-  --concurrency=1
-```
-
-Run a TCP transfer over a prepared route:
-
-```bash
-./bin/grover \
-  --insecure-control \
-  transfer 10.0.0.10:22444:/mnt/src/file-1gb.bin 10.0.0.20:22444:/mnt/dst/file-1gb.bin \
-  --route relay-a-b \
-  --protocol=tcp \
-  --parallel-streams=1 \
-  --concurrency=1
-```
-
-Run a one-shot TCP transfer through one or more relay groverd instances without storing a route template. Relay values are groverd control-plane addresses, and each relay must be reachable by the CLI and able to reach the next hop's advertised data endpoint:
-
-```bash
-./bin/grover \
-  --insecure-control \
-  transfer 10.0.0.10:22444:/mnt/src/file-1gb.bin 10.0.0.20:22444:/mnt/dst/file-1gb.bin \
-  --via 10.0.0.15:22444 \
-  --protocol=tcp \
-  --parallel-streams=1 \
-  --concurrency=1
-```
-
-List and inspect prepared routes:
-
-```bash
-./bin/grover route list
-./bin/grover route status daily-upload
-./bin/grover route status relay-a-b --source-server 10.0.0.10:22444 --watch
-```
-
-Abort a prepared local route template. When the involved groverd instances are reachable, this also best-effort aborts active source jobs and deletes relay forwards for the route:
-
-```bash
-./bin/grover route abort relay-a-b --source-server 10.0.0.10:22444
-```
-
-Dry-run a one-shot routed transfer plan. This prints the planned source, relay, and destination hops without moving bytes:
-
-```bash
-./bin/grover transfer 10.0.0.10:22444:/mnt/src/file.bin 10.0.0.20:22444:/mnt/dst/file.bin \
-  --route relay-a-b \
+./bin/grover --server-url 10.137.1.2:22444 --insecure-control \
+  schedule run \
+  /Users/jacobgoldverg/GreenTransferScheduler/experiments/all_10k_sweep/schedules/<schedule>.csv \
+  --route-key=tacc_buff \
+  --destination-root=/home/ubuntu/data/grover-dst/schedule \
+  --limit=3 \
   --dry-run
 ```
 
-`route start` does not copy files. Use `transfer --route <name> <source> <destination>` to move bytes over a prepared route.
-
-Credential-style paths like `source-a:/path` now resolve to groverd control endpoints from local basic credentials. New routed/direct job commands should use local paths, `host:port:/path` endpoint paths, or credential endpoint aliases.
-
-Tune a running routed transfer job on the source groverd:
+Execute rows:
 
 ```bash
-./bin/grover \
-  --insecure-control \
-  transfer tune <transfer_id> \
-  --source-server 10.0.0.10:22444 \
-  --concurrency=8 \
-  --parallel-streams=4
+./bin/grover --server-url 10.137.1.2:22444 --insecure-control \
+  schedule run \
+  /Users/jacobgoldverg/GreenTransferScheduler/experiments/all_10k_sweep/schedules/<schedule>.csv \
+  --route-key=tacc_buff \
+  --destination-root=/home/ubuntu/data/grover-dst/schedule \
+  --limit=10 \
+  --protocol=tcp \
+  --parallel-streams=6 \
+  --concurrency=1 \
+  --ui=summary
 ```
 
-Use a TOML route/job spec for dry-run planning:
+Reason: this connects GreenTransferScheduler allocations to real Grover transfer jobs and lets groverd collect throughput and energy per scheduled job.
 
-```toml
-source = "10.0.0.10:22444:/mnt/src/file.bin"
-destination = "10.0.0.20:22444:/mnt/dst/file.bin"
-
-[transfer]
-protocol = "tcp"
-parallel_streams = 4
-concurrency = 2
-
-[route]
-via = ["relay-a", "relay-b"]
-```
+Queue one future transfer in a local JSON schedule store:
 
 ```bash
-./bin/grover transfer --route-file ./route.toml --dry-run
+./bin/grover schedule add uc-to-edu \
+  /home/ubuntu/data/grover-src/file-20g.bin \
+  /home/ubuntu/data/grover-dst/file-20g.bin \
+  --at 2026-06-01T22:00:00Z \
+  --parallel-streams=6
 ```
 
-Metadata commands use `--execution`, not `--via`, when forcing local or remote metadata execution:
+Run due queued transfers once, or keep polling:
 
 ```bash
-./bin/grover backend list localfs --path ~/data --execution client
-./bin/grover backend list localfs --path /mnt/data --execution server
+./bin/grover --server-url 10.137.1.2:22444 --insecure-control schedule run-pending
+./bin/grover --server-url 10.137.1.2:22444 --insecure-control schedule run-pending --watch
 ```
 
-## Routed transfer status
+Inspect queued/history state with `jq`:
 
-Direct groverd-local, direct two-groverd TCP/UDP, TCP/UDP relay paths, one-shot `transfer`, prepared-route `transfer --route`, route status, transfer status, and `transfer tune` are wired. Use `transfer` for direct and relay groverd job benchmarks, and use `--dry-run` for planning without moving bytes.
+```bash
+./bin/grover schedule list --json | jq '.entries[] | {id, route, state, run_at, transfer_job_id}'
+```
 
-### network focus
+Inspect local groverd job logs:
 
-Ugh man in so many ways there are tons of protocols to use with various ideas, problem is I am sick of not having exactly want. A higher performance protocol that supports chunking, striping out of order packets, that does proper monitoring of itself. Using things like ftp, scp,,, leave you completely blind of whats going in the network and making certain decisions up front.
+```bash
+./bin/grover transfer history --job-log-dir=/var/log/grover
+./bin/grover transfer history <job_id> --job-log-dir=/var/log/grover --json | jq .
+```
 
-Decisions that we can consider:
-1. In the overlay network scenario we can do tons of routing decisions that I think would be fun to implement in the user space
-2. No eBPF support in tons of protocol servers when tbh we just want traffic to come in as fast as possible.
-3. Lets see if we can do a zero copy approach for the client and server, but that would be a fun challenge to make a protocol server and client as fast as bleeding possible.
-4. There are just tons of tricks you can do in networking that many file transfer protocols simply dont support and its killing me at this point. Whats crazy is http tends up being the most performant but is still extremely lacking when looking at performance.
+## Generate Test Files
 
-### Transport roadmap (near-term)
+Create a sparse 20 GiB test file quickly:
 
-- Per-stream TX windows: keep a `txWindow` per stream on the client that tracks bytes in flight (sequence + payload length). Gate `udpSession.Write` enqueueing on that budget so we stop shoving data when the server stops ACKing. Start with a byte limit tied to `socket_buffer_size`, grow toward selective retransmits driven by SACK ranges. Currently done via BBR + Sack so its similar to TCP 
-- Error propagation + retries: treat fatal TX/RX errors as first-class signals (already started by surfacing `txLoop` failures). Next, wire status packets into the window logic and add bounded retries so slow links don’t silently drop uploads.
-- Portable batching interface: wrap the send/recv path behind an interface so Linux builds can use `sendmmsg`/`recvmmsg` (and later `io_uring` or zero-copy `SEND_ZC`) while macOS/BSD fall back to tight per-packet writes with `kqueue`. Same batching loop, OS-specific backend.
-- Future perf tracks: once single-stream reliability sticks, explore io_uring (multishot recv, batched send) and, if needed, userspace stacks (DPDK) or kernel hooks (XDP/eBPF). Keep the design flexible enough to slot these in without rewriting the client.
+```bash
+mkdir -p ~/data/grover-src ~/data/grover-dst
+truncate -s 20G ~/data/grover-src/file-20g.bin
+```
+
+Create real allocated bytes when disk behavior matters:
+
+```bash
+dd if=/dev/zero of=~/data/grover-src/file-20g.bin bs=1M count=20480 status=progress
+```
+
+Reason: sparse files are useful for network-only tests; real files are better when measuring disk read/write throughput.
+
+## Current Architecture Direction
+
+The new model is two layers:
+
+- Route/session fabric: groverd nodes create TCP/UDP connections and relay forwards according to CLI orchestration. This layer should know endpoints, direction, connection origin, hops, and per-hop metrics, but not file names or chunk semantics.
+- Transfer jobs: jobs run over a materialized route/session. They know files or synthetic byte payloads, streams per file, files in flight, progress, and energy.
+
+This split matters for EDU/private-network nodes: the CLI should be able to tell nodes who must initiate connections, then run jobs over the established route regardless of which side can accept inbound traffic.

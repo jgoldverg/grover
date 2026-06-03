@@ -5,10 +5,13 @@ import (
 	"context"
 	cryptorand "crypto/rand"
 	"encoding/binary"
+	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,14 +20,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jgoldverg/grover/internal"
+	"github.com/jgoldverg/grover/pkg/energy"
 	pb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
 	"github.com/jgoldverg/grover/pkg/metrics"
 	"github.com/jgoldverg/grover/pkg/udpdataplane"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 const (
 	defaultTransferEndpointTTL    = 10 * time.Minute
 	defaultTransferCopyBufferSize = 128 * 1024
+	defaultReverseTCPConnections  = 32
 	maxUDPDatagramPayloadSize     = 65507
 	minUDPJobPayloadSize          = 512
 )
@@ -33,15 +39,18 @@ const (
 	tcpJobMagicV1 = "GROVERJOB1\n"
 	tcpJobMagicV2 = "GROVERJOB2\n"
 	tcpJobMagicV3 = "GROVERJOB3\n"
+	tcpJobMagicV4 = "GROVERJOB4\n"
 	udpJobMagicV2 = "GROVERJOBUDP2"
 
-	currentTCPJobMagic = tcpJobMagicV3
+	currentTCPJobMagic = tcpJobMagicV4
 	currentUDPJobMagic = udpJobMagicV2
 
 	udpJobPacketStart byte = 1
 	udpJobPacketReady byte = 2
 	udpJobPacketDone  byte = 3
 )
+
+const syntheticTransferScheme = "synthetic"
 
 var udpJobMagic = []byte(currentUDPJobMagic)
 
@@ -67,6 +76,7 @@ type TransferExecutionContext struct {
 	UDPWindow        int
 	UDPBatch         int
 	Collector        *metrics.TransferCollector
+	TCPConnProvider  func(context.Context) (net.Conn, error)
 	StreamsFunc      func() uint32
 	OnProgress       func(filePath string, bytesRead int)
 	OnStreamStart    func(filePath string, stream TransferStreamPlan)
@@ -80,6 +90,13 @@ type TransferFilePlan struct {
 	Size         uint64
 }
 
+type syntheticTransferSource struct {
+	RelativePath string
+	Size         uint64
+}
+
+type zeroReader struct{}
+
 type TransferStreamPlan struct {
 	StreamID uint32
 	Offset   uint64
@@ -87,16 +104,20 @@ type TransferStreamPlan struct {
 }
 
 type TransferJobManager struct {
-	mu        sync.RWMutex
-	endpoints map[string]*preparedTransferEndpoint
-	jobs      map[string]*transferJobRuntime
-	registry  TransferEndpointRegistry
-	executor  TransferJobExecutor
-	ports     *DataPortAllocator
-	portErr   error
-	udp       udpTransferTuning
-	stop      chan struct{}
-	closeOnce sync.Once
+	mu          sync.RWMutex
+	endpoints   map[string]*preparedTransferEndpoint
+	jobs        map[string]*transferJobRuntime
+	reverseTCP  map[string]*reverseTCPPool
+	registry    TransferEndpointRegistry
+	executor    TransferJobExecutor
+	ports       *DataPortAllocator
+	portErr     error
+	udp         udpTransferTuning
+	jobLogDir   string
+	energy      *energy.RAPLMonitor
+	energyEvery time.Duration
+	stop        chan struct{}
+	closeOnce   sync.Once
 }
 
 type udpTransferTuning struct {
@@ -112,6 +133,14 @@ type preparedTransferEndpoint struct {
 	endpoint *pb.TransferEndpoint
 	expires  time.Time
 	lease    *DataPortLease
+	reverse  *reverseTCPPool
+}
+
+type reverseTCPPool struct {
+	listener *net.TCPListener
+	conns    chan net.Conn
+	done     chan struct{}
+	once     sync.Once
 }
 
 type transferJobRuntime struct {
@@ -119,11 +148,13 @@ type transferJobRuntime struct {
 	cond   *sync.Cond
 	cancel context.CancelFunc
 
-	jobID    string
-	routeID  string
-	protocol pb.DataProtocol
-	source   *pb.TransferEndpoint
-	dest     *pb.TransferEndpoint
+	jobID     string
+	sessionID string
+	routeID   string
+	protocol  pb.DataProtocol
+	source    *pb.TransferEndpoint
+	dest      *pb.TransferEndpoint
+	origin    pb.ConnectionOrigin
 
 	state          pb.RuntimeState
 	filesInFlight  uint32
@@ -131,6 +162,7 @@ type transferJobRuntime struct {
 	errorMessage   string
 	startedAt      time.Time
 	collector      *metrics.TransferCollector
+	history        *transferJobHistory
 
 	files     []*pb.TransferFileState
 	nextIndex int
@@ -150,19 +182,70 @@ type transferStreamKey struct {
 	streamID  uint32
 }
 
+type transferJobHistory struct {
+	dir          string
+	snapshots    *os.File
+	energyFile   *os.File
+	energyWriter *csv.Writer
+	energy       *energy.RAPLMonitor
+	energyTick   uint64
+	mu           sync.Mutex
+}
+
+type transferJobManifest struct {
+	JobID           string                    `json:"job_id"`
+	RouteID         string                    `json:"route_id,omitempty"`
+	Protocol        string                    `json:"protocol"`
+	SourceRoot      string                    `json:"source_root"`
+	DestinationRoot string                    `json:"destination_root"`
+	DestinationData string                    `json:"destination_data,omitempty"`
+	FilesInFlight   uint32                    `json:"files_in_flight"`
+	StreamsPerFile  uint32                    `json:"streams_per_file"`
+	TotalFiles      int                       `json:"total_files"`
+	TotalBytes      uint64                    `json:"total_bytes"`
+	CreatedAt       time.Time                 `json:"created_at"`
+	Files           []transferJobManifestFile `json:"files"`
+}
+
+type transferJobManifestFile struct {
+	SourcePath   string `json:"source_path"`
+	RelativePath string `json:"relative_path"`
+	Size         uint64 `json:"size"`
+}
+
 func NewTransferJobManager(cfg *internal.ServerConfig, executor TransferJobExecutor) *TransferJobManager {
 	if executor == nil {
 		executor = localFilesystemTransferExecutor{}
 	}
+	jobLogDir := ""
+	var energyMonitor *energy.RAPLMonitor
+	energyEvery := time.Second
+	if cfg != nil {
+		jobLogDir = strings.TrimSpace(cfg.JobLogDir)
+		if cfg.EnergySampleMs > 0 {
+			energyEvery = time.Duration(cfg.EnergySampleMs) * time.Millisecond
+		}
+		if cfg.EnergyMonitor {
+			if monitor, err := energy.NewRAPLMonitor(""); err != nil {
+				internal.Error("energy monitor unavailable", internal.Fields{internal.FieldError: err.Error()})
+			} else {
+				energyMonitor = monitor
+			}
+		}
+	}
 	ports, portErr := NewDataPortAllocator(cfg)
 	m := &TransferJobManager{
-		endpoints: make(map[string]*preparedTransferEndpoint),
-		jobs:      make(map[string]*transferJobRuntime),
-		executor:  executor,
-		ports:     ports,
-		portErr:   portErr,
-		udp:       normalizedUDPTransferTuning(cfg),
-		stop:      make(chan struct{}),
+		endpoints:   make(map[string]*preparedTransferEndpoint),
+		jobs:        make(map[string]*transferJobRuntime),
+		reverseTCP:  make(map[string]*reverseTCPPool),
+		executor:    executor,
+		ports:       ports,
+		portErr:     portErr,
+		udp:         normalizedUDPTransferTuning(cfg),
+		jobLogDir:   jobLogDir,
+		energy:      energyMonitor,
+		energyEvery: energyEvery,
+		stop:        make(chan struct{}),
 	}
 	m.registry = m
 	go m.expiryLoop()
@@ -207,6 +290,10 @@ func (m *TransferJobManager) PrepareEndpoint(ctx context.Context, req *pb.Prepar
 	if protocol == pb.DataProtocol_DATA_PROTOCOL_UNSPECIFIED {
 		protocol = pb.DataProtocol_DATA_PROTOCOL_TCP
 	}
+	connectionOrigin := req.GetConnectionOrigin()
+	if connectionOrigin == pb.ConnectionOrigin_CONNECTION_ORIGIN_UNSPECIFIED {
+		connectionOrigin = pb.ConnectionOrigin_CONNECTION_ORIGIN_SOURCE
+	}
 	ttl := time.Duration(req.GetTtlSeconds()) * time.Second
 	if ttl <= 0 {
 		ttl = defaultTransferEndpointTTL
@@ -215,10 +302,19 @@ func (m *TransferJobManager) PrepareEndpoint(ctx context.Context, req *pb.Prepar
 	if jobID == "" {
 		jobID = uuid.NewString()
 	}
+	sessionID := strings.TrimSpace(req.GetSessionId())
+	if sessionID == "" {
+		sessionID = jobID
+	}
 	var lease *DataPortLease
 	dataEndpoint := cloneEndpoint(req.GetBind())
-	if req.GetRole() == pb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_DESTINATION &&
-		(protocol == pb.DataProtocol_DATA_PROTOCOL_TCP || protocol == pb.DataProtocol_DATA_PROTOCOL_UDP) {
+	needsListener := req.GetRole() == pb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_DESTINATION &&
+		connectionOrigin == pb.ConnectionOrigin_CONNECTION_ORIGIN_SOURCE &&
+		(protocol == pb.DataProtocol_DATA_PROTOCOL_TCP || protocol == pb.DataProtocol_DATA_PROTOCOL_UDP)
+	needsReverseSourceListener := req.GetRole() == pb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_SOURCE &&
+		connectionOrigin == pb.ConnectionOrigin_CONNECTION_ORIGIN_DESTINATION &&
+		protocol == pb.DataProtocol_DATA_PROTOCOL_TCP
+	if needsListener || needsReverseSourceListener {
 		if m.portErr != nil {
 			return nil, m.portErr
 		}
@@ -233,6 +329,14 @@ func (m *TransferJobManager) PrepareEndpoint(ctx context.Context, req *pb.Prepar
 		}
 		dataEndpoint = &pb.DataEndpoint{Host: lease.AdvertiseHost, Port: uint32(lease.Port)}
 	}
+	if req.GetRole() == pb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_DESTINATION &&
+		connectionOrigin == pb.ConnectionOrigin_CONNECTION_ORIGIN_DESTINATION &&
+		protocol == pb.DataProtocol_DATA_PROTOCOL_TCP {
+		dataEndpoint = cloneEndpoint(req.GetBind())
+		if dataEndpoint == nil || strings.TrimSpace(dataEndpoint.GetHost()) == "" || dataEndpoint.GetPort() == 0 {
+			return nil, errors.New("destination-origin tcp endpoint requires source bind endpoint")
+		}
+	}
 	endpoint := &pb.TransferEndpoint{
 		EndpointId:    uuid.NewString(),
 		RouteId:       strings.TrimSpace(req.GetRouteId()),
@@ -243,14 +347,26 @@ func (m *TransferJobManager) PrepareEndpoint(ctx context.Context, req *pb.Prepar
 		RootPath:      root,
 		TtlSeconds:    uint32(ttl / time.Second),
 		ExpiresAtUnix: time.Now().Add(ttl).Unix(),
+		SessionId:     sessionID,
 	}
-	if lease != nil && protocol == pb.DataProtocol_DATA_PROTOCOL_TCP {
+	var reverse *reverseTCPPool
+	if lease != nil && needsReverseSourceListener {
+		reverse = newReverseTCPPool(lease.TCPListener)
+		m.mu.Lock()
+		m.reverseTCP[sessionID] = reverse
+		m.mu.Unlock()
+		go reverse.acceptLoop()
+	} else if req.GetRole() == pb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_DESTINATION &&
+		connectionOrigin == pb.ConnectionOrigin_CONNECTION_ORIGIN_DESTINATION &&
+		protocol == pb.DataProtocol_DATA_PROTOCOL_TCP {
+		go connectDestinationOriginTCPReceivers(context.Background(), dataEndpoint, root)
+	} else if lease != nil && protocol == pb.DataProtocol_DATA_PROTOCOL_TCP {
 		go serveTransferEndpointTCP(lease.TCPListener, root)
 	} else if lease != nil && protocol == pb.DataProtocol_DATA_PROTOCOL_UDP {
 		go serveTransferEndpointUDP(lease.UDPConn, root, m.udp)
 	}
 	m.mu.Lock()
-	m.endpoints[endpoint.EndpointId] = &preparedTransferEndpoint{endpoint: endpoint, expires: time.Now().Add(ttl), lease: lease}
+	m.endpoints[endpoint.EndpointId] = &preparedTransferEndpoint{endpoint: endpoint, expires: time.Now().Add(ttl), lease: lease, reverse: reverse}
 	m.mu.Unlock()
 	return cloneTransferEndpoint(endpoint), nil
 }
@@ -281,14 +397,22 @@ func (m *TransferJobManager) StartJob(ctx context.Context, req *pb.StartTransfer
 	if dest == nil {
 		return nil, errors.New("destination endpoint is required")
 	}
+	sourceRootOverride := strings.TrimSpace(source.GetRootPath())
+	destRootOverride := strings.TrimSpace(dest.GetRootPath())
 	if source.GetEndpointId() != "" {
 		if prepared, ok := m.registry.GetEndpoint(source.GetEndpointId()); ok {
 			source = prepared
+			if sourceRootOverride != "" {
+				source.RootPath = sourceRootOverride
+			}
 		}
 	}
 	if dest.GetEndpointId() != "" {
 		if prepared, ok := m.registry.GetEndpoint(dest.GetEndpointId()); ok {
 			dest = prepared
+			if destRootOverride != "" {
+				dest.RootPath = destRootOverride
+			}
 		}
 	}
 	if strings.TrimSpace(source.GetRootPath()) == "" || strings.TrimSpace(dest.GetRootPath()) == "" {
@@ -311,6 +435,16 @@ func (m *TransferJobManager) StartJob(ctx context.Context, req *pb.StartTransfer
 	if jobID == "" {
 		jobID = uuid.NewString()
 	}
+	sessionID := strings.TrimSpace(req.GetSessionId())
+	if sessionID == "" {
+		sessionID = strings.TrimSpace(source.GetSessionId())
+	}
+	if sessionID == "" {
+		sessionID = strings.TrimSpace(dest.GetSessionId())
+	}
+	if sessionID == "" {
+		sessionID = jobID
+	}
 	filesInFlight := req.GetFilesInFlight()
 	if filesInFlight == 0 {
 		filesInFlight = 1
@@ -319,8 +453,15 @@ func (m *TransferJobManager) StartJob(ctx context.Context, req *pb.StartTransfer
 	if streamsPerFile == 0 {
 		streamsPerFile = 1
 	}
+	connectionOrigin := req.GetConnectionOrigin()
+	if connectionOrigin == pb.ConnectionOrigin_CONNECTION_ORIGIN_UNSPECIFIED {
+		connectionOrigin = pb.ConnectionOrigin_CONNECTION_ORIGIN_SOURCE
+	}
 	if protocol == pb.DataProtocol_DATA_PROTOCOL_UDP && filesInFlight > 1 {
 		filesInFlight = 1
+	}
+	if connectionOrigin == pb.ConnectionOrigin_CONNECTION_ORIGIN_DESTINATION && protocol != pb.DataProtocol_DATA_PROTOCOL_TCP {
+		return nil, errors.New("destination-origin transfers currently support tcp only")
 	}
 
 	plans, err := m.executor.PlanFiles(ctx, source, req.GetPaths())
@@ -335,10 +476,12 @@ func (m *TransferJobManager) StartJob(ctx context.Context, req *pb.StartTransfer
 	runtime := &transferJobRuntime{
 		cancel:          cancel,
 		jobID:           jobID,
+		sessionID:       sessionID,
 		routeID:         strings.TrimSpace(req.GetRouteId()),
 		protocol:        protocol,
 		source:          source,
 		dest:            dest,
+		origin:          connectionOrigin,
 		state:           pb.RuntimeState_RUNTIME_STATE_RUNNING,
 		filesInFlight:   filesInFlight,
 		streamsPerFile:  streamsPerFile,
@@ -359,8 +502,28 @@ func (m *TransferJobManager) StartJob(ctx context.Context, req *pb.StartTransfer
 			State:        pb.RuntimeState_RUNTIME_STATE_READY,
 		})
 	}
+	if m.jobLogDir != "" {
+		history, err := newTransferJobHistory(m.jobLogDir, jobID, m.energy)
+		if err != nil {
+			internal.Warn(jobLogMessage(jobID, "historical job log disabled"), internal.Fields{
+				internal.FieldError: err.Error(),
+				"job_log_dir":       m.jobLogDir,
+			})
+		} else {
+			runtime.history = history
+			if err := history.writeManifest(runtime, plans); err != nil {
+				internal.Warn(jobLogMessage(jobID, "failed to write job manifest"), internal.Fields{
+					internal.FieldError: err.Error(),
+					"job_log_path":      history.dir,
+				})
+			}
+			history.appendSnapshot(runtime.snapshot())
+			history.appendEnergy(runtime, time.Now())
+		}
+	}
 	internal.Info(jobLogMessage(jobID, "transfer accepted"), internal.Fields{
 		"route_id":         runtime.routeID,
+		"session_id":       runtime.sessionID,
 		"protocol":         protocol.String(),
 		"source_root":      source.GetRootPath(),
 		"destination_root": dest.GetRootPath(),
@@ -376,6 +539,9 @@ func (m *TransferJobManager) StartJob(ctx context.Context, req *pb.StartTransfer
 	if _, exists := m.jobs[jobID]; exists {
 		m.mu.Unlock()
 		cancel()
+		if runtime.history != nil {
+			_ = runtime.history.close()
+		}
 		return nil, fmt.Errorf("transfer job %q already exists", jobID)
 	}
 	m.jobs[jobID] = runtime
@@ -464,6 +630,10 @@ func (m *TransferJobManager) expireEndpoints(now time.Time) {
 	for id, endpoint := range m.endpoints {
 		if !endpoint.expires.IsZero() && !now.Before(endpoint.expires) {
 			delete(m.endpoints, id)
+			if endpoint.endpoint != nil {
+				delete(m.reverseTCP, strings.TrimSpace(endpoint.endpoint.GetJobId()))
+				delete(m.reverseTCP, strings.TrimSpace(endpoint.endpoint.GetSessionId()))
+			}
 			expired = append(expired, endpoint)
 		}
 	}
@@ -474,8 +644,115 @@ func (m *TransferJobManager) expireEndpoints(now time.Time) {
 }
 
 func closePreparedTransferEndpoint(endpoint *preparedTransferEndpoint) {
+	if endpoint != nil && endpoint.reverse != nil {
+		endpoint.reverse.close()
+	}
 	if endpoint != nil && endpoint.lease != nil {
 		_ = endpoint.lease.Close()
+	}
+}
+
+func newReverseTCPPool(listener *net.TCPListener) *reverseTCPPool {
+	return &reverseTCPPool{
+		listener: listener,
+		conns:    make(chan net.Conn, 128),
+		done:     make(chan struct{}),
+	}
+}
+
+func (p *reverseTCPPool) acceptLoop() {
+	if p == nil || p.listener == nil {
+		return
+	}
+	for {
+		conn, err := p.listener.Accept()
+		if err != nil {
+			p.close()
+			return
+		}
+		select {
+		case p.conns <- conn:
+		case <-p.done:
+			_ = conn.Close()
+			return
+		}
+	}
+}
+
+func (p *reverseTCPPool) take(ctx context.Context) (net.Conn, error) {
+	if p == nil {
+		return nil, errors.New("reverse tcp pool is unavailable")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	timer := time.NewTimer(30 * time.Second)
+	defer timer.Stop()
+	select {
+	case conn := <-p.conns:
+		if conn == nil {
+			return nil, errors.New("reverse tcp connection closed")
+		}
+		return conn, nil
+	case <-p.done:
+		return nil, errors.New("reverse tcp pool closed")
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-timer.C:
+		return nil, errors.New("timed out waiting for destination-origin tcp connection")
+	}
+}
+
+func (p *reverseTCPPool) close() {
+	if p == nil {
+		return
+	}
+	p.once.Do(func() {
+		close(p.done)
+		if p.listener != nil {
+			_ = p.listener.Close()
+		}
+		for {
+			select {
+			case conn := <-p.conns:
+				if conn != nil {
+					_ = conn.Close()
+				}
+			default:
+				return
+			}
+		}
+	})
+}
+
+func (m *TransferJobManager) takeReverseTCPConn(ctx context.Context, jobID string) (net.Conn, error) {
+	m.mu.RLock()
+	pool := m.reverseTCP[strings.TrimSpace(jobID)]
+	m.mu.RUnlock()
+	if pool == nil {
+		return nil, fmt.Errorf("reverse tcp route session for job %q not found", strings.TrimSpace(jobID))
+	}
+	return pool.take(ctx)
+}
+
+func connectDestinationOriginTCPReceivers(ctx context.Context, source *pb.DataEndpoint, root string) {
+	if source == nil || strings.TrimSpace(source.GetHost()) == "" || source.GetPort() == 0 {
+		return
+	}
+	target := net.JoinHostPort(source.GetHost(), fmt.Sprintf("%d", source.GetPort()))
+	for i := 0; i < defaultReverseTCPConnections; i++ {
+		go func() {
+			dialer := net.Dialer{Timeout: 10 * time.Second}
+			conn, err := dialer.DialContext(ctx, "tcp", target)
+			if err != nil {
+				internal.Warn("destination-origin tcp dial failed", internal.Fields{
+					internal.FieldError: err.Error(),
+					"source":            target,
+				})
+				return
+			}
+			receiveTransferFileTCP(conn, root)
+		}()
 	}
 }
 
@@ -519,8 +796,35 @@ func normalizedUDPTransferTuning(cfg *internal.ServerConfig) udpTransferTuning {
 }
 
 func (m *TransferJobManager) runJob(ctx context.Context, runtime *transferJobRuntime, plans []TransferFilePlan) {
+	var stopHistory chan struct{}
+	if runtime.history != nil {
+		stopHistory = make(chan struct{})
+		go runtime.history.snapshotLoop(runtime, stopHistory)
+		if runtime.history.energy != nil {
+			go runtime.history.energyLoop(runtime, m.energyEvery, stopHistory)
+		}
+	}
 	defer func() {
+		if stopHistory != nil {
+			close(stopHistory)
+		}
 		job := runtime.snapshot()
+		if runtime.history != nil {
+			runtime.history.appendSnapshot(job)
+			runtime.history.appendEnergy(runtime, time.Now())
+			if err := runtime.history.writeFinal(job); err != nil {
+				internal.Warn(jobLogMessage(job.GetJobId(), "failed to write final job log"), internal.Fields{
+					internal.FieldError: err.Error(),
+					"job_log_path":      runtime.history.dir,
+				})
+			}
+			if err := runtime.history.close(); err != nil {
+				internal.Warn(jobLogMessage(job.GetJobId(), "failed to close job log"), internal.Fields{
+					internal.FieldError: err.Error(),
+					"job_log_path":      runtime.history.dir,
+				})
+			}
+		}
 		fields := internal.Fields{
 			"route_id":       job.GetRouteId(),
 			"state":          job.GetState().String(),
@@ -569,6 +873,12 @@ func (m *TransferJobManager) runJob(ctx context.Context, runtime *transferJobRun
 				UDPWindow:  m.udp.windowPackets,
 				UDPBatch:   m.udp.batchPackets,
 				Collector:  runtime.collector,
+				TCPConnProvider: func(ctx context.Context) (net.Conn, error) {
+					if runtime.origin != pb.ConnectionOrigin_CONNECTION_ORIGIN_DESTINATION {
+						return nil, nil
+					}
+					return m.takeReverseTCPConn(ctx, runtime.sessionID)
+				},
 				StreamsFunc: func() uint32 {
 					runtime.mu.Lock()
 					defer runtime.mu.Unlock()
@@ -621,6 +931,207 @@ func totalPlannedBytes(plans []TransferFilePlan) uint64 {
 		total += plan.Size
 	}
 	return total
+}
+
+func newTransferJobHistory(baseDir, jobID string, monitor *energy.RAPLMonitor) (*transferJobHistory, error) {
+	baseDir = strings.TrimSpace(baseDir)
+	if baseDir == "" {
+		return nil, errors.New("job log directory is empty")
+	}
+	dir := filepath.Join(baseDir, safeJobLogName(jobID))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	snapshots, err := os.OpenFile(filepath.Join(dir, "snapshots.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	history := &transferJobHistory{dir: dir, snapshots: snapshots, energy: monitor}
+	if monitor != nil {
+		energyFile, err := os.OpenFile(filepath.Join(dir, "energy.csv"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			_ = snapshots.Close()
+			return nil, err
+		}
+		history.energyFile = energyFile
+		history.energyWriter = csv.NewWriter(energyFile)
+		if err := monitor.WriteCSVHeader(history.energyWriter); err != nil {
+			_ = snapshots.Close()
+			_ = energyFile.Close()
+			return nil, err
+		}
+	}
+	return history, nil
+}
+
+func safeJobLogName(jobID string) string {
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		return "unknown-job"
+	}
+	var b strings.Builder
+	for _, r := range jobID {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-' || r == '_' || r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	if b.Len() == 0 {
+		return "unknown-job"
+	}
+	return b.String()
+}
+
+func (h *transferJobHistory) writeManifest(runtime *transferJobRuntime, plans []TransferFilePlan) error {
+	if h == nil {
+		return nil
+	}
+	files := make([]transferJobManifestFile, 0, len(plans))
+	for _, plan := range plans {
+		files = append(files, transferJobManifestFile{
+			SourcePath:   plan.SourcePath,
+			RelativePath: plan.RelativePath,
+			Size:         plan.Size,
+		})
+	}
+	manifest := transferJobManifest{
+		JobID:           runtime.jobID,
+		RouteID:         runtime.routeID,
+		Protocol:        runtime.protocol.String(),
+		SourceRoot:      runtime.source.GetRootPath(),
+		DestinationRoot: runtime.dest.GetRootPath(),
+		DestinationData: endpointLabel(runtime.dest.GetDataEndpoint()),
+		FilesInFlight:   runtime.filesInFlight,
+		StreamsPerFile:  runtime.streamsPerFile,
+		TotalFiles:      len(plans),
+		TotalBytes:      totalPlannedBytes(plans),
+		CreatedAt:       runtime.startedAt,
+		Files:           files,
+	}
+	return h.writeJSONFile("manifest.json", manifest)
+}
+
+func (h *transferJobHistory) writeFinal(job *pb.TransferJob) error {
+	if h == nil || job == nil {
+		return nil
+	}
+	payload, err := protojson.MarshalOptions{
+		Multiline:       true,
+		EmitUnpopulated: true,
+	}.Marshal(job)
+	if err != nil {
+		return err
+	}
+	payload = append(payload, '\n')
+	return os.WriteFile(filepath.Join(h.dir, "final.json"), payload, 0o644)
+}
+
+func (h *transferJobHistory) writeJSONFile(name string, value any) error {
+	payload, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	payload = append(payload, '\n')
+	return os.WriteFile(filepath.Join(h.dir, name), payload, 0o644)
+}
+
+func (h *transferJobHistory) snapshotLoop(runtime *transferJobRuntime, stop <-chan struct{}) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			h.appendSnapshot(runtime.snapshot())
+		}
+	}
+}
+
+func (h *transferJobHistory) energyLoop(runtime *transferJobRuntime, interval time.Duration, stop <-chan struct{}) {
+	if interval <= 0 {
+		interval = time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case now := <-ticker.C:
+			h.appendEnergy(runtime, now)
+		}
+	}
+}
+
+func (h *transferJobHistory) appendSnapshot(job *pb.TransferJob) {
+	if h == nil || job == nil {
+		return
+	}
+	payload, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(job)
+	if err != nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.snapshots == nil {
+		return
+	}
+	_, _ = h.snapshots.Write(append(payload, '\n'))
+}
+
+func (h *transferJobHistory) appendEnergy(runtime *transferJobRuntime, now time.Time) {
+	if h == nil || h.energy == nil || runtime == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.energyWriter == nil {
+		return
+	}
+	if err := h.energy.WriteCSVRecord(h.energyWriter, h.energyTick, runtime.jobID, runtime.routeID, now); err != nil {
+		internal.Warn(jobLogMessage(runtime.jobID, "failed to sample energy"), internal.Fields{
+			internal.FieldError: err.Error(),
+			"job_log_path":      h.dir,
+		})
+		return
+	}
+	h.energyTick++
+}
+
+func (h *transferJobHistory) close() error {
+	if h == nil {
+		return nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var err error
+	if h.snapshots != nil {
+		err = h.snapshots.Close()
+		h.snapshots = nil
+	}
+	if h.energyWriter != nil {
+		h.energyWriter.Flush()
+		if writerErr := h.energyWriter.Error(); err == nil {
+			err = writerErr
+		}
+		h.energyWriter = nil
+	}
+	if h.energyFile != nil {
+		if closeErr := h.energyFile.Close(); err == nil {
+			err = closeErr
+		}
+		h.energyFile = nil
+	}
+	return err
 }
 
 func endpointLabel(ep *pb.DataEndpoint) string {
@@ -842,6 +1353,7 @@ func (r *transferJobRuntime) snapshot() *pb.TransferJob {
 	return &pb.TransferJob{
 		JobId:          r.jobID,
 		RouteId:        r.routeID,
+		SessionId:      r.sessionID,
 		State:          r.state,
 		Protocol:       r.protocol,
 		Source:         cloneTransferEndpoint(r.source),
@@ -930,6 +1442,17 @@ func (localFilesystemTransferExecutor) PlanFiles(ctx context.Context, source *pb
 			return ctx.Err()
 		default:
 		}
+		if synthetic, ok, err := parseSyntheticTransferSource(p); ok || err != nil {
+			if err != nil {
+				return err
+			}
+			plans = append(plans, TransferFilePlan{
+				SourcePath:   p,
+				RelativePath: synthetic.RelativePath,
+				Size:         synthetic.Size,
+			})
+			return nil
+		}
 		full := p
 		if !filepath.IsAbs(full) {
 			full = filepath.Join(root, full)
@@ -1011,7 +1534,7 @@ func (localFilesystemTransferExecutor) TransferFile(ctx context.Context, exec *T
 	if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
 		return err
 	}
-	src, err := os.Open(plan.SourcePath)
+	src, err := openTransferPlanReader(plan, 0, int64(plan.Size))
 	if err != nil {
 		return err
 	}
@@ -1030,7 +1553,7 @@ func (localFilesystemTransferExecutor) TransferFile(ctx context.Context, exec *T
 		}
 		n, readErr := src.Read(buf)
 		if n > 0 {
-			if exec.Collector != nil {
+			if exec.Collector != nil && transferPlanReadsDisk(plan) {
 				exec.Collector.ObserveDiskRead(n)
 			}
 			if err := writeFull(ctx, dst, buf[:n]); err != nil {
@@ -1082,8 +1605,89 @@ func reportStreamDone(exec *TransferExecutionContext, plan TransferFilePlan, str
 	}
 }
 
-func sendFileToUDPDestination(ctx context.Context, exec *TransferExecutionContext, plan TransferFilePlan) error {
+func parseSyntheticTransferSource(raw string) (syntheticTransferSource, bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return syntheticTransferSource{}, false, nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != syntheticTransferScheme {
+		return syntheticTransferSource{}, false, nil
+	}
+	size, err := parseSyntheticSize(u.Host)
+	if err != nil {
+		return syntheticTransferSource{}, true, err
+	}
+	rel := strings.TrimPrefix(u.EscapedPath(), "/")
+	if rel == "" {
+		rel = fmt.Sprintf("synthetic-%d.bin", size)
+	}
+	if decoded, err := url.PathUnescape(rel); err == nil {
+		rel = decoded
+	}
+	rel = filepath.Clean(filepath.FromSlash(rel))
+	if filepath.IsAbs(rel) || rel == "." || strings.HasPrefix(rel, "..") {
+		return syntheticTransferSource{}, true, fmt.Errorf("invalid synthetic transfer path %q", rel)
+	}
+	return syntheticTransferSource{RelativePath: filepath.ToSlash(rel), Size: size}, true, nil
+}
+
+func parseSyntheticSize(raw string) (uint64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, errors.New("synthetic transfer size is required")
+	}
+	var size uint64
+	if _, err := fmt.Sscanf(raw, "%d", &size); err != nil {
+		return 0, fmt.Errorf("invalid synthetic transfer size %q", raw)
+	}
+	return size, nil
+}
+
+func openTransferPlanReader(plan TransferFilePlan, offset, length int64) (io.ReadCloser, error) {
+	if offset < 0 || length < 0 {
+		return nil, fmt.Errorf("invalid transfer reader range: offset=%d length=%d", offset, length)
+	}
+	if _, ok, err := parseSyntheticTransferSource(plan.SourcePath); ok || err != nil {
+		if err != nil {
+			return nil, err
+		}
+		return io.NopCloser(io.LimitReader(zeroReader{}, length)), nil
+	}
 	src, err := os.Open(plan.SourcePath)
+	if err != nil {
+		return nil, err
+	}
+	if offset == 0 {
+		return struct {
+			io.Reader
+			io.Closer
+		}{Reader: io.LimitReader(src, length), Closer: src}, nil
+	}
+	if _, err := src.Seek(offset, io.SeekStart); err != nil {
+		_ = src.Close()
+		return nil, err
+	}
+	return struct {
+		io.Reader
+		io.Closer
+	}{Reader: io.LimitReader(src, length), Closer: src}, nil
+}
+
+func transferPlanReadsDisk(plan TransferFilePlan) bool {
+	_, ok, err := parseSyntheticTransferSource(plan.SourcePath)
+	return err == nil && !ok
+}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 0
+	}
+	return len(p), nil
+}
+
+func sendFileToUDPDestination(ctx context.Context, exec *TransferExecutionContext, plan TransferFilePlan) error {
+	src, err := openTransferPlanReader(plan, 0, int64(plan.Size))
 	if err != nil {
 		return err
 	}
@@ -1145,7 +1749,7 @@ func sendFileToUDPDestination(ctx context.Context, exec *TransferExecutionContex
 			BatchPackets:    udpBatchPackets(exec),
 			RequireFinalAck: false,
 		}, newProgressReader(src, func(n int) {
-			if exec.Collector != nil {
+			if exec.Collector != nil && transferPlanReadsDisk(plan) {
 				exec.Collector.ObserveDiskRead(n)
 			}
 			reportStreamProgress(exec, plan, streamIDs[0], n)
@@ -1168,11 +1772,6 @@ func sendFileToUDPDestination(ctx context.Context, exec *TransferExecutionContex
 }
 
 func sendFileToUDPDestinationParallel(ctx context.Context, exec *TransferExecutionContext, plan TransferFilePlan, sessionKey uint32, streamIDs []uint32) error {
-	source, err := os.Open(plan.SourcePath)
-	if err != nil {
-		return err
-	}
-	defer source.Close()
 	ranges, err := planByteRanges(int64(plan.Size), len(streamIDs))
 	if err != nil {
 		return err
@@ -1196,7 +1795,13 @@ func sendFileToUDPDestinationParallel(ctx context.Context, exec *TransferExecuti
 				return
 			}
 			defer conn.Close()
-			sr := io.NewSectionReader(source, br.offset, br.length)
+			sr, err := openTransferPlanReader(plan, br.offset, br.length)
+			if err != nil {
+				reportStreamDone(exec, plan, streamID, pb.RuntimeState_RUNTIME_STATE_FAILED, err.Error())
+				errCh <- err
+				return
+			}
+			defer sr.Close()
 			_, err = udpdataplane.Send(ctx, udpdataplane.SendConfig{
 				Transport:       udpdataplane.NewUDPConnTransport(conn),
 				SessionID:       exec.JobID,
@@ -1210,7 +1815,7 @@ func sendFileToUDPDestinationParallel(ctx context.Context, exec *TransferExecuti
 				BatchPackets:    udpBatchPackets(exec),
 				RequireFinalAck: false,
 			}, newProgressReader(sr, func(n int) {
-				if exec.Collector != nil {
+				if exec.Collector != nil && transferPlanReadsDisk(plan) {
 					exec.Collector.ObserveDiskRead(n)
 				}
 				reportStreamProgress(exec, plan, streamID, n)
@@ -1610,7 +2215,7 @@ func sendTCPRange(ctx context.Context, exec *TransferExecutionContext, plan Tran
 	if br.offset < 0 || br.length < 0 {
 		return fmt.Errorf("invalid tcp byte range: offset=%d length=%d", br.offset, br.length)
 	}
-	src, err := os.Open(plan.SourcePath)
+	src, err := openTransferPlanReader(plan, br.offset, br.length)
 	if err != nil {
 		return err
 	}
@@ -1625,10 +2230,19 @@ func sendTCPRange(ctx context.Context, exec *TransferExecutionContext, plan Tran
 		reportStreamDone(exec, plan, streamID, pb.RuntimeState_RUNTIME_STATE_DONE, "")
 	}()
 
-	dialer := net.Dialer{}
-	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(exec.DestData.GetHost(), fmt.Sprintf("%d", exec.DestData.GetPort())))
-	if err != nil {
-		return err
+	var conn net.Conn
+	if exec.TCPConnProvider != nil {
+		conn, err = exec.TCPConnProvider(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	if conn == nil {
+		dialer := net.Dialer{}
+		conn, err = dialer.DialContext(ctx, "tcp", net.JoinHostPort(exec.DestData.GetHost(), fmt.Sprintf("%d", exec.DestData.GetPort())))
+		if err != nil {
+			return err
+		}
 	}
 	defer conn.Close()
 
@@ -1641,10 +2255,11 @@ func sendTCPRange(ctx context.Context, exec *TransferExecutionContext, plan Tran
 	}
 	jobBytes := []byte(strings.TrimSpace(exec.JobID))
 	routeBytes := []byte(strings.TrimSpace(exec.RouteID))
-	if len(jobBytes) > 1<<16-1 || len(routeBytes) > 1<<16-1 {
-		return fmt.Errorf("tcp job metadata too long: job_id=%d route_id=%d", len(jobBytes), len(routeBytes))
+	destRootBytes := []byte(strings.TrimSpace(exec.DestRoot))
+	if len(jobBytes) > 1<<16-1 || len(routeBytes) > 1<<16-1 || len(destRootBytes) > 1<<20 {
+		return fmt.Errorf("tcp job metadata too long: job_id=%d route_id=%d dest_root=%d", len(jobBytes), len(routeBytes), len(destRootBytes))
 	}
-	var header [36]byte
+	var header [40]byte
 	binary.BigEndian.PutUint32(header[:4], uint32(len(pathBytes)))
 	binary.BigEndian.PutUint64(header[4:12], plan.Size)
 	binary.BigEndian.PutUint64(header[12:20], uint64(br.offset))
@@ -1652,6 +2267,7 @@ func sendTCPRange(ctx context.Context, exec *TransferExecutionContext, plan Tran
 	binary.BigEndian.PutUint32(header[28:32], streamID)
 	binary.BigEndian.PutUint16(header[32:34], uint16(len(jobBytes)))
 	binary.BigEndian.PutUint16(header[34:36], uint16(len(routeBytes)))
+	binary.BigEndian.PutUint32(header[36:40], uint32(len(destRootBytes)))
 	if err := writeFull(ctx, conn, header[:]); err != nil {
 		return err
 	}
@@ -1664,8 +2280,11 @@ func sendTCPRange(ctx context.Context, exec *TransferExecutionContext, plan Tran
 	if err := writeFull(ctx, conn, routeBytes); err != nil {
 		return err
 	}
+	if err := writeFull(ctx, conn, destRootBytes); err != nil {
+		return err
+	}
 
-	reader := io.NewSectionReader(src, br.offset, br.length)
+	reader := src
 	buf := make([]byte, defaultTransferCopyBufferSize)
 	for {
 		if err := ctx.Err(); err != nil {
@@ -1673,7 +2292,7 @@ func sendTCPRange(ctx context.Context, exec *TransferExecutionContext, plan Tran
 		}
 		n, readErr := reader.Read(buf)
 		if n > 0 {
-			if exec.Collector != nil {
+			if exec.Collector != nil && transferPlanReadsDisk(plan) {
 				exec.Collector.ObserveDiskRead(n)
 			}
 			if err := writeFull(ctx, conn, buf[:n]); err != nil {
@@ -1859,7 +2478,11 @@ func receiveTransferFileTCP(conn net.Conn, root string) {
 	remote := conn.RemoteAddr().String()
 	reader := bufio.NewReader(conn)
 	magic, err := reader.ReadString('\n')
-	if err != nil || (magic != tcpJobMagicV1 && magic != tcpJobMagicV2 && magic != tcpJobMagicV3) {
+	if err != nil || (magic != tcpJobMagicV1 && magic != tcpJobMagicV2 && magic != tcpJobMagicV3 && magic != tcpJobMagicV4) {
+		if errors.Is(err, io.EOF) && magic == "" {
+			internal.Debug("tcp transfer idle connection closed", internal.Fields{"remote": remote})
+			return
+		}
 		fields := internal.Fields{"remote": remote}
 		if err != nil {
 			fields[internal.FieldError] = err.Error()
@@ -1869,12 +2492,14 @@ func receiveTransferFileTCP(conn net.Conn, root string) {
 		internal.Warn("drop invalid tcp transfer header", fields)
 		return
 	}
-	var header [36]byte
+	var header [40]byte
 	headerLen := 12
 	if magic == tcpJobMagicV2 {
 		headerLen = 16
 	} else if magic == tcpJobMagicV3 {
 		headerLen = 36
+	} else if magic == tcpJobMagicV4 {
+		headerLen = 40
 	}
 	if _, err := io.ReadFull(reader, header[:headerLen]); err != nil {
 		internal.Warn("tcp transfer header read failed", internal.Fields{internal.FieldError: err.Error(), "remote": remote})
@@ -1887,16 +2512,20 @@ func receiveTransferFileTCP(conn net.Conn, root string) {
 	streamID := uint32(1)
 	jobLen := uint16(0)
 	routeLen := uint16(0)
+	rootLen := uint32(0)
 	if magic == tcpJobMagicV2 {
 		jobLen = binary.BigEndian.Uint16(header[12:14])
 		routeLen = binary.BigEndian.Uint16(header[14:16])
-	} else if magic == tcpJobMagicV3 {
+	} else if magic == tcpJobMagicV3 || magic == tcpJobMagicV4 {
 		totalSize = binary.BigEndian.Uint64(header[4:12])
 		offset = binary.BigEndian.Uint64(header[12:20])
 		size = binary.BigEndian.Uint64(header[20:28])
 		streamID = binary.BigEndian.Uint32(header[28:32])
 		jobLen = binary.BigEndian.Uint16(header[32:34])
 		routeLen = binary.BigEndian.Uint16(header[34:36])
+		if magic == tcpJobMagicV4 {
+			rootLen = binary.BigEndian.Uint32(header[36:40])
+		}
 	}
 	if pathLen == 0 || pathLen > 1<<20 {
 		internal.Warn("drop invalid tcp transfer path length", internal.Fields{"remote": remote, "path_len": pathLen})
@@ -1939,12 +2568,30 @@ func receiveTransferFileTCP(conn net.Conn, root string) {
 		}
 		routeID = string(routeBytes)
 	}
+	effectiveRoot := strings.TrimSpace(root)
+	if rootLen > 0 {
+		if rootLen > 1<<20 {
+			internal.Warn("drop invalid tcp transfer root length", internal.Fields{"remote": remote, "root_len": rootLen})
+			return
+		}
+		rootBytes := make([]byte, rootLen)
+		if _, err := io.ReadFull(reader, rootBytes); err != nil {
+			internal.Warn("tcp transfer root metadata read failed", internal.Fields{internal.FieldError: err.Error(), "remote": remote})
+			return
+		}
+		transferRoot := filepath.Clean(string(rootBytes))
+		if !filepath.IsAbs(transferRoot) {
+			internal.Warn("drop relative tcp transfer root", internal.Fields{"remote": remote, "root": transferRoot})
+			return
+		}
+		effectiveRoot = transferRoot
+	}
 	rel := filepath.Clean(filepath.FromSlash(string(pathBytes)))
 	if filepath.IsAbs(rel) || rel == "." || strings.HasPrefix(rel, "..") {
 		internal.Warn("drop invalid tcp transfer path", internal.Fields{"remote": remote, "path": rel})
 		return
 	}
-	dstPath, err := resolveDestinationFilePath(root, rel)
+	dstPath, err := resolveDestinationFilePath(effectiveRoot, rel)
 	if err != nil {
 		internal.Warn("tcp transfer destination path failed", internal.Fields{internal.FieldError: err.Error(), "remote": remote, "path": rel})
 		return
@@ -1954,7 +2601,7 @@ func receiveTransferFileTCP(conn net.Conn, root string) {
 		return
 	}
 	flags := os.O_CREATE | os.O_WRONLY
-	if magic != tcpJobMagicV3 {
+	if magic != tcpJobMagicV3 && magic != tcpJobMagicV4 {
 		flags |= os.O_TRUNC
 	}
 	dst, err := os.OpenFile(dstPath, flags, 0o644)
@@ -1963,11 +2610,13 @@ func receiveTransferFileTCP(conn net.Conn, root string) {
 		return
 	}
 	defer dst.Close()
-	if magic == tcpJobMagicV3 {
+	if (magic == tcpJobMagicV3 || magic == tcpJobMagicV4) && offset == 0 {
 		if err := dst.Truncate(int64(totalSize)); err != nil {
 			internal.Warn("tcp transfer destination truncate failed", internal.Fields{internal.FieldError: err.Error(), "remote": remote, "path": rel, "bytes": totalSize})
 			return
 		}
+	}
+	if magic == tcpJobMagicV3 || magic == tcpJobMagicV4 {
 		if _, err := dst.Seek(int64(offset), io.SeekStart); err != nil {
 			internal.Warn("tcp transfer destination seek failed", internal.Fields{internal.FieldError: err.Error(), "remote": remote, "path": rel, "offset": offset})
 			return
@@ -1976,7 +2625,7 @@ func receiveTransferFileTCP(conn net.Conn, root string) {
 	internal.Info(jobLogMessage(jobID, "tcp receive started"), internal.Fields{
 		"route_id":  routeID,
 		"remote":    remote,
-		"root":      root,
+		"root":      effectiveRoot,
 		"path":      rel,
 		"bytes":     size,
 		"offset":    offset,
@@ -1984,10 +2633,6 @@ func receiveTransferFileTCP(conn net.Conn, root string) {
 	})
 	if _, err := io.CopyN(dst, reader, int64(size)); err != nil {
 		internal.Warn("tcp transfer receive failed", internal.Fields{internal.FieldError: err.Error(), "remote": remote, "path": rel, "bytes": size})
-		return
-	}
-	if err := dst.Sync(); err != nil {
-		internal.Warn("tcp transfer sync failed", internal.Fields{internal.FieldError: err.Error(), "remote": remote, "path": rel})
 		return
 	}
 	_ = writeFull(context.Background(), conn, []byte("OK"))
@@ -2015,6 +2660,7 @@ func cloneTransferEndpoint(ep *pb.TransferEndpoint) *pb.TransferEndpoint {
 		RootPath:      ep.GetRootPath(),
 		TtlSeconds:    ep.GetTtlSeconds(),
 		ExpiresAtUnix: ep.GetExpiresAtUnix(),
+		SessionId:     ep.GetSessionId(),
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -31,7 +32,6 @@ type CopyOptions struct {
 	Concurrency        int
 	NoUI               bool
 	DryRun             bool
-	RouteFile          string
 	RouteName          string
 	RouteStore         string
 	Protocol           string
@@ -39,8 +39,6 @@ type CopyOptions struct {
 	UIIntervalMs       int
 	ParallelStreams    int
 	Via                []string
-	SourceServer       string
-	DestinationServer  string
 	UDPFlowControl     string
 	UDPWindowPackets   int
 	UDPWindowBytes     int
@@ -48,6 +46,12 @@ type CopyOptions struct {
 	UDPAckEveryMs      int
 	UDPBatchPackets    int
 	MTU                string
+	Paths              []string
+	JobID              string
+	SessionID          string
+	Direction          string
+	ConnectionOrigin   string
+	DataDirection      string
 }
 
 const defaultTransferRoutePrefix = "transfer"
@@ -73,24 +77,20 @@ func SimpleCopy() *cobra.Command {
 		Long:    "Simple grover udp based copy to and from grover server",
 		Aliases: []string{"c", "cp"},
 		Args: func(cmd *cobra.Command, args []string) error {
-			if strings.TrimSpace(opts.RouteFile) != "" || strings.TrimSpace(opts.RouteName) != "" {
+			if strings.TrimSpace(opts.RouteName) != "" {
 				if len(args) == 0 || len(args) == 2 {
 					return nil
 				}
-				return fmt.Errorf("transfer with --route or --route-file accepts either zero args or <source> <destination>")
+				return fmt.Errorf("transfer with --route accepts either zero args or <source> <destination>")
 			}
 			return cobra.ExactArgs(2)(cmd, args)
 		},
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var err error
-			args, err = applyTransferJobSpec(cmd, opts.RouteFile, args, &opts)
-			if err != nil {
-				return err
-			}
 			if err := opts.validate(); err != nil {
 				return err
 			}
+			var err error
 			args, err = applyPreparedRouteTemplate(cmd, args, &opts)
 			if err != nil {
 				return err
@@ -115,7 +115,7 @@ func SimpleCopy() *cobra.Command {
 				return nil
 			}
 			if opts.shouldUseRoutedJob(plan) {
-				job, err := startOneShotRoutedTransfer(cmd, args[0], args[1], opts)
+				job, err := startRoutedTransfer(cmd, args[0], args[1], opts)
 				if err != nil {
 					return err
 				}
@@ -137,15 +137,15 @@ func SimpleCopy() *cobra.Command {
 	cmd.Flags().IntVar(&opts.Concurrency, "concurrency", 4, "Maximum number of files to transfer in parallel")
 	cmd.Flags().BoolVar(&opts.NoUI, "no-ui", false, "Disable live progress and metrics output")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Print the planned transfer route without starting a transfer")
-	cmd.Flags().StringVar(&opts.RouteFile, "route-file", "", "Path to a TOML transfer route/job spec")
 	cmd.Flags().StringVar(&opts.RouteName, "route", "", "Prepared route template name")
 	cmd.Flags().StringVar(&opts.RouteStore, "route-store", "", "Path to local route template store")
 	_ = cmd.Flags().MarkHidden("route-store")
 	cmd.Flags().StringVar(&opts.Protocol, "protocol", "", "Transfer data-plane protocol (udp|tcp)")
 	cmd.Flags().IntVar(&opts.ParallelStreams, "parallel-streams", 0, "Per-file parallel streams/ranges (0 uses config)")
-	cmd.Flags().StringArrayVar(&opts.Via, "via", nil, "Relay hop to insert into the transfer route; repeat or use comma-separated values")
-	cmd.Flags().StringVar(&opts.SourceServer, "source-server", "", "Control address of the source groverd for routed transfer jobs")
-	cmd.Flags().StringVar(&opts.DestinationServer, "destination-server", "", "Control address of the destination groverd for routed transfer jobs")
+	cmd.Flags().StringVar(&opts.ConnectionOrigin, "connection-origin", "", "Which endpoint initiates the route/session connection (source|destination)")
+	cmd.Flags().StringVar(&opts.DataDirection, "data-direction", "", "Transfer data direction for the route/session (source-to-destination|destination-to-source)")
+	cmd.Flags().StringVar(&opts.Direction, "direction", "forward", "Transfer direction over the prepared route (forward|reverse)")
+	cmd.Flags().StringVar(&opts.SessionID, "session-id", "", "Prepared route session ID")
 	cmd.Flags().StringVar(&opts.UDPFlowControl, "udp-flow-control", "", "UDP flow control mode (fixed|bbr)")
 	cmd.Flags().IntVar(&opts.UDPWindowPackets, "udp-window-packets", 0, "UDP max in-flight packets per stream (0 uses config)")
 	cmd.Flags().IntVar(&opts.UDPWindowBytes, "udp-window-bytes", 0, "UDP max in-flight bytes per stream (0 derives from packets)")
@@ -157,27 +157,18 @@ func SimpleCopy() *cobra.Command {
 	cmd.Flags().IntVar(&opts.UIIntervalMs, "ui-interval-ms", 2000, "Live metrics UI refresh interval in milliseconds")
 	cmd.AddCommand(TransferTuneCommand())
 	cmd.AddCommand(TransferStatusCommand())
+	cmd.AddCommand(TransferHistoryCommand())
 	return cmd
 }
 
-func startOneShotRoutedTransfer(cmd *cobra.Command, src string, dst string, opts CopyOptions) (*pb.TransferJob, error) {
-	name := strings.TrimSpace(opts.RouteName)
-	if name == "" {
-		name = newTransferRouteName(time.Now())
+func startRoutedTransfer(cmd *cobra.Command, src string, dst string, opts CopyOptions) (*pb.TransferJob, error) {
+	if strings.TrimSpace(opts.RouteName) != "" && strings.TrimSpace(opts.RouteStore) == "" {
+		return startTransferOverPreparedRouteSession(cmd, src, dst, opts)
 	}
-	route := storedRouteTemplate{
-		Name:            name,
-		Source:          src,
-		Destination:     dst,
-		Via:             append([]string(nil), opts.Via...),
-		Protocol:        opts.Protocol,
-		ParallelStreams: opts.ParallelStreams,
-		Concurrency:     opts.effectiveConcurrency(),
-		State:           "prepared",
-		CreatedAt:       time.Now().UTC(),
-		UpdatedAt:       time.Now().UTC(),
+	if strings.TrimSpace(opts.RouteStore) != "" {
+		return nil, fmt.Errorf("local route-store execution is no longer supported; store the route on groverd, run route prepare, then transfer --route")
 	}
-	return startDirectRoute(cmd, route, opts)
+	return nil, fmt.Errorf("transfer requires --route with a prepared route session; run route put, route prepare, then transfer --route")
 }
 
 func newTransferRouteName(now time.Time) string {
@@ -199,6 +190,15 @@ func applyPreparedRouteTemplate(cmd *cobra.Command, args []string, opts *CopyOpt
 	routeName := strings.TrimSpace(opts.RouteName)
 	if routeName == "" {
 		return args, nil
+	}
+	if strings.TrimSpace(opts.RouteStore) == "" {
+		serverArgs, applied, err := applyServerRouteConfig(cmd, args, opts, routeName)
+		if err != nil {
+			return nil, err
+		}
+		if applied {
+			return serverArgs, nil
+		}
 	}
 	store, err := newRouteTemplateStore(opts.RouteStore)
 	if err != nil {
@@ -225,10 +225,83 @@ func applyPreparedRouteTemplate(cmd *cobra.Command, args []string, opts *CopyOpt
 	if !cmd.Flags().Changed("concurrency") && route.Concurrency > 0 {
 		opts.Concurrency = route.Concurrency
 	}
+	if !cmd.Flags().Changed("connection-origin") && strings.TrimSpace(route.ConnectionOrigin) != "" {
+		opts.ConnectionOrigin = route.ConnectionOrigin
+	}
+	if !cmd.Flags().Changed("data-direction") && strings.TrimSpace(route.DataDirection) != "" {
+		opts.DataDirection = route.DataDirection
+	}
 	combinedVia := append([]string(nil), route.Via...)
 	combinedVia = append(combinedVia, opts.Via...)
 	opts.Via = combinedVia
 	return args, nil
+}
+
+func applyServerRouteConfig(cmd *cobra.Command, args []string, opts *CopyOptions, routeName string) ([]string, bool, error) {
+	routeClient, closeFn, err := openRouteConfigControl(cmd)
+	if err != nil {
+		return nil, false, err
+	}
+	defer closeFn()
+	route, err := routeClient.GetRoute(cmd.Context(), routeName)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(args) == 0 {
+		return nil, true, fmt.Errorf("server route %q requires <source-path> <destination-path>", routeName)
+	}
+	if len(args) != 2 {
+		return nil, true, fmt.Errorf("server route %q accepts <source-path> <destination-path>", routeName)
+	}
+	sourceControl := route.GetSource()
+	destinationControl := route.GetDestination()
+	direction, err := normalizeTransferDirection(opts.Direction)
+	if err != nil {
+		return nil, true, err
+	}
+	if direction == "reverse" {
+		sourceControl = route.GetDestination()
+		destinationControl = route.GetSource()
+	}
+	source, err := routeEndpointLocation(sourceControl, args[0], "source")
+	if err != nil {
+		return nil, true, err
+	}
+	destination, err := routeEndpointLocation(destinationControl, args[1], "destination")
+	if err != nil {
+		return nil, true, err
+	}
+	if !cmd.Flags().Changed("protocol") {
+		opts.Protocol = routeProtocolLabel(route.GetProtocol())
+	}
+	if !cmd.Flags().Changed("connection-origin") {
+		opts.ConnectionOrigin = routeConnectionOriginLabel(route.GetConnectionOrigin())
+	}
+	if !cmd.Flags().Changed("data-direction") {
+		opts.DataDirection = routeDataDirectionLabel(route.GetDataDirection())
+	}
+	combinedVia := append([]string(nil), route.GetVia()...)
+	combinedVia = append(combinedVia, opts.Via...)
+	opts.Via = combinedVia
+	return []string{source, destination}, true, nil
+}
+
+func routeEndpointLocation(controlEndpoint, pathValue, role string) (string, error) {
+	controlEndpoint = strings.TrimSpace(controlEndpoint)
+	if controlEndpoint == "" {
+		return "", fmt.Errorf("route %s endpoint is empty", role)
+	}
+	pathValue = strings.TrimSpace(pathValue)
+	if pathValue == "" {
+		return "", fmt.Errorf("%s path is required", role)
+	}
+	if ref, err := parseLocation(pathValue); err == nil && ref.isRemote && strings.TrimSpace(ref.ControlEndpoint) != "" {
+		return pathValue, nil
+	}
+	if !filepath.IsAbs(pathValue) {
+		return "", fmt.Errorf("%s path %q must be absolute when using a server route", role, pathValue)
+	}
+	return controlEndpoint + ":" + pathValue, nil
 }
 
 func resolveTransferEndpointCredentials(cmd *cobra.Command, refs ...*RemoteRef) error {
@@ -813,9 +886,7 @@ func (opts CopyOptions) shouldUseRoutedJob(plan TransferRoutePlan) bool {
 		strings.TrimSpace(plan.Source.ControlEndpoint) != "" ||
 		strings.TrimSpace(plan.Destination.ControlEndpoint) != "" ||
 		(!plan.Source.isRemote && !plan.Destination.isRemote) ||
-		len(plan.Relays) > 0 ||
-		strings.TrimSpace(opts.SourceServer) != "" ||
-		strings.TrimSpace(opts.DestinationServer) != ""
+		len(plan.Relays) > 0
 }
 
 func (opts CopyOptions) uiInterval() time.Duration {
@@ -852,6 +923,15 @@ func (opts CopyOptions) validate() error {
 	case "", "fixed", "bbr":
 	default:
 		return fmt.Errorf("invalid --udp-flow-control %q: must be fixed or bbr", opts.UDPFlowControl)
+	}
+	if _, err := normalizeConnectionOrigin(opts.ConnectionOrigin); err != nil {
+		return err
+	}
+	if _, err := normalizeDataDirection(opts.DataDirection); err != nil {
+		return err
+	}
+	if _, err := normalizeTransferDirection(opts.Direction); err != nil {
+		return err
 	}
 	if mtu := strings.TrimSpace(opts.MTU); mtu != "" && !strings.EqualFold(mtu, "auto") {
 		var parsed int

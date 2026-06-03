@@ -7,15 +7,17 @@ import (
 )
 
 type TransferRoutePlan struct {
-	Source          RemoteRef
-	Destination     RemoteRef
-	Relays          []TransferRelayHop
-	Hops            []TransferRouteHop
-	Protocol        string
-	ParallelStreams int
-	Concurrency     int
-	Mode            string
-	Direction       string
+	Source           RemoteRef
+	Destination      RemoteRef
+	Relays           []TransferRelayHop
+	Hops             []TransferRouteHop
+	Protocol         string
+	ParallelStreams  int
+	Concurrency      int
+	Mode             string
+	Direction        string
+	ConnectionOrigin string
+	DataDirection    string
 }
 
 type TransferRelayHop struct {
@@ -51,17 +53,27 @@ func buildTransferRoutePlan(src RemoteRef, dst RemoteRef, opts CopyOptions) (Tra
 		mode = "bridge"
 	}
 	direction := transferDirection(src, dst)
+	connectionOrigin, err := normalizeConnectionOrigin(opts.ConnectionOrigin)
+	if err != nil {
+		return TransferRoutePlan{}, err
+	}
+	dataDirection, err := normalizeDataDirection(opts.DataDirection)
+	if err != nil {
+		return TransferRoutePlan{}, err
+	}
 	hops := buildTransferRouteHops(src, dst, relays)
 	return TransferRoutePlan{
-		Source:          src,
-		Destination:     dst,
-		Relays:          relays,
-		Hops:            hops,
-		Protocol:        protocol,
-		ParallelStreams: parallelStreams,
-		Concurrency:     concurrency,
-		Mode:            mode,
-		Direction:       direction,
+		Source:           src,
+		Destination:      dst,
+		Relays:           relays,
+		Hops:             hops,
+		Protocol:         protocol,
+		ParallelStreams:  parallelStreams,
+		Concurrency:      concurrency,
+		Mode:             mode,
+		Direction:        direction,
+		ConnectionOrigin: connectionOrigin,
+		DataDirection:    dataDirection,
 	}, nil
 }
 
@@ -125,11 +137,61 @@ func printTransferRoutePlan(w io.Writer, plan TransferRoutePlan) {
 	fmt.Fprintf(w, "route: %s\n", strings.Join(labels, " -> "))
 	fmt.Fprintf(w, "mode: %s\n", plan.Mode)
 	fmt.Fprintf(w, "direction: %s\n", plan.Direction)
+	fmt.Fprintf(w, "connection_origin: %s\n", plan.ConnectionOrigin)
+	fmt.Fprintf(w, "data_direction: %s\n", plan.DataDirection)
 	fmt.Fprintf(w, "protocol: %s\n", plan.Protocol)
 	fmt.Fprintf(w, "parallel_streams: %d\n", plan.ParallelStreams)
 	fmt.Fprintf(w, "concurrency: %d\n", plan.Concurrency)
 	for _, hop := range plan.Hops {
 		fmt.Fprintf(w, "hop[%d]: role=%s endpoint=%s control_endpoint=%s data_endpoint=%s\n", hop.Index, hop.Role, hop.Label, hop.ControlEndpoint, hop.DataEndpoint)
+	}
+}
+
+func normalizeConnectionOrigin(origin string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(origin))
+	normalized = strings.ReplaceAll(normalized, "_", "-")
+	if normalized == "" {
+		return "source", nil
+	}
+	switch normalized {
+	case "source":
+		return "source", nil
+	case "destination", "dest":
+		return "destination", nil
+	default:
+		return "", fmt.Errorf("invalid --connection-origin %q: must be source or destination", origin)
+	}
+}
+
+func normalizeDataDirection(direction string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(direction))
+	normalized = strings.ReplaceAll(normalized, "_", "-")
+	if normalized == "" {
+		return "source-to-destination", nil
+	}
+	switch normalized {
+	case "source-to-destination", "source-destination", "src-to-dst":
+		return "source-to-destination", nil
+	case "destination-to-source", "destination-source", "dst-to-src":
+		return "destination-to-source", nil
+	default:
+		return "", fmt.Errorf("invalid --data-direction %q: must be source-to-destination or destination-to-source", direction)
+	}
+}
+
+func normalizeTransferDirection(direction string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(direction))
+	normalized = strings.ReplaceAll(normalized, "_", "-")
+	if normalized == "" {
+		return "forward", nil
+	}
+	switch normalized {
+	case "forward", "fwd":
+		return "forward", nil
+	case "reverse", "rev":
+		return "reverse", nil
+	default:
+		return "", fmt.Errorf("invalid --direction %q: must be forward or reverse", direction)
 	}
 }
 

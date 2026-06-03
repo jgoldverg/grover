@@ -60,10 +60,19 @@ func NewGroverServer(ctx context.Context, serverConfig *internal.ServerConfig) *
 		})
 		relayControl = &RelayControlService{}
 	}
+	routeControl, err := NewRouteConfigControlService(serverConfig)
+	if err != nil {
+		internal.Error("failed to initialize route config service", internal.Fields{
+			internal.FieldError: err.Error(),
+		})
+		routeControl = &RouteConfigControlService{}
+	}
 
 	groverPb.RegisterFileServiceServer(server, fs)
 	groverPb.RegisterCredentialServiceServer(server, cs)
+	groverPb.RegisterRouteConfigControlServer(server, routeControl)
 	groverPb.RegisterRelayControlServer(server, relayControl)
+	groverPb.RegisterRouteSessionControlServer(server, NewRouteSessionControlService())
 	groverPb.RegisterTransferJobControlServer(server, NewTransferJobControlService(serverConfig))
 
 	return &GroverServer{

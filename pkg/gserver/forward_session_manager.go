@@ -2,6 +2,7 @@ package gserver
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jgoldverg/grover/internal"
 	pb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
+	"github.com/jgoldverg/grover/pkg/udpwire"
 )
 
 const defaultForwardTTL = 10 * time.Minute
@@ -52,6 +54,11 @@ type forwardSession struct {
 	activeConns   atomic.Uint32
 	activeStreams atomic.Uint32
 	startedAt     time.Time
+}
+
+type udpForwardKey struct {
+	sessionID uint32
+	streamID  uint32
 }
 
 func NewForwardSessionManager(cfg *internal.ServerConfig) (*ForwardSessionManager, error) {
@@ -332,7 +339,8 @@ func (s *forwardSession) runUDP(ctx context.Context) {
 	defer egress.Close()
 
 	var clientMu sync.RWMutex
-	var clientAddr *net.UDPAddr
+	var lastClientAddr *net.UDPAddr
+	clientByKey := make(map[udpForwardKey]*net.UDPAddr)
 	s.activeStreams.Store(1)
 	defer s.activeStreams.Store(0)
 
@@ -346,9 +354,16 @@ func (s *forwardSession) runUDP(ctx context.Context) {
 				}
 				return
 			}
-			clientMu.Lock()
-			clientAddr = addr
-			clientMu.Unlock()
+			if key, ok := udpForwardIngressKey(buf[:n]); ok {
+				clientMu.Lock()
+				clientByKey[key] = cloneUDPAddr(addr)
+				lastClientAddr = cloneUDPAddr(addr)
+				clientMu.Unlock()
+			} else {
+				clientMu.Lock()
+				lastClientAddr = cloneUDPAddr(addr)
+				clientMu.Unlock()
+			}
 			written, err := egress.Write(buf[:n])
 			if err != nil {
 				s.errors.Add(1)
@@ -372,8 +387,16 @@ func (s *forwardSession) runUDP(ctx context.Context) {
 			}
 			return
 		}
+		key, hasKey := udpForwardEgressKey(buf[:n])
 		clientMu.RLock()
-		addr := clientAddr
+		addr := (*net.UDPAddr)(nil)
+		if hasKey {
+			addr = clientByKey[key]
+		}
+		if addr == nil {
+			addr = lastClientAddr
+		}
+		addr = cloneUDPAddr(addr)
 		clientMu.RUnlock()
 		if addr == nil {
 			continue
@@ -390,6 +413,52 @@ func (s *forwardSession) runUDP(ctx context.Context) {
 		s.egressBytes.Add(uint64(n))
 		s.packets.Add(1)
 	}
+}
+
+func udpForwardIngressKey(packet []byte) (udpForwardKey, bool) {
+	if len(packet) >= udpwire.DataHeaderLen && udpwire.IsDataPacket(packet) {
+		return udpForwardKey{
+			sessionID: binary.BigEndian.Uint32(packet[2:6]),
+			streamID:  binary.BigEndian.Uint32(packet[6:10]),
+		}, true
+	}
+	if len(packet) >= len(udpJobMagic)+1+4 && string(packet[:len(udpJobMagic)]) == string(udpJobMagic) && packet[len(udpJobMagic)] == udpJobPacketStart {
+		return udpForwardKey{
+			sessionID: binary.BigEndian.Uint32(packet[len(udpJobMagic)+1 : len(udpJobMagic)+5]),
+			streamID:  0,
+		}, true
+	}
+	return udpForwardKey{}, false
+}
+
+func udpForwardEgressKey(packet []byte) (udpForwardKey, bool) {
+	if len(packet) >= udpwire.StatusHeaderLen && udpwire.IsStatusPacket(packet) {
+		return udpForwardKey{
+			sessionID: binary.BigEndian.Uint32(packet[2:6]),
+			streamID:  binary.BigEndian.Uint32(packet[6:10]),
+		}, true
+	}
+	if len(packet) == len(udpJobMagic)+1+4 && string(packet[:len(udpJobMagic)]) == string(udpJobMagic) {
+		kind := packet[len(udpJobMagic)]
+		if kind == udpJobPacketReady || kind == udpJobPacketDone {
+			return udpForwardKey{
+				sessionID: binary.BigEndian.Uint32(packet[len(udpJobMagic)+1 : len(udpJobMagic)+5]),
+				streamID:  0,
+			}, true
+		}
+	}
+	return udpForwardKey{}, false
+}
+
+func cloneUDPAddr(addr *net.UDPAddr) *net.UDPAddr {
+	if addr == nil {
+		return nil
+	}
+	cp := *addr
+	if addr.IP != nil {
+		cp.IP = append(net.IP(nil), addr.IP...)
+	}
+	return &cp
 }
 
 func (s *forwardSession) close(state pb.RuntimeState, errText string) {

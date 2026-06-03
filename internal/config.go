@@ -103,6 +103,10 @@ type ServerConfig struct {
 	DataAdvertiseHost     string `mapstructure:"data_advertise_host"`
 	DataPortMin           int    `mapstructure:"data_port_min"`
 	DataPortMax           int    `mapstructure:"data_port_max"`
+	RouteStoreFile        string `mapstructure:"route_store_file"`
+	JobLogDir             string `mapstructure:"job_log_dir"`
+	EnergyMonitor         bool   `mapstructure:"energy_monitor"`
+	EnergySampleMs        int    `mapstructure:"energy_sample_ms"`
 	UDPReadBufferSize     int    `mapstructure:"udp_read_buffer_size"`
 	UDPWriteBufferSize    int    `mapstructure:"udp_write_buffer_size"`
 	UDPMTUSize            int    `mapstructure:"udp_mtu_size"`
@@ -139,6 +143,10 @@ func LoadServerConfig(configPath string) (*ServerConfig, error) {
 	v.SetDefault("data_advertise_host", "127.0.0.1")
 	v.SetDefault("data_port_min", 0)
 	v.SetDefault("data_port_max", 0)
+	v.SetDefault("route_store_file", filepath.Join(home, ".grover", "routes.json"))
+	v.SetDefault("job_log_dir", "/var/log/grover")
+	v.SetDefault("energy_monitor", false)
+	v.SetDefault("energy_sample_ms", 1000)
 	v.SetDefault("udp_read_buffer_size", 8<<20)
 	v.SetDefault("udp_write_buffer_size", 8<<20)
 	v.SetDefault("udp_mtu_size", 1500)
@@ -162,6 +170,8 @@ func LoadServerConfig(configPath string) (*ServerConfig, error) {
 	cfg.ServerCertificatePath = expandPath(cfg.ServerCertificatePath)
 	cfg.ServerKeyPath = expandPath(cfg.ServerKeyPath)
 	cfg.CredentialsFile = expandPath(cfg.CredentialsFile)
+	cfg.RouteStoreFile = expandPath(cfg.RouteStoreFile)
+	cfg.JobLogDir = expandPath(cfg.JobLogDir)
 	cfg.TransferProtocol = normalizeTransferProtocol(cfg.TransferProtocol)
 	cfg.UDPFlowControl = normalizeUDPFlowControl(cfg.UDPFlowControl)
 
@@ -284,6 +294,10 @@ func (cfg *ServerConfig) Save(path string) (string, error) {
 	v.Set("data_advertise_host", cfg.DataAdvertiseHost)
 	v.Set("data_port_min", cfg.DataPortMin)
 	v.Set("data_port_max", cfg.DataPortMax)
+	v.Set("route_store_file", cfg.RouteStoreFile)
+	v.Set("job_log_dir", cfg.JobLogDir)
+	v.Set("energy_monitor", cfg.EnergyMonitor)
+	v.Set("energy_sample_ms", cfg.EnergySampleMs)
 	v.Set("udp_read_buffer_size", cfg.UDPReadBufferSize)
 	v.Set("udp_write_buffer_size", cfg.UDPWriteBufferSize)
 	v.Set("udp_mtu_size", cfg.UDPMTUSize)

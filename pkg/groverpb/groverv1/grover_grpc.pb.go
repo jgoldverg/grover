@@ -315,6 +315,556 @@ var RelayControl_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
+	RouteConfigControl_PutRoute_FullMethodName    = "/grover.v1.RouteConfigControl/PutRoute"
+	RouteConfigControl_GetRoute_FullMethodName    = "/grover.v1.RouteConfigControl/GetRoute"
+	RouteConfigControl_ListRoutes_FullMethodName  = "/grover.v1.RouteConfigControl/ListRoutes"
+	RouteConfigControl_DeleteRoute_FullMethodName = "/grover.v1.RouteConfigControl/DeleteRoute"
+)
+
+// RouteConfigControlClient is the client API for RouteConfigControl service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type RouteConfigControlClient interface {
+	PutRoute(ctx context.Context, in *PutRouteRequest, opts ...grpc.CallOption) (*PutRouteResponse, error)
+	GetRoute(ctx context.Context, in *GetRouteRequest, opts ...grpc.CallOption) (*GetRouteResponse, error)
+	ListRoutes(ctx context.Context, in *ListRoutesRequest, opts ...grpc.CallOption) (*ListRoutesResponse, error)
+	DeleteRoute(ctx context.Context, in *DeleteRouteRequest, opts ...grpc.CallOption) (*DeleteRouteResponse, error)
+}
+
+type routeConfigControlClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewRouteConfigControlClient(cc grpc.ClientConnInterface) RouteConfigControlClient {
+	return &routeConfigControlClient{cc}
+}
+
+func (c *routeConfigControlClient) PutRoute(ctx context.Context, in *PutRouteRequest, opts ...grpc.CallOption) (*PutRouteResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PutRouteResponse)
+	err := c.cc.Invoke(ctx, RouteConfigControl_PutRoute_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *routeConfigControlClient) GetRoute(ctx context.Context, in *GetRouteRequest, opts ...grpc.CallOption) (*GetRouteResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetRouteResponse)
+	err := c.cc.Invoke(ctx, RouteConfigControl_GetRoute_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *routeConfigControlClient) ListRoutes(ctx context.Context, in *ListRoutesRequest, opts ...grpc.CallOption) (*ListRoutesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListRoutesResponse)
+	err := c.cc.Invoke(ctx, RouteConfigControl_ListRoutes_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *routeConfigControlClient) DeleteRoute(ctx context.Context, in *DeleteRouteRequest, opts ...grpc.CallOption) (*DeleteRouteResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteRouteResponse)
+	err := c.cc.Invoke(ctx, RouteConfigControl_DeleteRoute_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// RouteConfigControlServer is the server API for RouteConfigControl service.
+// All implementations must embed UnimplementedRouteConfigControlServer
+// for forward compatibility.
+type RouteConfigControlServer interface {
+	PutRoute(context.Context, *PutRouteRequest) (*PutRouteResponse, error)
+	GetRoute(context.Context, *GetRouteRequest) (*GetRouteResponse, error)
+	ListRoutes(context.Context, *ListRoutesRequest) (*ListRoutesResponse, error)
+	DeleteRoute(context.Context, *DeleteRouteRequest) (*DeleteRouteResponse, error)
+	mustEmbedUnimplementedRouteConfigControlServer()
+}
+
+// UnimplementedRouteConfigControlServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedRouteConfigControlServer struct{}
+
+func (UnimplementedRouteConfigControlServer) PutRoute(context.Context, *PutRouteRequest) (*PutRouteResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PutRoute not implemented")
+}
+func (UnimplementedRouteConfigControlServer) GetRoute(context.Context, *GetRouteRequest) (*GetRouteResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetRoute not implemented")
+}
+func (UnimplementedRouteConfigControlServer) ListRoutes(context.Context, *ListRoutesRequest) (*ListRoutesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListRoutes not implemented")
+}
+func (UnimplementedRouteConfigControlServer) DeleteRoute(context.Context, *DeleteRouteRequest) (*DeleteRouteResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteRoute not implemented")
+}
+func (UnimplementedRouteConfigControlServer) mustEmbedUnimplementedRouteConfigControlServer() {}
+func (UnimplementedRouteConfigControlServer) testEmbeddedByValue()                            {}
+
+// UnsafeRouteConfigControlServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to RouteConfigControlServer will
+// result in compilation errors.
+type UnsafeRouteConfigControlServer interface {
+	mustEmbedUnimplementedRouteConfigControlServer()
+}
+
+func RegisterRouteConfigControlServer(s grpc.ServiceRegistrar, srv RouteConfigControlServer) {
+	// If the following call pancis, it indicates UnimplementedRouteConfigControlServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&RouteConfigControl_ServiceDesc, srv)
+}
+
+func _RouteConfigControl_PutRoute_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PutRouteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RouteConfigControlServer).PutRoute(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RouteConfigControl_PutRoute_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RouteConfigControlServer).PutRoute(ctx, req.(*PutRouteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RouteConfigControl_GetRoute_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetRouteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RouteConfigControlServer).GetRoute(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RouteConfigControl_GetRoute_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RouteConfigControlServer).GetRoute(ctx, req.(*GetRouteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RouteConfigControl_ListRoutes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListRoutesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RouteConfigControlServer).ListRoutes(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RouteConfigControl_ListRoutes_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RouteConfigControlServer).ListRoutes(ctx, req.(*ListRoutesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RouteConfigControl_DeleteRoute_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteRouteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RouteConfigControlServer).DeleteRoute(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RouteConfigControl_DeleteRoute_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RouteConfigControlServer).DeleteRoute(ctx, req.(*DeleteRouteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// RouteConfigControl_ServiceDesc is the grpc.ServiceDesc for RouteConfigControl service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var RouteConfigControl_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "grover.v1.RouteConfigControl",
+	HandlerType: (*RouteConfigControlServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "PutRoute",
+			Handler:    _RouteConfigControl_PutRoute_Handler,
+		},
+		{
+			MethodName: "GetRoute",
+			Handler:    _RouteConfigControl_GetRoute_Handler,
+		},
+		{
+			MethodName: "ListRoutes",
+			Handler:    _RouteConfigControl_ListRoutes_Handler,
+		},
+		{
+			MethodName: "DeleteRoute",
+			Handler:    _RouteConfigControl_DeleteRoute_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "grover.proto",
+}
+
+const (
+	RouteSessionControl_CreateRouteSession_FullMethodName      = "/grover.v1.RouteSessionControl/CreateRouteSession"
+	RouteSessionControl_GetRouteSession_FullMethodName         = "/grover.v1.RouteSessionControl/GetRouteSession"
+	RouteSessionControl_ListRouteSessions_FullMethodName       = "/grover.v1.RouteSessionControl/ListRouteSessions"
+	RouteSessionControl_DeleteRouteSession_FullMethodName      = "/grover.v1.RouteSessionControl/DeleteRouteSession"
+	RouteSessionControl_AbortRouteSession_FullMethodName       = "/grover.v1.RouteSessionControl/AbortRouteSession"
+	RouteSessionControl_UpdateRouteSessionState_FullMethodName = "/grover.v1.RouteSessionControl/UpdateRouteSessionState"
+	RouteSessionControl_StreamRouteSessionStats_FullMethodName = "/grover.v1.RouteSessionControl/StreamRouteSessionStats"
+)
+
+// RouteSessionControlClient is the client API for RouteSessionControl service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type RouteSessionControlClient interface {
+	CreateRouteSession(ctx context.Context, in *CreateRouteSessionRequest, opts ...grpc.CallOption) (*CreateRouteSessionResponse, error)
+	GetRouteSession(ctx context.Context, in *GetRouteSessionRequest, opts ...grpc.CallOption) (*GetRouteSessionResponse, error)
+	ListRouteSessions(ctx context.Context, in *ListRouteSessionsRequest, opts ...grpc.CallOption) (*ListRouteSessionsResponse, error)
+	DeleteRouteSession(ctx context.Context, in *DeleteRouteSessionRequest, opts ...grpc.CallOption) (*DeleteRouteSessionResponse, error)
+	AbortRouteSession(ctx context.Context, in *AbortRouteSessionRequest, opts ...grpc.CallOption) (*AbortRouteSessionResponse, error)
+	UpdateRouteSessionState(ctx context.Context, in *UpdateRouteSessionStateRequest, opts ...grpc.CallOption) (*UpdateRouteSessionStateResponse, error)
+	StreamRouteSessionStats(ctx context.Context, in *StreamRouteSessionStatsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RouteSession], error)
+}
+
+type routeSessionControlClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewRouteSessionControlClient(cc grpc.ClientConnInterface) RouteSessionControlClient {
+	return &routeSessionControlClient{cc}
+}
+
+func (c *routeSessionControlClient) CreateRouteSession(ctx context.Context, in *CreateRouteSessionRequest, opts ...grpc.CallOption) (*CreateRouteSessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateRouteSessionResponse)
+	err := c.cc.Invoke(ctx, RouteSessionControl_CreateRouteSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *routeSessionControlClient) GetRouteSession(ctx context.Context, in *GetRouteSessionRequest, opts ...grpc.CallOption) (*GetRouteSessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetRouteSessionResponse)
+	err := c.cc.Invoke(ctx, RouteSessionControl_GetRouteSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *routeSessionControlClient) ListRouteSessions(ctx context.Context, in *ListRouteSessionsRequest, opts ...grpc.CallOption) (*ListRouteSessionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListRouteSessionsResponse)
+	err := c.cc.Invoke(ctx, RouteSessionControl_ListRouteSessions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *routeSessionControlClient) DeleteRouteSession(ctx context.Context, in *DeleteRouteSessionRequest, opts ...grpc.CallOption) (*DeleteRouteSessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteRouteSessionResponse)
+	err := c.cc.Invoke(ctx, RouteSessionControl_DeleteRouteSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *routeSessionControlClient) AbortRouteSession(ctx context.Context, in *AbortRouteSessionRequest, opts ...grpc.CallOption) (*AbortRouteSessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AbortRouteSessionResponse)
+	err := c.cc.Invoke(ctx, RouteSessionControl_AbortRouteSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *routeSessionControlClient) UpdateRouteSessionState(ctx context.Context, in *UpdateRouteSessionStateRequest, opts ...grpc.CallOption) (*UpdateRouteSessionStateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateRouteSessionStateResponse)
+	err := c.cc.Invoke(ctx, RouteSessionControl_UpdateRouteSessionState_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *routeSessionControlClient) StreamRouteSessionStats(ctx context.Context, in *StreamRouteSessionStatsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RouteSession], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &RouteSessionControl_ServiceDesc.Streams[0], RouteSessionControl_StreamRouteSessionStats_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[StreamRouteSessionStatsRequest, RouteSession]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RouteSessionControl_StreamRouteSessionStatsClient = grpc.ServerStreamingClient[RouteSession]
+
+// RouteSessionControlServer is the server API for RouteSessionControl service.
+// All implementations must embed UnimplementedRouteSessionControlServer
+// for forward compatibility.
+type RouteSessionControlServer interface {
+	CreateRouteSession(context.Context, *CreateRouteSessionRequest) (*CreateRouteSessionResponse, error)
+	GetRouteSession(context.Context, *GetRouteSessionRequest) (*GetRouteSessionResponse, error)
+	ListRouteSessions(context.Context, *ListRouteSessionsRequest) (*ListRouteSessionsResponse, error)
+	DeleteRouteSession(context.Context, *DeleteRouteSessionRequest) (*DeleteRouteSessionResponse, error)
+	AbortRouteSession(context.Context, *AbortRouteSessionRequest) (*AbortRouteSessionResponse, error)
+	UpdateRouteSessionState(context.Context, *UpdateRouteSessionStateRequest) (*UpdateRouteSessionStateResponse, error)
+	StreamRouteSessionStats(*StreamRouteSessionStatsRequest, grpc.ServerStreamingServer[RouteSession]) error
+	mustEmbedUnimplementedRouteSessionControlServer()
+}
+
+// UnimplementedRouteSessionControlServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedRouteSessionControlServer struct{}
+
+func (UnimplementedRouteSessionControlServer) CreateRouteSession(context.Context, *CreateRouteSessionRequest) (*CreateRouteSessionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateRouteSession not implemented")
+}
+func (UnimplementedRouteSessionControlServer) GetRouteSession(context.Context, *GetRouteSessionRequest) (*GetRouteSessionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetRouteSession not implemented")
+}
+func (UnimplementedRouteSessionControlServer) ListRouteSessions(context.Context, *ListRouteSessionsRequest) (*ListRouteSessionsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListRouteSessions not implemented")
+}
+func (UnimplementedRouteSessionControlServer) DeleteRouteSession(context.Context, *DeleteRouteSessionRequest) (*DeleteRouteSessionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteRouteSession not implemented")
+}
+func (UnimplementedRouteSessionControlServer) AbortRouteSession(context.Context, *AbortRouteSessionRequest) (*AbortRouteSessionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AbortRouteSession not implemented")
+}
+func (UnimplementedRouteSessionControlServer) UpdateRouteSessionState(context.Context, *UpdateRouteSessionStateRequest) (*UpdateRouteSessionStateResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UpdateRouteSessionState not implemented")
+}
+func (UnimplementedRouteSessionControlServer) StreamRouteSessionStats(*StreamRouteSessionStatsRequest, grpc.ServerStreamingServer[RouteSession]) error {
+	return status.Errorf(codes.Unimplemented, "method StreamRouteSessionStats not implemented")
+}
+func (UnimplementedRouteSessionControlServer) mustEmbedUnimplementedRouteSessionControlServer() {}
+func (UnimplementedRouteSessionControlServer) testEmbeddedByValue()                             {}
+
+// UnsafeRouteSessionControlServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to RouteSessionControlServer will
+// result in compilation errors.
+type UnsafeRouteSessionControlServer interface {
+	mustEmbedUnimplementedRouteSessionControlServer()
+}
+
+func RegisterRouteSessionControlServer(s grpc.ServiceRegistrar, srv RouteSessionControlServer) {
+	// If the following call pancis, it indicates UnimplementedRouteSessionControlServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&RouteSessionControl_ServiceDesc, srv)
+}
+
+func _RouteSessionControl_CreateRouteSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateRouteSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RouteSessionControlServer).CreateRouteSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RouteSessionControl_CreateRouteSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RouteSessionControlServer).CreateRouteSession(ctx, req.(*CreateRouteSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RouteSessionControl_GetRouteSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetRouteSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RouteSessionControlServer).GetRouteSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RouteSessionControl_GetRouteSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RouteSessionControlServer).GetRouteSession(ctx, req.(*GetRouteSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RouteSessionControl_ListRouteSessions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListRouteSessionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RouteSessionControlServer).ListRouteSessions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RouteSessionControl_ListRouteSessions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RouteSessionControlServer).ListRouteSessions(ctx, req.(*ListRouteSessionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RouteSessionControl_DeleteRouteSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteRouteSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RouteSessionControlServer).DeleteRouteSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RouteSessionControl_DeleteRouteSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RouteSessionControlServer).DeleteRouteSession(ctx, req.(*DeleteRouteSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RouteSessionControl_AbortRouteSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AbortRouteSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RouteSessionControlServer).AbortRouteSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RouteSessionControl_AbortRouteSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RouteSessionControlServer).AbortRouteSession(ctx, req.(*AbortRouteSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RouteSessionControl_UpdateRouteSessionState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateRouteSessionStateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RouteSessionControlServer).UpdateRouteSessionState(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RouteSessionControl_UpdateRouteSessionState_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RouteSessionControlServer).UpdateRouteSessionState(ctx, req.(*UpdateRouteSessionStateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RouteSessionControl_StreamRouteSessionStats_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(StreamRouteSessionStatsRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(RouteSessionControlServer).StreamRouteSessionStats(m, &grpc.GenericServerStream[StreamRouteSessionStatsRequest, RouteSession]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RouteSessionControl_StreamRouteSessionStatsServer = grpc.ServerStreamingServer[RouteSession]
+
+// RouteSessionControl_ServiceDesc is the grpc.ServiceDesc for RouteSessionControl service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var RouteSessionControl_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "grover.v1.RouteSessionControl",
+	HandlerType: (*RouteSessionControlServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "CreateRouteSession",
+			Handler:    _RouteSessionControl_CreateRouteSession_Handler,
+		},
+		{
+			MethodName: "GetRouteSession",
+			Handler:    _RouteSessionControl_GetRouteSession_Handler,
+		},
+		{
+			MethodName: "ListRouteSessions",
+			Handler:    _RouteSessionControl_ListRouteSessions_Handler,
+		},
+		{
+			MethodName: "DeleteRouteSession",
+			Handler:    _RouteSessionControl_DeleteRouteSession_Handler,
+		},
+		{
+			MethodName: "AbortRouteSession",
+			Handler:    _RouteSessionControl_AbortRouteSession_Handler,
+		},
+		{
+			MethodName: "UpdateRouteSessionState",
+			Handler:    _RouteSessionControl_UpdateRouteSessionState_Handler,
+		},
+	},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "StreamRouteSessionStats",
+			Handler:       _RouteSessionControl_StreamRouteSessionStats_Handler,
+			ServerStreams: true,
+		},
+	},
+	Metadata: "grover.proto",
+}
+
+const (
 	TransferJobControl_PrepareTransferEndpoint_FullMethodName   = "/grover.v1.TransferJobControl/PrepareTransferEndpoint"
 	TransferJobControl_StartTransferJob_FullMethodName          = "/grover.v1.TransferJobControl/StartTransferJob"
 	TransferJobControl_GetTransferJob_FullMethodName            = "/grover.v1.TransferJobControl/GetTransferJob"

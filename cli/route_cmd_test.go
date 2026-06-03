@@ -47,6 +47,8 @@ func TestRoutePrepareStoresTemplateAndStatusPrintsPlan(t *testing.T) {
 		"state: prepared",
 		"relays: relay-a -> relay-b",
 		"protocol: tcp",
+		"connection_origin: source",
+		"data_direction: source-to-destination",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("status output missing %q:\n%s", want, got)
@@ -109,6 +111,63 @@ func TestRoutePrepareCanStoreOptionalDefaultEndpoints(t *testing.T) {
 	}
 }
 
+func TestStoredRouteTemplateFromServerRouteUsesEndpointPaths(t *testing.T) {
+	route := &pb.RouteConfig{
+		Name:             "uc-to-edu",
+		Source:           "10.137.1.2:22444",
+		Destination:      "10.137.132.2:22444",
+		Via:              []string{"10.133.3.2:22444"},
+		Protocol:         pb.DataProtocol_DATA_PROTOCOL_TCP,
+		ConnectionOrigin: pb.ConnectionOrigin_CONNECTION_ORIGIN_SOURCE,
+		DataDirection:    pb.DataDirection_DATA_DIRECTION_SOURCE_TO_DESTINATION,
+	}
+	tmpl, err := storedRouteTemplateFromServerRoute(route, "/src", "/dst")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tmpl.Source != "10.137.1.2:22444:/src" || tmpl.Destination != "10.137.132.2:22444:/dst" {
+		t.Fatalf("template endpoints = %+v", tmpl)
+	}
+	if len(tmpl.Via) != 1 || tmpl.Via[0] != "10.133.3.2:22444" {
+		t.Fatalf("template relays = %+v", tmpl.Via)
+	}
+}
+
+func TestRoutePrepareStoresSessionDirectionMetadata(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "routes.toml")
+	cmd := RouteCommand()
+	cmd.SetArgs([]string{
+		"--route-store", storePath,
+		"prepare", "edu-download",
+		"--connection-origin", "destination",
+		"--data-direction", "source-to-destination",
+		"--protocol", "tcp",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := newRouteTemplateStore(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	route, err := store.get("edu-download")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if route.ConnectionOrigin != "destination" || route.DataDirection != "source-to-destination" {
+		t.Fatalf("session metadata not stored: %+v", route)
+	}
+}
+
+func TestRoutePrepareRejectsInvalidSessionDirectionMetadata(t *testing.T) {
+	cmd := RouteCommand()
+	cmd.SetArgs([]string{"prepare", "bad", "--connection-origin", "relay"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "invalid --connection-origin") {
+		t.Fatalf("route prepare error = %v, want connection origin validation", err)
+	}
+}
+
 func TestRoutePrepareRejectsPartialDefaultEndpoints(t *testing.T) {
 	cmd := RouteCommand()
 	cmd.SetArgs([]string{"prepare", "broken", "/src-only"})
@@ -146,10 +205,38 @@ func TestPrintRouteJobsAndForwards(t *testing.T) {
 		Protocol:  pb.DataProtocol_DATA_PROTOCOL_UDP,
 		Stats:     &pb.StatsSnapshot{IngressBytes: 100, EgressBytes: 80, Packets: 3, CurrentThroughputBps: 77, Errors: 2},
 	}})
+	printRouteSessions(&out, []*pb.RouteSession{{
+		SessionId:        "session-1",
+		State:            pb.RuntimeState_RUNTIME_STATE_READY,
+		Protocol:         pb.DataProtocol_DATA_PROTOCOL_TCP,
+		ConnectionOrigin: pb.ConnectionOrigin_CONNECTION_ORIGIN_DESTINATION,
+		DataDirection:    pb.DataDirection_DATA_DIRECTION_SOURCE_TO_DESTINATION,
+		Source: &pb.TransferEndpoint{
+			DataEndpoint: &pb.DataEndpoint{Host: "10.0.0.1", Port: 30000},
+			RootPath:     "/src",
+		},
+		Destination: &pb.TransferEndpoint{
+			DataEndpoint: &pb.DataEndpoint{Host: "10.0.0.2", Port: 30100},
+			RootPath:     "/dst",
+		},
+		Hops: []*pb.RouteSessionHop{{
+			HopIndex:        1,
+			ControlEndpoint: "relay-a:22444",
+			Ingress:         &pb.DataEndpoint{Host: "10.0.0.3", Port: 30200},
+			Egress:          &pb.DataEndpoint{Host: "10.0.0.2", Port: 30100},
+			State:           pb.RuntimeState_RUNTIME_STATE_RUNNING,
+			Stats:           &pb.StatsSnapshot{CurrentThroughputBps: 44, Errors: 5, Drops: 6},
+		}},
+		Stats: &pb.StatsSnapshot{CurrentThroughputBps: 11, Errors: 3},
+	}})
 	got := out.String()
 	for _, want := range []string{
 		"job[job-1]: state=RUNTIME_STATE_RUNNING protocol=DATA_PROTOCOL_TCP good_bytes=10 network_bytes=12 files_done=1 files_active=2 throughput_bps=99 errors=1",
 		"relay[relay-a:22444] forward[forward-1]: hop=1 state=RUNTIME_STATE_RUNNING protocol=DATA_PROTOCOL_UDP ingress_bytes=100 egress_bytes=80 packets=3 throughput_bps=77 errors=2",
+		"session[session-1]: state=RUNTIME_STATE_READY protocol=DATA_PROTOCOL_TCP origin=CONNECTION_ORIGIN_DESTINATION direction=DATA_DIRECTION_SOURCE_TO_DESTINATION hops=1 throughput_bps=11 errors=3",
+		"  source: 10.0.0.1:30000 root=/src",
+		"  hop[1] relay-a:22444: 10.0.0.3:30200 -> 10.0.0.2:30100 state=RUNTIME_STATE_RUNNING throughput_bps=44 errors=5 drops=6",
+		"  destination: 10.0.0.2:30100 root=/dst",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("output missing %q:\n%s", want, got)
@@ -176,5 +263,26 @@ func TestRuntimeStateActive(t *testing.T) {
 		if runtimeStateActive(state) {
 			t.Fatalf("%s should not be active", state)
 		}
+	}
+}
+
+func TestDataEndpointLabel(t *testing.T) {
+	cases := []struct {
+		name     string
+		endpoint *pb.DataEndpoint
+		want     string
+	}{
+		{name: "nil", want: "(none)"},
+		{name: "empty host", endpoint: &pb.DataEndpoint{Port: 30000}, want: "(none)"},
+		{name: "zero port", endpoint: &pb.DataEndpoint{Host: "10.0.0.1"}, want: "(none)"},
+		{name: "ipv4", endpoint: &pb.DataEndpoint{Host: "10.0.0.1", Port: 30000}, want: "10.0.0.1:30000"},
+		{name: "ipv6", endpoint: &pb.DataEndpoint{Host: "2001:db8::1", Port: 30000}, want: "[2001:db8::1]:30000"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := dataEndpointLabel(tc.endpoint); got != tc.want {
+				t.Fatalf("label = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
