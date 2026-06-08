@@ -27,6 +27,13 @@ func TestRAPLMonitorWritesCSV(t *testing.T) {
 	if err := monitor.WriteCSVRecord(writer, 7, "job-1", "route-1", time.Unix(0, 123)); err != nil {
 		t.Fatal(err)
 	}
+	energies, sumAll, total, err := monitor.ReadEnergyValues()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(energies) != 2 || energies[0] != 1000 || energies[1] != 250 || sumAll != 1250 || total != 1250 {
+		t.Fatalf("energy values = %v sum=%d total=%d", energies, sumAll, total)
+	}
 	got := buf.String()
 	for _, want := range []string{
 		"timestamp_ns,tick,job_id,route_id,energy_uj_pkg,energy_uj_dram,energy_uj_sum_all,energy_uj_total",

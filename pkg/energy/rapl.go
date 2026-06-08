@@ -60,10 +60,7 @@ func (m *RAPLMonitor) WriteCSVHeader(w *csv.Writer) error {
 		return nil
 	}
 	header := []string{"timestamp_ns", "tick", "job_id", "route_id"}
-	for _, domain := range m.domains {
-		header = append(header, "energy_uj_"+domain.Name)
-	}
-	header = append(header, "energy_uj_sum_all", "energy_uj_total")
+	header = append(header, m.EnergyColumnNames()...)
 	if err := w.Write(header); err != nil {
 		return err
 	}
@@ -75,23 +72,9 @@ func (m *RAPLMonitor) WriteCSVRecord(w *csv.Writer, tick uint64, jobID string, r
 	if m == nil {
 		return nil
 	}
-	energies := make([]uint64, 0, len(m.domains))
-	for _, domain := range m.domains {
-		value, err := readUintFile(domain.Path)
-		if err != nil {
-			return err
-		}
-		energies = append(energies, value)
-	}
-	sumAll := uint64(0)
-	for _, value := range energies {
-		sumAll += value
-	}
-	total := uint64(0)
-	for _, idx := range m.totalIndexes {
-		if idx >= 0 && idx < len(energies) {
-			total += energies[idx]
-		}
+	energies, sumAll, total, err := m.ReadEnergyValues()
+	if err != nil {
+		return err
 	}
 	record := []string{
 		strconv.FormatInt(now.UnixNano(), 10),
@@ -108,6 +91,42 @@ func (m *RAPLMonitor) WriteCSVRecord(w *csv.Writer, tick uint64, jobID string, r
 	}
 	w.Flush()
 	return w.Error()
+}
+
+func (m *RAPLMonitor) EnergyColumnNames() []string {
+	if m == nil {
+		return nil
+	}
+	header := make([]string, 0, len(m.domains)+2)
+	for _, domain := range m.domains {
+		header = append(header, "energy_uj_"+domain.Name)
+	}
+	return append(header, "energy_uj_sum_all", "energy_uj_total")
+}
+
+func (m *RAPLMonitor) ReadEnergyValues() ([]uint64, uint64, uint64, error) {
+	if m == nil {
+		return nil, 0, 0, nil
+	}
+	energies := make([]uint64, 0, len(m.domains))
+	for _, domain := range m.domains {
+		value, err := readUintFile(domain.Path)
+		if err != nil {
+			return nil, 0, 0, err
+		}
+		energies = append(energies, value)
+	}
+	sumAll := uint64(0)
+	for _, value := range energies {
+		sumAll += value
+	}
+	total := uint64(0)
+	for _, idx := range m.totalIndexes {
+		if idx >= 0 && idx < len(energies) {
+			total += energies[idx]
+		}
+	}
+	return energies, sumAll, total, nil
 }
 
 func discoverRAPLDomains(root string) ([]RAPLDomain, error) {

@@ -113,7 +113,7 @@ Enable energy monitoring only on bare metal nodes with readable Intel RAPL count
   --energy-sample-ms=1000
 ```
 
-Reason: when enabled, groverd samples RAPL per job and writes `energy.csv` under `/var/log/grover/<job_id>/`. Startup fails if RAPL is unavailable so experiments do not silently miss energy data.
+Reason: when enabled, groverd samples RAPL continuously and writes `/var/log/grover/energy.csv`. Baseline rows have empty `job_id`/`route_id`; rows sampled while transfers run include the active job and route IDs. Per-job folders still include `energy.csv` for compatibility, but the root CSV is the better source for baseline-versus-job analysis. Startup fails if RAPL is unavailable so experiments do not silently miss energy data.
 
 ## Direct Transfers
 
@@ -404,6 +404,7 @@ Important fields:
 Historical logs are written by groverd when `--job-log-dir` is set:
 
 ```bash
+sudo tail -f /var/log/grover/energy.csv
 sudo ls /var/log/grover/<job_id>
 sudo cat /var/log/grover/<job_id>/manifest.json
 sudo tail -f /var/log/grover/<job_id>/snapshots.jsonl

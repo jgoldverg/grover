@@ -158,6 +158,7 @@ func TestTransferJobManagerWritesEnergyCSVWhenEnabled(t *testing.T) {
 		EnergyMonitor:  true,
 		EnergySampleMs: 10,
 	}, nil)
+	defer manager.Close()
 	jobID := "job-energy"
 	if _, err := manager.StartJob(context.Background(), &pb.StartTransferJobRequest{
 		RouteId:        "route-energy",
@@ -181,6 +182,21 @@ func TestTransferJobManagerWritesEnergyCSVWhenEnabled(t *testing.T) {
 	}
 	if !strings.Contains(got, "1000,250,1250,1250") {
 		t.Fatalf("energy csv missing sample: %s", got)
+	}
+
+	nodeEnergyCSV, err := os.ReadFile(filepath.Join(logRoot, "energy.csv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = string(nodeEnergyCSV)
+	if !strings.Contains(got, "timestamp_ns,tick,active_job_count,job_id,route_id,energy_uj_pkg,energy_uj_dram,energy_uj_sum_all,energy_uj_total") {
+		t.Fatalf("node energy csv missing header: %s", got)
+	}
+	if !strings.Contains(got, ",0,0,,,1000,250,1250,1250") {
+		t.Fatalf("node energy csv missing baseline row: %s", got)
+	}
+	if !strings.Contains(got, ",1,1,job-energy,route-energy,1000,250,1250,1250") {
+		t.Fatalf("node energy csv missing active job row: %s", got)
 	}
 }
 
