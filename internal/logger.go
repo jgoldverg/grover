@@ -156,7 +156,7 @@ func makeLoggerArgs(fields Fields) []pterm.LoggerArgument {
 	return args
 }
 
-func Debug(msg string, fields Fields) { log(LevelDebug, msg, fields, 2) }
-func Info(msg string, fields Fields)  { log(LevelInfo, msg, fields, 2) }
-func Warn(msg string, fields Fields)  { log(LevelWarn, msg, fields, 2) }
-func Error(msg string, fields Fields) { log(LevelError, msg, fields, 2) }
+func Debug(msg string, fields Fields) { log(LevelDebug, msg, fields, 3) }
+func Info(msg string, fields Fields)  { log(LevelInfo, msg, fields, 3) }
+func Warn(msg string, fields Fields)  { log(LevelWarn, msg, fields, 3) }
+func Error(msg string, fields Fields) { log(LevelError, msg, fields, 3) }

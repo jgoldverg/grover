@@ -169,6 +169,70 @@ build_project() {
   log "build complete; binaries are in ${ROOT_DIR}/bin"
 }
 
+setup_rapl_permissions() {
+  if [[ "$OS" != "linux" ]]; then
+    return
+  fi
+  if [[ "${GROVER_SETUP_RAPL:-1}" == "0" ]]; then
+    log "skipping RAPL permission setup because GROVER_SETUP_RAPL=0"
+    return
+  fi
+  if [[ ! -d /sys/class/powercap ]]; then
+    log "RAPL permission setup skipped; /sys/class/powercap is not present"
+    return
+  fi
+
+  local energy_files=()
+  local file
+  shopt -s nullglob
+  for file in /sys/class/powercap/intel-rapl*/energy_uj; do
+    energy_files+=("$file")
+  done
+  shopt -u nullglob
+
+  if [[ "${#energy_files[@]}" -eq 0 ]]; then
+    log "RAPL permission setup skipped; no energy_uj counters found"
+    return
+  fi
+
+  local target_user="${GROVER_RAPL_USER:-${SUDO_USER:-${USER:-}}}"
+  if [[ -z "$target_user" || "$target_user" == "root" ]]; then
+    log "RAPL permission setup skipped; set GROVER_RAPL_USER=<user> when running as root"
+    return
+  fi
+  if ! id "$target_user" >/dev/null 2>&1; then
+    log "RAPL permission setup skipped; user ${target_user} does not exist"
+    return
+  fi
+
+  log "configuring RAPL energy counter read access for user ${target_user}"
+  sudo groupadd -f rapl
+  sudo usermod -aG rapl "$target_user"
+
+  for file in "${energy_files[@]}"; do
+    sudo chgrp rapl "$file" || true
+    sudo chmod 0440 "$file" || true
+  done
+
+  if command -v systemd-tmpfiles >/dev/null 2>&1; then
+    local tmpfiles_rule="/etc/tmpfiles.d/grover-rapl.conf"
+    log "installing persistent RAPL tmpfiles rule at ${tmpfiles_rule}"
+    printf '%s\n' \
+      '# Allow grover users in group rapl to read Intel RAPL energy counters.' \
+      'z /sys/class/powercap/intel-rapl*/energy_uj 0440 root rapl - -' |
+      sudo tee "$tmpfiles_rule" >/dev/null
+    sudo systemd-tmpfiles --create "$tmpfiles_rule" || true
+  else
+    log "systemd-tmpfiles not found; RAPL permissions may need to be reapplied after reboot"
+  fi
+
+  if id -nG "$target_user" | tr ' ' '\n' | grep -qx rapl; then
+    log "user ${target_user} is already in group rapl"
+  else
+    log "user ${target_user} was added to group rapl; run 'newgrp rapl' or log out/in before starting groverd"
+  fi
+}
+
 persist_path() {
   local shell_path="${SHELL:-}"
   local profile=""
@@ -196,6 +260,7 @@ install_protoc
 install_protoc_plugins
 sync_vendor
 build_project
+setup_rapl_permissions
 persist_path
 
 log "installation complete."

@@ -154,12 +154,12 @@ func normalizeConnectionOrigin(origin string) (string, error) {
 		return "source", nil
 	}
 	switch normalized {
-	case "source":
+	case "source", "src":
 		return "source", nil
-	case "destination", "dest":
+	case "destination", "dest", "dst":
 		return "destination", nil
 	default:
-		return "", fmt.Errorf("invalid --connection-origin %q: must be source or destination", origin)
+		return "", fmt.Errorf("invalid --connect-from/--connection-origin %q: must be source or destination", origin)
 	}
 }
 
@@ -170,12 +170,12 @@ func normalizeDataDirection(direction string) (string, error) {
 		return "source-to-destination", nil
 	}
 	switch normalized {
-	case "source-to-destination", "source-destination", "src-to-dst":
+	case "source-to-destination", "source-destination", "src-to-dst", "forward", "fwd":
 		return "source-to-destination", nil
-	case "destination-to-source", "destination-source", "dst-to-src":
+	case "destination-to-source", "destination-source", "dst-to-src", "reverse", "rev":
 		return "destination-to-source", nil
 	default:
-		return "", fmt.Errorf("invalid --data-direction %q: must be source-to-destination or destination-to-source", direction)
+		return "", fmt.Errorf("invalid --flow/--data-direction %q: must be forward/source-to-destination or reverse/destination-to-source", direction)
 	}
 }
 

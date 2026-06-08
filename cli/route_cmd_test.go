@@ -86,8 +86,60 @@ func TestRouteListAndAbort(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := listOut.String()
-	if !strings.Contains(got, "download\taborted\trelay-a") {
-		t.Fatalf("list output missing aborted route:\n%s", got)
+	for _, want := range []string{"ROUTE", "STATE", "RELAYS", "download", "aborted", "relay-a"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("list output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestRoutePrepareStoresFriendlyDirectionFlags(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "routes.toml")
+	cmd := RouteCommand()
+	cmd.SetArgs([]string{
+		"--route-store", storePath,
+		"prepare", "friendly",
+		"--connect-from", "dst",
+		"--flow", "reverse",
+		"--protocol", "tcp",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := newRouteTemplateStore(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	route, err := store.get("friendly")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if route.ConnectionOrigin != "destination" || route.DataDirection != "destination-to-source" {
+		t.Fatalf("friendly session metadata not stored: %+v", route)
+	}
+}
+
+func TestPrintServerRouteTable(t *testing.T) {
+	var out bytes.Buffer
+	err := printServerRouteTable(&out, []*pb.RouteConfig{{
+		Name:             "tacc-uc",
+		Source:           "129.114.108.86:22444",
+		Destination:      "192.5.86.187:22444",
+		Protocol:         pb.DataProtocol_DATA_PROTOCOL_TCP,
+		ConnectionOrigin: pb.ConnectionOrigin_CONNECTION_ORIGIN_SOURCE,
+		DataDirection:    pb.DataDirection_DATA_DIRECTION_SOURCE_TO_DESTINATION,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	for _, want := range []string{"ROUTE", "SOURCE", "RELAYS", "DESTINATION", "tacc-uc", "129.114.108.86:22444", "(direct)", "192.5.86.187:22444"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("server route table missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "\ttacc-uc\t") {
+		t.Fatalf("server route table should not be raw tab-separated output:\n%s", got)
 	}
 }
 
@@ -163,7 +215,7 @@ func TestRoutePrepareRejectsInvalidSessionDirectionMetadata(t *testing.T) {
 	cmd := RouteCommand()
 	cmd.SetArgs([]string{"prepare", "bad", "--connection-origin", "relay"})
 	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "invalid --connection-origin") {
+	if err == nil || !strings.Contains(err.Error(), "invalid --connect-from") {
 		t.Fatalf("route prepare error = %v, want connection origin validation", err)
 	}
 }

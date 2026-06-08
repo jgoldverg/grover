@@ -13,19 +13,49 @@ import (
 )
 
 type AppConfig struct {
-	CredentialsFile     string `mapstructure:"credentials_file"`
-	ServerURL           string `mapstructure:"server_url"`
-	CACertFile          string `mapstructure:"ca_cert_file"`
-	TransferProtocol    string `mapstructure:"transfer_protocol"`
-	InsecureControl     bool   `mapstructure:"insecure_control"`
-	Execution           string `mapstructure:"execution"`
-	Route               string `mapstructure:"route"`
-	HeartBeatInterval   int    `mapstructure:"heart_beat_interval"`
-	HeartBeatErrorCount int    `mapstructure:"heart_beat_error_count"`
-	HeartBeatTimeout    int    `mapstructure:"heart_beat_timeout"`
-	HeartBeatRtts       int    `mapstructure:"heart_beat_rtts"`
-	ClientUuid          string `mapstructure:"client_uuid"`
-	LogLevel            string `mapstructure:"log_level"`
+	CredentialsFile     string                `mapstructure:"credentials_file"`
+	ServerURL           string                `mapstructure:"server_url"`
+	CACertFile          string                `mapstructure:"ca_cert_file"`
+	TransferProtocol    string                `mapstructure:"transfer_protocol"`
+	InsecureControl     bool                  `mapstructure:"insecure_control"`
+	ActiveProfile       string                `mapstructure:"active_profile"`
+	Profiles            map[string]AppProfile `mapstructure:"profiles"`
+	Execution           string                `mapstructure:"execution"`
+	Route               string                `mapstructure:"route"`
+	HeartBeatInterval   int                   `mapstructure:"heart_beat_interval"`
+	HeartBeatErrorCount int                   `mapstructure:"heart_beat_error_count"`
+	HeartBeatTimeout    int                   `mapstructure:"heart_beat_timeout"`
+	HeartBeatRtts       int                   `mapstructure:"heart_beat_rtts"`
+	ClientUuid          string                `mapstructure:"client_uuid"`
+	LogLevel            string                `mapstructure:"log_level"`
+}
+
+type AppProfile struct {
+	ServerURL       string `mapstructure:"server_url"`
+	CACertFile      string `mapstructure:"ca_cert_file"`
+	InsecureControl bool   `mapstructure:"insecure_control"`
+}
+
+func (cfg *AppConfig) ApplyProfile(name string) error {
+	if cfg == nil {
+		return fmt.Errorf("app config unavailable")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	profile, ok := cfg.Profiles[name]
+	if !ok {
+		return fmt.Errorf("profile %q not found", name)
+	}
+	if strings.TrimSpace(profile.ServerURL) != "" {
+		cfg.ServerURL = profile.ServerURL
+	}
+	if strings.TrimSpace(profile.CACertFile) != "" {
+		cfg.CACertFile = expandPath(profile.CACertFile)
+	}
+	cfg.InsecureControl = profile.InsecureControl
+	return nil
 }
 
 func LoadAppConfig(configPath string) (*AppConfig, error) {
@@ -61,6 +91,13 @@ func LoadAppConfig(configPath string) (*AppConfig, error) {
 	// expand paths
 	cfg.CredentialsFile = expandPath(cfg.CredentialsFile)
 	cfg.CACertFile = expandPath(cfg.CACertFile)
+	if cfg.Profiles == nil {
+		cfg.Profiles = map[string]AppProfile{}
+	}
+	for name, profile := range cfg.Profiles {
+		profile.CACertFile = expandPath(profile.CACertFile)
+		cfg.Profiles[name] = profile
+	}
 	cfg.TransferProtocol = normalizeTransferProtocol(cfg.TransferProtocol)
 	if !v.InConfig("execution") && strings.TrimSpace(cfg.Route) != "" {
 		cfg.Execution = cfg.Route
@@ -252,6 +289,8 @@ func (cfg *AppConfig) Save(path string) (string, error) {
 	v.Set("ca_cert_file", cfg.CACertFile)
 	v.Set("transfer_protocol", cfg.TransferProtocol)
 	v.Set("insecure_control", cfg.InsecureControl)
+	v.Set("active_profile", cfg.ActiveProfile)
+	v.Set("profiles", appProfilesForSave(cfg.Profiles))
 	v.Set("execution", cfg.Execution)
 	v.Set("heart_beat_interval", cfg.HeartBeatInterval)
 	v.Set("heart_beat_error_count", cfg.HeartBeatErrorCount)
@@ -265,6 +304,18 @@ func (cfg *AppConfig) Save(path string) (string, error) {
 	}
 	_ = os.Chmod(path, 0o600)
 	return path, nil
+}
+
+func appProfilesForSave(profiles map[string]AppProfile) map[string]map[string]any {
+	out := make(map[string]map[string]any, len(profiles))
+	for name, profile := range profiles {
+		out[name] = map[string]any{
+			"server_url":       profile.ServerURL,
+			"ca_cert_file":     profile.CACertFile,
+			"insecure_control": profile.InsecureControl,
+		}
+	}
+	return out
 }
 
 func (cfg *ServerConfig) Save(path string) (string, error) {

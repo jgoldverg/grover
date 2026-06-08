@@ -51,6 +51,48 @@ func TestLoadAppConfigDoesNotWriteServerConfig(t *testing.T) {
 	}
 }
 
+func TestAppConfigProfilesRoundTripAndApply(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cli.toml")
+	cfg := &AppConfig{
+		CredentialsFile:  "/tmp/credentials.toml",
+		ServerURL:        "localhost:22444",
+		CACertFile:       "/tmp/ca.crt",
+		TransferProtocol: "tcp",
+		Execution:        "auto",
+		LogLevel:         "info",
+		ActiveProfile:    "tacc",
+		Profiles: map[string]AppProfile{
+			"tacc": {
+				ServerURL:       "129.114.108.86:22444",
+				InsecureControl: true,
+			},
+			"uc": {
+				ServerURL:  "192.5.86.187:22444",
+				CACertFile: "/tmp/uc-ca.crt",
+			},
+		},
+	}
+	if _, err := cfg.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadAppConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ActiveProfile != "tacc" {
+		t.Fatalf("active profile = %q, want tacc", loaded.ActiveProfile)
+	}
+	if err := loaded.ApplyProfile("uc"); err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ServerURL != "192.5.86.187:22444" || loaded.CACertFile != "/tmp/uc-ca.crt" || loaded.InsecureControl {
+		t.Fatalf("profile not applied: %+v", loaded)
+	}
+	if err := loaded.ApplyProfile("missing"); err == nil {
+		t.Fatal("expected missing profile error")
+	}
+}
+
 func TestLoadServerConfigRejectsInvalidDataPortRange(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "server.toml")
 	if err := os.WriteFile(path, []byte(`

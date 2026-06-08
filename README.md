@@ -99,6 +99,8 @@ Reason: this enables the experimental UDP path, ACK/SACK-driven counters, BBR-li
 
 Enable energy monitoring only on bare metal nodes with readable Intel RAPL counters.
 
+`bin/install_deps.sh` configures Linux RAPL read access when `/sys/class/powercap/intel-rapl*/energy_uj` exists. It creates/adds the install user to group `rapl`, applies read permissions to current counters, and installs `/etc/tmpfiles.d/grover-rapl.conf` when `systemd-tmpfiles` is available. Disable that setup with `GROVER_SETUP_RAPL=0 bin/install_deps.sh`.
+
 ```bash
 ./bin/groverd \
   --port=22444 \
@@ -230,9 +232,46 @@ Then use `name:/absolute/path`:
 
 Reason: this matches the rclone-style endpoint pattern while still resolving to groverd control addresses.
 
+## CLI Profiles
+
+Profiles store the groverd control endpoint and control-plane TLS mode you use for CLI API calls. Use them instead of repeating `--server-url` and `--insecure-control`.
+
+Create profiles:
+
+```bash
+./bin/grover profile set tacc \
+  --server-url 129.114.108.86:22444 \
+  --insecure-control
+
+./bin/grover profile set uc \
+  --server-url 192.5.86.187:22444 \
+  --insecure-control
+```
+
+Pick the default profile:
+
+```bash
+./bin/grover profile use tacc
+```
+
+Inspect profiles:
+
+```bash
+./bin/grover profile list
+./bin/grover profile show tacc
+```
+
+Use a profile for one command without changing the default:
+
+```bash
+./bin/grover --profile uc route list
+```
+
+Reason: profiles are control-plane connection settings. Routes still describe the network path between groverd nodes.
+
 ## Routes And Relays
 
-Routes are named network paths stored on `groverd` as JSON. They are not file jobs. A route stores source/destination control endpoints, optional relay hops, protocol, connection origin, and data direction. File paths are supplied when a transfer runs.
+Routes are named network paths stored on `groverd` as JSON. They are not file jobs. A route stores source/destination control endpoints, optional relay hops, protocol, which side opens the data connection, and which way bytes flow. File paths are supplied when a transfer runs.
 
 Start the source-side groverd with an explicit route JSON file:
 
@@ -266,8 +305,8 @@ For an EDU/private destination that can make outbound connections but cannot acc
   --source 10.137.1.2:22444 \
   --destination 10.137.132.2:22444 \
   --protocol=tcp \
-  --connection-origin=destination \
-  --data-direction=source-to-destination
+  --connect-from=destination \
+  --flow=forward
 ```
 
 Prepare the route session, then run the transfer over that prepared session:
@@ -327,7 +366,7 @@ Inspect route state:
 ./bin/grover route status uc-to-edu-via-tacc --source-server 10.137.1.2:22444 --watch
 ```
 
-Reason: route status shows the source-owned route session, transfer job state, and relay forwards for the route.
+Reason: `route list` prints a table of configured routes. `route status` shows the source-owned route session, transfer job state, and relay forwards for the route.
 
 Abort route runtime resources:
 

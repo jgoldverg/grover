@@ -16,6 +16,7 @@ import (
 	"github.com/jgoldverg/grover/pkg/gclient"
 	pb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
 	"github.com/jgoldverg/grover/pkg/util"
+	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
 
@@ -134,18 +135,38 @@ func routePutCommand(opts *routeCommandOptions) *cobra.Command {
 				return writeRouteConfigJSON(cmd.OutOrStdout(), route)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "stored route %s\n", route.GetName())
-			printServerRouteConfig(cmd.OutOrStdout(), route)
-			return nil
+			return printServerRouteTable(cmd.OutOrStdout(), []*pb.RouteConfig{route})
 		},
 	}
 	cmd.Flags().StringVar(&opts.sourceServer, "source", "", "Source groverd control endpoint")
 	cmd.Flags().StringVar(&opts.destinationServer, "destination", "", "Destination groverd control endpoint")
 	cmd.Flags().StringArrayVar(&opts.via, "via", nil, "Relay groverd control endpoint; repeat or use comma-separated values")
 	cmd.Flags().StringVar(&opts.protocol, "protocol", "tcp", "Route data-plane protocol (tcp|udp)")
-	cmd.Flags().StringVar(&opts.connectionOrigin, "connection-origin", "", "Which endpoint initiates the route/session connection (source|destination)")
-	cmd.Flags().StringVar(&opts.dataDirection, "data-direction", "", "Transfer data direction for the route/session (source-to-destination|destination-to-source)")
+	addRouteDirectionFlags(cmd, &opts.connectionOrigin, &opts.dataDirection)
 	cmd.Flags().BoolVar(&opts.jsonOutput, "json", false, "Print route as JSON")
 	return cmd
+}
+
+func addRouteDirectionFlags(cmd *cobra.Command, origin *string, direction *string) {
+	cmd.Flags().StringVar(origin, "connect-from", "", "Endpoint that opens route data connections (source|destination)")
+	cmd.Flags().StringVar(origin, "connection-origin", "", "Deprecated: use --connect-from")
+	_ = cmd.Flags().MarkHidden("connection-origin")
+	cmd.Flags().StringVar(direction, "flow", "", "Byte flow through the route (forward|reverse|source-to-destination|destination-to-source)")
+	cmd.Flags().StringVar(direction, "data-direction", "", "Deprecated: use --flow")
+	_ = cmd.Flags().MarkHidden("data-direction")
+}
+
+func commandFlagChanged(cmd *cobra.Command, names ...string) bool {
+	if cmd == nil {
+		return false
+	}
+	for _, name := range names {
+		flag := cmd.Flags().Lookup(name)
+		if flag != nil && flag.Changed {
+			return true
+		}
+	}
+	return false
 }
 
 func routeGetCommand(opts *routeCommandOptions) *cobra.Command {
@@ -167,8 +188,7 @@ func routeGetCommand(opts *routeCommandOptions) *cobra.Command {
 			if opts.jsonOutput {
 				return writeRouteConfigJSON(cmd.OutOrStdout(), route)
 			}
-			printServerRouteConfig(cmd.OutOrStdout(), route)
-			return nil
+			return printServerRouteTable(cmd.OutOrStdout(), []*pb.RouteConfig{route})
 		},
 	}
 	cmd.Flags().BoolVar(&opts.jsonOutput, "json", false, "Print route as JSON")
@@ -268,8 +288,7 @@ func routePrepareCommand(opts *routeCommandOptions) *cobra.Command {
 	cmd.Flags().StringVar(&opts.protocol, "protocol", "", "Transfer data-plane protocol (udp|tcp)")
 	cmd.Flags().IntVar(&opts.parallelStreams, "parallel-streams", 0, "Per-file parallel streams/ranges (0 uses config)")
 	cmd.Flags().IntVar(&opts.concurrency, "concurrency", 4, "Maximum number of files to transfer in parallel")
-	cmd.Flags().StringVar(&opts.connectionOrigin, "connection-origin", "", "Which endpoint initiates the route/session connection (source|destination)")
-	cmd.Flags().StringVar(&opts.dataDirection, "data-direction", "", "Transfer data direction for the route/session (source-to-destination|destination-to-source)")
+	addRouteDirectionFlags(cmd, &opts.connectionOrigin, &opts.dataDirection)
 	cmd.Flags().StringVar(&opts.sessionID, "session-id", "", "Session ID for a materialized server route")
 	return cmd
 }
@@ -298,15 +317,7 @@ func routeListCommand(opts *routeCommandOptions) *cobra.Command {
 					fmt.Fprintln(cmd.OutOrStdout(), "no routes configured")
 					return nil
 				}
-				for _, route := range routes {
-					fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n",
-						route.GetName(),
-						route.GetSource(),
-						serverRouteRelaysLabel(route),
-						route.GetDestination(),
-					)
-				}
-				return nil
+				return printServerRouteTable(cmd.OutOrStdout(), routes)
 			}
 			store, err := newRouteTemplateStore(opts.storePath)
 			if err != nil {
@@ -320,10 +331,7 @@ func routeListCommand(opts *routeCommandOptions) *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), "no routes prepared")
 				return nil
 			}
-			for _, route := range routes {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", route.Name, route.State, routeRelaysLabel(route))
-			}
-			return nil
+			return printStoredRouteTable(cmd.OutOrStdout(), routes)
 		},
 	}
 	cmd.Flags().BoolVar(&opts.jsonOutput, "json", false, "Print routes as JSON")
@@ -860,7 +868,7 @@ func startTransferOverPreparedRouteSession(cmd *cobra.Command, src string, dst s
 	dest := clonePBTransferEndpoint(session.GetDestination())
 	if direction == "reverse" {
 		if session.GetConnectionOrigin() != pb.ConnectionOrigin_CONNECTION_ORIGIN_SOURCE {
-			return nil, fmt.Errorf("reverse transfers over destination-origin sessions are not supported yet; prepare the route with --connection-origin=source")
+			return nil, fmt.Errorf("reverse transfers over destination-origin sessions are not supported yet; prepare the route with --connect-from=source")
 		}
 		source = clonePBTransferEndpoint(session.GetReverseSource())
 		dest = clonePBTransferEndpoint(session.GetReverseDestination())
@@ -1814,6 +1822,77 @@ func printServerRouteConfig(w io.Writer, route *pb.RouteConfig) {
 	fmt.Fprintf(w, "protocol: %s\n", routeProtocolLabel(route.GetProtocol()))
 	fmt.Fprintf(w, "connection_origin: %s\n", routeConnectionOriginLabel(route.GetConnectionOrigin()))
 	fmt.Fprintf(w, "data_direction: %s\n", routeDataDirectionLabel(route.GetDataDirection()))
+}
+
+func printServerRouteTable(w io.Writer, routes []*pb.RouteConfig) error {
+	if w == nil {
+		return nil
+	}
+	rows := pterm.TableData{{
+		"ROUTE",
+		"SOURCE",
+		"RELAYS",
+		"DESTINATION",
+		"PROTOCOL",
+		"CONNECT FROM",
+		"FLOW",
+	}}
+	for _, route := range routes {
+		if route == nil {
+			continue
+		}
+		rows = append(rows, []string{
+			route.GetName(),
+			route.GetSource(),
+			serverRouteRelaysLabel(route),
+			route.GetDestination(),
+			routeProtocolLabel(route.GetProtocol()),
+			routeConnectionOriginLabel(route.GetConnectionOrigin()),
+			routeDataDirectionLabel(route.GetDataDirection()),
+		})
+	}
+	rendered, err := pterm.DefaultTable.WithHasHeader().WithData(rows).Srender()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(w, rendered)
+	return nil
+}
+
+func printStoredRouteTable(w io.Writer, routes []storedRouteTemplate) error {
+	if w == nil {
+		return nil
+	}
+	rows := pterm.TableData{{
+		"ROUTE",
+		"STATE",
+		"RELAYS",
+		"PROTOCOL",
+		"CONNECT FROM",
+		"FLOW",
+		"DEFAULTS",
+	}}
+	for _, route := range routes {
+		defaults := "-"
+		if strings.TrimSpace(route.Source) != "" || strings.TrimSpace(route.Destination) != "" {
+			defaults = strings.TrimSpace(route.Source) + " -> " + strings.TrimSpace(route.Destination)
+		}
+		rows = append(rows, []string{
+			route.Name,
+			route.State,
+			routeRelaysLabel(route),
+			routeProtocol(route.Protocol),
+			routeConnectionOrigin(route.ConnectionOrigin),
+			routeDataDirection(route.DataDirection),
+			defaults,
+		})
+	}
+	rendered, err := pterm.DefaultTable.WithHasHeader().WithData(rows).Srender()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(w, rendered)
+	return nil
 }
 
 func serverRouteRelaysLabel(route *pb.RouteConfig) string {

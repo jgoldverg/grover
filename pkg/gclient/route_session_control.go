@@ -19,7 +19,7 @@ func NewRouteSessionService(conn *grpc.ClientConn) *RouteSessionService {
 
 func (s *RouteSessionService) CreateRouteSession(ctx context.Context, req *pb.CreateRouteSessionRequest) (*pb.RouteSession, error) {
 	started := time.Now()
-	internal.Info("grpc RouteSessionControl.CreateRouteSession start", internal.Fields{
+	internal.Debug("grpc RouteSessionControl.CreateRouteSession start", internal.Fields{
 		"route_id":          req.GetRouteId(),
 		"session_id":        req.GetSessionId(),
 		"job_id":            req.GetJobId(),
@@ -40,7 +40,7 @@ func (s *RouteSessionService) CreateRouteSession(ctx context.Context, req *pb.Cr
 		return nil, err
 	}
 	session := resp.GetSession()
-	internal.Info("grpc RouteSessionControl.CreateRouteSession done", internal.Fields{
+	internal.Debug("grpc RouteSessionControl.CreateRouteSession done", internal.Fields{
 		"route_id":         session.GetRouteId(),
 		"session_id":       session.GetSessionId(),
 		"state":            session.GetState().String(),
@@ -55,7 +55,7 @@ func (s *RouteSessionService) CreateRouteSession(ctx context.Context, req *pb.Cr
 
 func (s *RouteSessionService) GetRouteSession(ctx context.Context, sessionID string) (*pb.RouteSession, error) {
 	started := time.Now()
-	internal.Info("grpc RouteSessionControl.GetRouteSession start", internal.Fields{"session_id": sessionID})
+	internal.Debug("grpc RouteSessionControl.GetRouteSession start", internal.Fields{"session_id": sessionID})
 	resp, err := s.rc.GetRouteSession(ctx, &pb.GetRouteSessionRequest{SessionId: sessionID})
 	if err != nil {
 		internal.Warn("grpc RouteSessionControl.GetRouteSession failed", internal.Fields{
@@ -66,7 +66,7 @@ func (s *RouteSessionService) GetRouteSession(ctx context.Context, sessionID str
 		return nil, err
 	}
 	session := resp.GetSession()
-	internal.Info("grpc RouteSessionControl.GetRouteSession done", internal.Fields{
+	internal.Debug("grpc RouteSessionControl.GetRouteSession done", internal.Fields{
 		"route_id":   session.GetRouteId(),
 		"session_id": session.GetSessionId(),
 		"state":      session.GetState().String(),
@@ -77,7 +77,7 @@ func (s *RouteSessionService) GetRouteSession(ctx context.Context, sessionID str
 
 func (s *RouteSessionService) ListRouteSessions(ctx context.Context, routeID, jobID string) ([]*pb.RouteSession, error) {
 	started := time.Now()
-	internal.Info("grpc RouteSessionControl.ListRouteSessions start", internal.Fields{
+	internal.Debug("grpc RouteSessionControl.ListRouteSessions start", internal.Fields{
 		"route_id": routeID,
 		"job_id":   jobID,
 	})
@@ -92,7 +92,7 @@ func (s *RouteSessionService) ListRouteSessions(ctx context.Context, routeID, jo
 		return nil, err
 	}
 	sessions := resp.GetSessions()
-	internal.Info("grpc RouteSessionControl.ListRouteSessions done", internal.Fields{
+	internal.Debug("grpc RouteSessionControl.ListRouteSessions done", internal.Fields{
 		"route_id":   routeID,
 		"job_id":     jobID,
 		"sessions":   len(sessions),
@@ -103,7 +103,7 @@ func (s *RouteSessionService) ListRouteSessions(ctx context.Context, routeID, jo
 
 func (s *RouteSessionService) DeleteRouteSession(ctx context.Context, sessionID string) (bool, error) {
 	started := time.Now()
-	internal.Info("grpc RouteSessionControl.DeleteRouteSession start", internal.Fields{"session_id": sessionID})
+	internal.Debug("grpc RouteSessionControl.DeleteRouteSession start", internal.Fields{"session_id": sessionID})
 	resp, err := s.rc.DeleteRouteSession(ctx, &pb.DeleteRouteSessionRequest{SessionId: sessionID})
 	if err != nil {
 		internal.Warn("grpc RouteSessionControl.DeleteRouteSession failed", internal.Fields{
@@ -114,7 +114,7 @@ func (s *RouteSessionService) DeleteRouteSession(ctx context.Context, sessionID 
 		return false, err
 	}
 	ok := resp.GetOk()
-	internal.Info("grpc RouteSessionControl.DeleteRouteSession done", internal.Fields{
+	internal.Debug("grpc RouteSessionControl.DeleteRouteSession done", internal.Fields{
 		"session_id": sessionID,
 		"ok":         ok,
 		"elapsed_ms": time.Since(started).Milliseconds(),
@@ -124,7 +124,7 @@ func (s *RouteSessionService) DeleteRouteSession(ctx context.Context, sessionID 
 
 func (s *RouteSessionService) AbortRouteSession(ctx context.Context, sessionID string) (*pb.RouteSession, error) {
 	started := time.Now()
-	internal.Info("grpc RouteSessionControl.AbortRouteSession start", internal.Fields{"session_id": sessionID})
+	internal.Debug("grpc RouteSessionControl.AbortRouteSession start", internal.Fields{"session_id": sessionID})
 	resp, err := s.rc.AbortRouteSession(ctx, &pb.AbortRouteSessionRequest{SessionId: sessionID})
 	if err != nil {
 		internal.Warn("grpc RouteSessionControl.AbortRouteSession failed", internal.Fields{
@@ -135,7 +135,7 @@ func (s *RouteSessionService) AbortRouteSession(ctx context.Context, sessionID s
 		return nil, err
 	}
 	session := resp.GetSession()
-	internal.Info("grpc RouteSessionControl.AbortRouteSession done", internal.Fields{
+	internal.Debug("grpc RouteSessionControl.AbortRouteSession done", internal.Fields{
 		"route_id":   session.GetRouteId(),
 		"session_id": session.GetSessionId(),
 		"state":      session.GetState().String(),
@@ -146,7 +146,7 @@ func (s *RouteSessionService) AbortRouteSession(ctx context.Context, sessionID s
 
 func (s *RouteSessionService) UpdateRouteSessionState(ctx context.Context, sessionID string, state pb.RuntimeState, errText string) (*pb.RouteSession, error) {
 	started := time.Now()
-	internal.Info("grpc RouteSessionControl.UpdateRouteSessionState start", internal.Fields{
+	internal.Debug("grpc RouteSessionControl.UpdateRouteSessionState start", internal.Fields{
 		"session_id": sessionID,
 		"state":      state.String(),
 		"error_text": errText,
@@ -166,7 +166,7 @@ func (s *RouteSessionService) UpdateRouteSessionState(ctx context.Context, sessi
 		return nil, err
 	}
 	session := resp.GetSession()
-	internal.Info("grpc RouteSessionControl.UpdateRouteSessionState done", internal.Fields{
+	internal.Debug("grpc RouteSessionControl.UpdateRouteSessionState done", internal.Fields{
 		"route_id":   session.GetRouteId(),
 		"session_id": session.GetSessionId(),
 		"state":      session.GetState().String(),

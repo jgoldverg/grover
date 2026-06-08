@@ -19,7 +19,7 @@ func NewRoutedTransferService(conn *grpc.ClientConn) *RoutedTransferService {
 
 func (s *RoutedTransferService) PrepareTransferEndpoint(ctx context.Context, req *pb.PrepareTransferEndpointRequest) (*pb.TransferEndpoint, error) {
 	started := time.Now()
-	internal.Info("grpc TransferJobControl.PrepareTransferEndpoint start", internal.Fields{
+	internal.Debug("grpc TransferJobControl.PrepareTransferEndpoint start", internal.Fields{
 		"route_id":          req.GetRouteId(),
 		"session_id":        req.GetSessionId(),
 		"job_id":            req.GetJobId(),
@@ -43,7 +43,7 @@ func (s *RoutedTransferService) PrepareTransferEndpoint(ctx context.Context, req
 		return nil, err
 	}
 	endpoint := resp.GetEndpoint()
-	internal.Info("grpc TransferJobControl.PrepareTransferEndpoint done", internal.Fields{
+	internal.Debug("grpc TransferJobControl.PrepareTransferEndpoint done", internal.Fields{
 		"route_id":     endpoint.GetRouteId(),
 		"session_id":   endpoint.GetSessionId(),
 		"job_id":       endpoint.GetJobId(),
@@ -59,7 +59,7 @@ func (s *RoutedTransferService) PrepareTransferEndpoint(ctx context.Context, req
 
 func (s *RoutedTransferService) StartTransferJob(ctx context.Context, req *pb.StartTransferJobRequest) (*pb.TransferJob, error) {
 	started := time.Now()
-	internal.Info("grpc TransferJobControl.StartTransferJob start", internal.Fields{
+	internal.Debug("grpc TransferJobControl.StartTransferJob start", internal.Fields{
 		"route_id":          req.GetRouteId(),
 		"session_id":        req.GetSessionId(),
 		"job_id":            req.GetJobId(),
@@ -82,7 +82,7 @@ func (s *RoutedTransferService) StartTransferJob(ctx context.Context, req *pb.St
 		return nil, err
 	}
 	job := resp.GetJob()
-	internal.Info("grpc TransferJobControl.StartTransferJob done", internal.Fields{
+	internal.Debug("grpc TransferJobControl.StartTransferJob done", internal.Fields{
 		"route_id":    job.GetRouteId(),
 		"session_id":  job.GetSessionId(),
 		"job_id":      job.GetJobId(),
@@ -121,7 +121,7 @@ func (s *RoutedTransferService) GetTransferJob(ctx context.Context, jobID string
 
 func (s *RoutedTransferService) ListTransferJobs(ctx context.Context, routeID string) ([]*pb.TransferJob, error) {
 	started := time.Now()
-	internal.Info("grpc TransferJobControl.ListTransferJobs start", internal.Fields{"route_id": routeID})
+	internal.Debug("grpc TransferJobControl.ListTransferJobs start", internal.Fields{"route_id": routeID})
 	resp, err := s.tc.ListTransferJobs(ctx, &pb.ListTransferJobsRequest{RouteId: routeID})
 	if err != nil {
 		internal.Warn("grpc TransferJobControl.ListTransferJobs failed", internal.Fields{
@@ -132,7 +132,7 @@ func (s *RoutedTransferService) ListTransferJobs(ctx context.Context, routeID st
 		return nil, err
 	}
 	jobs := resp.GetJobs()
-	internal.Info("grpc TransferJobControl.ListTransferJobs done", internal.Fields{
+	internal.Debug("grpc TransferJobControl.ListTransferJobs done", internal.Fields{
 		"route_id":   routeID,
 		"jobs":       len(jobs),
 		"elapsed_ms": time.Since(started).Milliseconds(),
@@ -142,7 +142,7 @@ func (s *RoutedTransferService) ListTransferJobs(ctx context.Context, routeID st
 
 func (s *RoutedTransferService) AbortTransferJob(ctx context.Context, jobID string) (*pb.TransferJob, error) {
 	started := time.Now()
-	internal.Info("grpc TransferJobControl.AbortTransferJob start", internal.Fields{"job_id": jobID})
+	internal.Debug("grpc TransferJobControl.AbortTransferJob start", internal.Fields{"job_id": jobID})
 	resp, err := s.tc.AbortTransferJob(ctx, &pb.AbortTransferJobRequest{JobId: jobID})
 	if err != nil {
 		internal.Warn("grpc TransferJobControl.AbortTransferJob failed", internal.Fields{
@@ -153,7 +153,7 @@ func (s *RoutedTransferService) AbortTransferJob(ctx context.Context, jobID stri
 		return nil, err
 	}
 	job := resp.GetJob()
-	internal.Info("grpc TransferJobControl.AbortTransferJob done", internal.Fields{
+	internal.Debug("grpc TransferJobControl.AbortTransferJob done", internal.Fields{
 		"route_id":   job.GetRouteId(),
 		"session_id": job.GetSessionId(),
 		"job_id":     job.GetJobId(),
@@ -165,7 +165,7 @@ func (s *RoutedTransferService) AbortTransferJob(ctx context.Context, jobID stri
 
 func (s *RoutedTransferService) UpdateTransferConcurrency(ctx context.Context, jobID string, filesInFlight, streamsPerFile uint32) (*pb.TransferJob, error) {
 	started := time.Now()
-	internal.Info("grpc TransferJobControl.UpdateTransferConcurrency start", internal.Fields{
+	internal.Debug("grpc TransferJobControl.UpdateTransferConcurrency start", internal.Fields{
 		"job_id":           jobID,
 		"files_in_flight":  filesInFlight,
 		"streams_per_file": streamsPerFile,
@@ -184,7 +184,7 @@ func (s *RoutedTransferService) UpdateTransferConcurrency(ctx context.Context, j
 		return nil, err
 	}
 	job := resp.GetJob()
-	internal.Info("grpc TransferJobControl.UpdateTransferConcurrency done", internal.Fields{
+	internal.Debug("grpc TransferJobControl.UpdateTransferConcurrency done", internal.Fields{
 		"route_id":         job.GetRouteId(),
 		"session_id":       job.GetSessionId(),
 		"job_id":           job.GetJobId(),

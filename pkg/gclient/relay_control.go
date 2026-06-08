@@ -19,7 +19,7 @@ func NewRelayControlService(conn *grpc.ClientConn) *RelayControlService {
 
 func (s *RelayControlService) CreateForward(ctx context.Context, req *pb.CreateForwardRequest) (*pb.ForwardSession, error) {
 	started := time.Now()
-	internal.Info("grpc RelayControl.CreateForward start", internal.Fields{
+	internal.Debug("grpc RelayControl.CreateForward start", internal.Fields{
 		"route_id":    req.GetRouteId(),
 		"job_id":      req.GetJobId(),
 		"hop_index":   req.GetHopIndex(),
@@ -39,7 +39,7 @@ func (s *RelayControlService) CreateForward(ctx context.Context, req *pb.CreateF
 		return nil, err
 	}
 	forward := resp.GetForward()
-	internal.Info("grpc RelayControl.CreateForward done", internal.Fields{
+	internal.Debug("grpc RelayControl.CreateForward done", internal.Fields{
 		"route_id":   forward.GetRouteId(),
 		"job_id":     forward.GetJobId(),
 		"forward_id": forward.GetForwardId(),
@@ -54,7 +54,7 @@ func (s *RelayControlService) CreateForward(ctx context.Context, req *pb.CreateF
 
 func (s *RelayControlService) GetForward(ctx context.Context, forwardID string) (*pb.ForwardSession, error) {
 	started := time.Now()
-	internal.Info("grpc RelayControl.GetForward start", internal.Fields{"forward_id": forwardID})
+	internal.Debug("grpc RelayControl.GetForward start", internal.Fields{"forward_id": forwardID})
 	resp, err := s.rc.GetForward(ctx, &pb.GetForwardRequest{ForwardId: forwardID})
 	if err != nil {
 		internal.Warn("grpc RelayControl.GetForward failed", internal.Fields{
@@ -65,7 +65,7 @@ func (s *RelayControlService) GetForward(ctx context.Context, forwardID string) 
 		return nil, err
 	}
 	forward := resp.GetForward()
-	internal.Info("grpc RelayControl.GetForward done", internal.Fields{
+	internal.Debug("grpc RelayControl.GetForward done", internal.Fields{
 		"route_id":   forward.GetRouteId(),
 		"job_id":     forward.GetJobId(),
 		"forward_id": forward.GetForwardId(),
@@ -77,7 +77,7 @@ func (s *RelayControlService) GetForward(ctx context.Context, forwardID string) 
 
 func (s *RelayControlService) ListForwards(ctx context.Context, routeID, jobID string) ([]*pb.ForwardSession, error) {
 	started := time.Now()
-	internal.Info("grpc RelayControl.ListForwards start", internal.Fields{
+	internal.Debug("grpc RelayControl.ListForwards start", internal.Fields{
 		"route_id": routeID,
 		"job_id":   jobID,
 	})
@@ -92,7 +92,7 @@ func (s *RelayControlService) ListForwards(ctx context.Context, routeID, jobID s
 		return nil, err
 	}
 	forwards := resp.GetForwards()
-	internal.Info("grpc RelayControl.ListForwards done", internal.Fields{
+	internal.Debug("grpc RelayControl.ListForwards done", internal.Fields{
 		"route_id":   routeID,
 		"job_id":     jobID,
 		"forwards":   len(forwards),
@@ -103,7 +103,7 @@ func (s *RelayControlService) ListForwards(ctx context.Context, routeID, jobID s
 
 func (s *RelayControlService) DeleteForward(ctx context.Context, forwardID string) (bool, error) {
 	started := time.Now()
-	internal.Info("grpc RelayControl.DeleteForward start", internal.Fields{"forward_id": forwardID})
+	internal.Debug("grpc RelayControl.DeleteForward start", internal.Fields{"forward_id": forwardID})
 	resp, err := s.rc.DeleteForward(ctx, &pb.DeleteForwardRequest{ForwardId: forwardID})
 	if err != nil {
 		internal.Warn("grpc RelayControl.DeleteForward failed", internal.Fields{
@@ -114,7 +114,7 @@ func (s *RelayControlService) DeleteForward(ctx context.Context, forwardID strin
 		return false, err
 	}
 	ok := resp.GetOk()
-	internal.Info("grpc RelayControl.DeleteForward done", internal.Fields{
+	internal.Debug("grpc RelayControl.DeleteForward done", internal.Fields{
 		"forward_id": forwardID,
 		"ok":         ok,
 		"elapsed_ms": time.Since(started).Milliseconds(),

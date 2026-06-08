@@ -142,8 +142,7 @@ func SimpleCopy() *cobra.Command {
 	_ = cmd.Flags().MarkHidden("route-store")
 	cmd.Flags().StringVar(&opts.Protocol, "protocol", "", "Transfer data-plane protocol (udp|tcp)")
 	cmd.Flags().IntVar(&opts.ParallelStreams, "parallel-streams", 0, "Per-file parallel streams/ranges (0 uses config)")
-	cmd.Flags().StringVar(&opts.ConnectionOrigin, "connection-origin", "", "Which endpoint initiates the route/session connection (source|destination)")
-	cmd.Flags().StringVar(&opts.DataDirection, "data-direction", "", "Transfer data direction for the route/session (source-to-destination|destination-to-source)")
+	addRouteDirectionFlags(cmd, &opts.ConnectionOrigin, &opts.DataDirection)
 	cmd.Flags().StringVar(&opts.Direction, "direction", "forward", "Transfer direction over the prepared route (forward|reverse)")
 	cmd.Flags().StringVar(&opts.SessionID, "session-id", "", "Prepared route session ID")
 	cmd.Flags().StringVar(&opts.UDPFlowControl, "udp-flow-control", "", "UDP flow control mode (fixed|bbr)")
@@ -225,10 +224,10 @@ func applyPreparedRouteTemplate(cmd *cobra.Command, args []string, opts *CopyOpt
 	if !cmd.Flags().Changed("concurrency") && route.Concurrency > 0 {
 		opts.Concurrency = route.Concurrency
 	}
-	if !cmd.Flags().Changed("connection-origin") && strings.TrimSpace(route.ConnectionOrigin) != "" {
+	if !commandFlagChanged(cmd, "connect-from", "connection-origin") && strings.TrimSpace(route.ConnectionOrigin) != "" {
 		opts.ConnectionOrigin = route.ConnectionOrigin
 	}
-	if !cmd.Flags().Changed("data-direction") && strings.TrimSpace(route.DataDirection) != "" {
+	if !commandFlagChanged(cmd, "flow", "data-direction") && strings.TrimSpace(route.DataDirection) != "" {
 		opts.DataDirection = route.DataDirection
 	}
 	combinedVia := append([]string(nil), route.Via...)
@@ -274,10 +273,10 @@ func applyServerRouteConfig(cmd *cobra.Command, args []string, opts *CopyOptions
 	if !cmd.Flags().Changed("protocol") {
 		opts.Protocol = routeProtocolLabel(route.GetProtocol())
 	}
-	if !cmd.Flags().Changed("connection-origin") {
+	if !commandFlagChanged(cmd, "connect-from", "connection-origin") {
 		opts.ConnectionOrigin = routeConnectionOriginLabel(route.GetConnectionOrigin())
 	}
-	if !cmd.Flags().Changed("data-direction") {
+	if !commandFlagChanged(cmd, "flow", "data-direction") {
 		opts.DataDirection = routeDataDirectionLabel(route.GetDataDirection())
 	}
 	combinedVia := append([]string(nil), route.GetVia()...)

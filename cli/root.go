@@ -20,6 +20,7 @@ const (
 
 func NewRootCommand() *cobra.Command {
 	var appConfigPath string
+	var profileFlag string
 	var serverURLFlag string
 	var insecureControlFlag bool
 
@@ -33,12 +34,23 @@ func NewRootCommand() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to load app config: %w", err)
 			}
+			if !isProfileConfigCommand(cmd) {
+				profileName := strings.TrimSpace(profileFlag)
+				if profileName == "" {
+					profileName = strings.TrimSpace(cfg.ActiveProfile)
+				}
+				if profileName != "" {
+					if err := cfg.ApplyProfile(profileName); err != nil {
+						return err
+					}
+				}
+			}
 
 			// Override ServerURL if flag is set
 			if serverURLFlag != "" {
 				cfg.ServerURL = serverURLFlag
 			}
-			if cmd.Flags().Changed("insecure-control") {
+			if cmd.Root().PersistentFlags().Changed("insecure-control") {
 				cfg.InsecureControl = insecureControlFlag
 			}
 			if err := internal.ConfigureLogger(cfg.LogLevel); err != nil {
@@ -78,6 +90,7 @@ func NewRootCommand() *cobra.Command {
 	}
 
 	rootCmd.PersistentFlags().StringVar(&appConfigPath, "app-config", "", "Path to app config file (TOML)")
+	rootCmd.PersistentFlags().StringVar(&profileFlag, "profile", "", "Named control-plane profile to use")
 	rootCmd.PersistentFlags().StringVar(&serverURLFlag, "server-url", "", "URL of the server to connect to")
 	rootCmd.PersistentFlags().BoolVar(&insecureControlFlag, "insecure-control", false, "Use insecure gRPC control-plane connection without TLS")
 
@@ -88,8 +101,18 @@ func NewRootCommand() *cobra.Command {
 	rootCmd.AddCommand(RouteCommand())
 	rootCmd.AddCommand(ScheduleCommand())
 	rootCmd.AddCommand(ConfigCommand())
+	rootCmd.AddCommand(ProfileCommand())
 
 	return rootCmd
+}
+
+func isProfileConfigCommand(cmd *cobra.Command) bool {
+	for c := cmd; c != nil; c = c.Parent() {
+		if c.Name() == "profile" {
+			return true
+		}
+	}
+	return false
 }
 
 // Helper function for subcommands to get appData

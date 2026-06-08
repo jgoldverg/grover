@@ -19,7 +19,7 @@ func NewRouteConfigService(conn *grpc.ClientConn) *RouteConfigService {
 
 func (s *RouteConfigService) PutRoute(ctx context.Context, route *pb.RouteConfig) (*pb.RouteConfig, error) {
 	started := time.Now()
-	internal.Info("grpc RouteConfigControl.PutRoute start", internal.Fields{
+	internal.Debug("grpc RouteConfigControl.PutRoute start", internal.Fields{
 		"route_id":          route.GetName(),
 		"source":            route.GetSource(),
 		"destination":       route.GetDestination(),
@@ -38,7 +38,7 @@ func (s *RouteConfigService) PutRoute(ctx context.Context, route *pb.RouteConfig
 		return nil, err
 	}
 	out := resp.GetRoute()
-	internal.Info("grpc RouteConfigControl.PutRoute done", internal.Fields{
+	internal.Debug("grpc RouteConfigControl.PutRoute done", internal.Fields{
 		"route_id":     out.GetName(),
 		"elapsed_ms":   time.Since(started).Milliseconds(),
 		"updated_unix": out.GetUpdatedAtUnixNano(),
@@ -48,7 +48,7 @@ func (s *RouteConfigService) PutRoute(ctx context.Context, route *pb.RouteConfig
 
 func (s *RouteConfigService) GetRoute(ctx context.Context, name string) (*pb.RouteConfig, error) {
 	started := time.Now()
-	internal.Info("grpc RouteConfigControl.GetRoute start", internal.Fields{"route_id": name})
+	internal.Debug("grpc RouteConfigControl.GetRoute start", internal.Fields{"route_id": name})
 	resp, err := s.rc.GetRoute(ctx, &pb.GetRouteRequest{Name: name})
 	if err != nil {
 		internal.Warn("grpc RouteConfigControl.GetRoute failed", internal.Fields{
@@ -59,7 +59,7 @@ func (s *RouteConfigService) GetRoute(ctx context.Context, name string) (*pb.Rou
 		return nil, err
 	}
 	route := resp.GetRoute()
-	internal.Info("grpc RouteConfigControl.GetRoute done", internal.Fields{
+	internal.Debug("grpc RouteConfigControl.GetRoute done", internal.Fields{
 		"route_id":          route.GetName(),
 		"source":            route.GetSource(),
 		"destination":       route.GetDestination(),
@@ -74,7 +74,7 @@ func (s *RouteConfigService) GetRoute(ctx context.Context, name string) (*pb.Rou
 
 func (s *RouteConfigService) ListRoutes(ctx context.Context) ([]*pb.RouteConfig, error) {
 	started := time.Now()
-	internal.Info("grpc RouteConfigControl.ListRoutes start", nil)
+	internal.Debug("grpc RouteConfigControl.ListRoutes start", nil)
 	resp, err := s.rc.ListRoutes(ctx, &pb.ListRoutesRequest{})
 	if err != nil {
 		internal.Warn("grpc RouteConfigControl.ListRoutes failed", internal.Fields{
@@ -84,7 +84,7 @@ func (s *RouteConfigService) ListRoutes(ctx context.Context) ([]*pb.RouteConfig,
 		return nil, err
 	}
 	routes := resp.GetRoutes()
-	internal.Info("grpc RouteConfigControl.ListRoutes done", internal.Fields{
+	internal.Debug("grpc RouteConfigControl.ListRoutes done", internal.Fields{
 		"routes":     len(routes),
 		"elapsed_ms": time.Since(started).Milliseconds(),
 	})
@@ -93,7 +93,7 @@ func (s *RouteConfigService) ListRoutes(ctx context.Context) ([]*pb.RouteConfig,
 
 func (s *RouteConfigService) DeleteRoute(ctx context.Context, name string) (bool, error) {
 	started := time.Now()
-	internal.Info("grpc RouteConfigControl.DeleteRoute start", internal.Fields{"route_id": name})
+	internal.Debug("grpc RouteConfigControl.DeleteRoute start", internal.Fields{"route_id": name})
 	resp, err := s.rc.DeleteRoute(ctx, &pb.DeleteRouteRequest{Name: name})
 	if err != nil {
 		internal.Warn("grpc RouteConfigControl.DeleteRoute failed", internal.Fields{
@@ -104,7 +104,7 @@ func (s *RouteConfigService) DeleteRoute(ctx context.Context, name string) (bool
 		return false, err
 	}
 	ok := resp.GetOk()
-	internal.Info("grpc RouteConfigControl.DeleteRoute done", internal.Fields{
+	internal.Debug("grpc RouteConfigControl.DeleteRoute done", internal.Fields{
 		"route_id":   name,
 		"ok":         ok,
 		"elapsed_ms": time.Since(started).Milliseconds(),
