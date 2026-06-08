@@ -30,14 +30,37 @@ func (s *RouteConfigControlService) PutRoute(ctx context.Context, req *pb.PutRou
 	if s == nil || s.store == nil {
 		return nil, status.Error(codes.Unavailable, "route config service unavailable")
 	}
+	internal.Info("rpc RouteConfigControl.PutRoute received", internal.Fields{
+		"route_id":          req.GetRoute().GetName(),
+		"source":            req.GetRoute().GetSource(),
+		"destination":       req.GetRoute().GetDestination(),
+		"relays":            len(req.GetRoute().GetVia()),
+		"protocol":          req.GetRoute().GetProtocol().String(),
+		"connection_origin": req.GetRoute().GetConnectionOrigin().String(),
+		"data_direction":    req.GetRoute().GetDataDirection().String(),
+	})
 	route, err := routeConfigFromPB(req.GetRoute())
 	if err != nil {
+		internal.Warn("rpc RouteConfigControl.PutRoute rejected", internal.Fields{
+			internal.FieldError: err.Error(),
+			"route_id":          req.GetRoute().GetName(),
+		})
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	route, err = s.store.Put(ctx, route)
 	if err != nil {
+		internal.Warn("rpc RouteConfigControl.PutRoute failed", internal.Fields{
+			internal.FieldError: err.Error(),
+			"route_id":          route.Name,
+		})
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
+	internal.Info("rpc RouteConfigControl.PutRoute completed", internal.Fields{
+		"route_id":    route.Name,
+		"source":      route.Source,
+		"destination": route.Destination,
+		"relays":      len(route.Via),
+	})
 	return &pb.PutRouteResponse{Route: routeConfigToPB(route)}, nil
 }
 
@@ -46,13 +69,25 @@ func (s *RouteConfigControlService) GetRoute(ctx context.Context, req *pb.GetRou
 		return nil, status.Error(codes.Unavailable, "route config service unavailable")
 	}
 	name := strings.TrimSpace(req.GetName())
+	internal.Info("rpc RouteConfigControl.GetRoute received", internal.Fields{"route_id": name})
 	route, ok, err := s.store.Get(ctx, name)
 	if err != nil {
+		internal.Warn("rpc RouteConfigControl.GetRoute failed", internal.Fields{
+			internal.FieldError: err.Error(),
+			"route_id":          name,
+		})
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	if !ok {
+		internal.Warn("rpc RouteConfigControl.GetRoute not found", internal.Fields{"route_id": name})
 		return nil, status.Errorf(codes.NotFound, "route %q not found", name)
 	}
+	internal.Info("rpc RouteConfigControl.GetRoute completed", internal.Fields{
+		"route_id":    route.Name,
+		"source":      route.Source,
+		"destination": route.Destination,
+		"relays":      len(route.Via),
+	})
 	return &pb.GetRouteResponse{Route: routeConfigToPB(route)}, nil
 }
 

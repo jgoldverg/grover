@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jgoldverg/grover/internal"
 	groverPb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -22,28 +23,71 @@ func NewRouteSessionControlService() *RouteSessionControlService {
 }
 
 func (s *RouteSessionControlService) CreateRouteSession(ctx context.Context, req *groverPb.CreateRouteSessionRequest) (*groverPb.CreateRouteSessionResponse, error) {
+	internal.Info("rpc RouteSessionControl.CreateRouteSession received", internal.Fields{
+		"route_id":          req.GetRouteId(),
+		"session_id":        req.GetSessionId(),
+		"job_id":            req.GetJobId(),
+		"protocol":          req.GetProtocol().String(),
+		"connection_origin": req.GetConnectionOrigin().String(),
+		"data_direction":    req.GetDataDirection().String(),
+		"hops":              len(req.GetHops()),
+		"reverse_hops":      len(req.GetReverseHops()),
+	})
 	createReq, err := createRouteSessionRequestFromPB(req)
 	if err != nil {
+		internal.Warn("rpc RouteSessionControl.CreateRouteSession rejected", internal.Fields{
+			internal.FieldError: err.Error(),
+			"route_id":          req.GetRouteId(),
+			"session_id":        req.GetSessionId(),
+		})
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	session, err := s.manager.Create(createReq)
 	if err != nil {
+		internal.Warn("rpc RouteSessionControl.CreateRouteSession failed", internal.Fields{
+			internal.FieldError: err.Error(),
+			"route_id":          req.GetRouteId(),
+			"session_id":        req.GetSessionId(),
+		})
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
+	internal.Info("rpc RouteSessionControl.CreateRouteSession completed", internal.Fields{
+		"route_id":            session.RouteID,
+		"session_id":          session.SessionID,
+		"state":               session.State.String(),
+		"source_data":         endpointLabel(session.Source.GetDataEndpoint()),
+		"destination_data":    endpointLabel(session.Destination.GetDataEndpoint()),
+		"reverse_source":      endpointLabel(session.ReverseSource.GetDataEndpoint()),
+		"reverse_destination": endpointLabel(session.ReverseDest.GetDataEndpoint()),
+		"hops":                len(session.Hops),
+		"reverse_hops":        len(session.ReverseHops),
+	})
 	return &groverPb.CreateRouteSessionResponse{Session: routeSessionToPB(session)}, nil
 }
 
 func (s *RouteSessionControlService) GetRouteSession(ctx context.Context, req *groverPb.GetRouteSessionRequest) (*groverPb.GetRouteSessionResponse, error) {
 	sessionID := strings.TrimSpace(req.GetSessionId())
+	internal.Info("rpc RouteSessionControl.GetRouteSession received", internal.Fields{"session_id": sessionID})
 	session, ok := s.manager.Get(sessionID)
 	if !ok {
+		internal.Warn("rpc RouteSessionControl.GetRouteSession not found", internal.Fields{"session_id": sessionID})
 		return nil, status.Errorf(codes.NotFound, "route session %q not found", sessionID)
 	}
+	internal.Info("rpc RouteSessionControl.GetRouteSession completed", internal.Fields{
+		"route_id":   session.RouteID,
+		"session_id": session.SessionID,
+		"state":      session.State.String(),
+	})
 	return &groverPb.GetRouteSessionResponse{Session: routeSessionToPB(session)}, nil
 }
 
 func (s *RouteSessionControlService) ListRouteSessions(ctx context.Context, req *groverPb.ListRouteSessionsRequest) (*groverPb.ListRouteSessionsResponse, error) {
 	sessions := s.manager.List(req.GetRouteId(), req.GetJobId())
+	internal.Info("rpc RouteSessionControl.ListRouteSessions completed", internal.Fields{
+		"route_id": req.GetRouteId(),
+		"job_id":   req.GetJobId(),
+		"sessions": len(sessions),
+	})
 	return &groverPb.ListRouteSessionsResponse{Sessions: routeSessionsToPB(sessions)}, nil
 }
 
@@ -63,14 +107,29 @@ func (s *RouteSessionControlService) UpdateRouteSessionState(ctx context.Context
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "update route session state request is required")
 	}
+	internal.Info("rpc RouteSessionControl.UpdateRouteSessionState received", internal.Fields{
+		"session_id": req.GetSessionId(),
+		"state":      req.GetState().String(),
+		"error_text": strings.TrimSpace(req.GetErrorMessage()),
+	})
 	state := req.GetState()
 	if !validRouteSessionState(state) {
 		return nil, status.Errorf(codes.InvalidArgument, "unsupported route session state %s", state.String())
 	}
 	session, err := s.manager.updateState(req.GetSessionId(), state, strings.TrimSpace(req.GetErrorMessage()))
 	if err != nil {
+		internal.Warn("rpc RouteSessionControl.UpdateRouteSessionState failed", internal.Fields{
+			internal.FieldError: err.Error(),
+			"session_id":        req.GetSessionId(),
+			"state":             state.String(),
+		})
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
+	internal.Info("rpc RouteSessionControl.UpdateRouteSessionState completed", internal.Fields{
+		"route_id":   session.RouteID,
+		"session_id": session.SessionID,
+		"state":      session.State.String(),
+	})
 	return &groverPb.UpdateRouteSessionStateResponse{Session: routeSessionToPB(session)}, nil
 }
 

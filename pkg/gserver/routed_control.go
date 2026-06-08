@@ -25,10 +25,33 @@ func NewRelayControlService(cfg *internal.ServerConfig) (*RelayControlService, e
 }
 
 func (s *RelayControlService) CreateForward(ctx context.Context, req *groverPb.CreateForwardRequest) (*groverPb.CreateForwardResponse, error) {
+	internal.Info("rpc RelayControl.CreateForward received", internal.Fields{
+		"route_id":    req.GetRouteId(),
+		"job_id":      req.GetJobId(),
+		"hop_index":   req.GetHopIndex(),
+		"protocol":    req.GetProtocol().String(),
+		"egress":      endpointLabel(req.GetEgress()),
+		"ttl_seconds": req.GetTtlSeconds(),
+	})
 	forward, err := s.manager.Create(ctx, req)
 	if err != nil {
+		internal.Warn("rpc RelayControl.CreateForward rejected", internal.Fields{
+			internal.FieldError: err.Error(),
+			"route_id":          req.GetRouteId(),
+			"job_id":            req.GetJobId(),
+			"hop_index":         req.GetHopIndex(),
+		})
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
+	internal.Info("rpc RelayControl.CreateForward completed", internal.Fields{
+		"route_id":   forward.GetRouteId(),
+		"job_id":     forward.GetJobId(),
+		"forward_id": forward.GetForwardId(),
+		"hop_index":  forward.GetHopIndex(),
+		"ingress":    endpointLabel(forward.GetIngress()),
+		"egress":     endpointLabel(forward.GetEgress()),
+		"state":      forward.GetState().String(),
+	})
 	return &groverPb.CreateForwardResponse{Forward: forward}, nil
 }
 
@@ -103,18 +126,68 @@ func NewTransferJobControlService(cfg *internal.ServerConfig) *TransferJobContro
 }
 
 func (s *TransferJobControlService) PrepareTransferEndpoint(ctx context.Context, req *groverPb.PrepareTransferEndpointRequest) (*groverPb.PrepareTransferEndpointResponse, error) {
+	internal.Info("rpc TransferJobControl.PrepareTransferEndpoint received", internal.Fields{
+		"route_id":          req.GetRouteId(),
+		"session_id":        req.GetSessionId(),
+		"job_id":            req.GetJobId(),
+		"role":              req.GetRole().String(),
+		"protocol":          req.GetProtocol().String(),
+		"root":              req.GetRootPath(),
+		"bind":              endpointLabel(req.GetBind()),
+		"connection_origin": req.GetConnectionOrigin().String(),
+	})
 	endpoint, err := s.manager.PrepareEndpoint(ctx, req)
 	if err != nil {
+		internal.Warn("rpc TransferJobControl.PrepareTransferEndpoint rejected", internal.Fields{
+			internal.FieldError: err.Error(),
+			"route_id":          req.GetRouteId(),
+			"session_id":        req.GetSessionId(),
+			"job_id":            req.GetJobId(),
+			"role":              req.GetRole().String(),
+		})
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
+	internal.Info("rpc TransferJobControl.PrepareTransferEndpoint completed", internal.Fields{
+		"route_id":    endpoint.GetRouteId(),
+		"session_id":  endpoint.GetSessionId(),
+		"job_id":      endpoint.GetJobId(),
+		"endpoint_id": endpoint.GetEndpointId(),
+		"role":        endpoint.GetRole().String(),
+		"data":        endpointLabel(endpoint.GetDataEndpoint()),
+		"root":        endpoint.GetRootPath(),
+	})
 	return &groverPb.PrepareTransferEndpointResponse{Endpoint: endpoint}, nil
 }
 
 func (s *TransferJobControlService) StartTransferJob(ctx context.Context, req *groverPb.StartTransferJobRequest) (*groverPb.StartTransferJobResponse, error) {
+	internal.Info("rpc TransferJobControl.StartTransferJob received", internal.Fields{
+		"route_id":          req.GetRouteId(),
+		"session_id":        req.GetSessionId(),
+		"job_id":            req.GetJobId(),
+		"source_endpoint":   req.GetSource().GetEndpointId(),
+		"destination":       endpointLabel(req.GetDestination().GetDataEndpoint()),
+		"files_in_flight":   req.GetFilesInFlight(),
+		"streams_per_file":  req.GetStreamsPerFile(),
+		"paths":             len(req.GetPaths()),
+		"connection_origin": req.GetConnectionOrigin().String(),
+	})
 	job, err := s.manager.StartJob(ctx, req)
 	if err != nil {
+		internal.Warn("rpc TransferJobControl.StartTransferJob rejected", internal.Fields{
+			internal.FieldError: err.Error(),
+			"route_id":          req.GetRouteId(),
+			"session_id":        req.GetSessionId(),
+			"job_id":            req.GetJobId(),
+		})
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
+	internal.Info("rpc TransferJobControl.StartTransferJob completed", internal.Fields{
+		"route_id":    job.GetRouteId(),
+		"session_id":  job.GetSessionId(),
+		"job_id":      job.GetJobId(),
+		"state":       job.GetState().String(),
+		"files_total": len(job.GetFiles()),
+	})
 	return &groverPb.StartTransferJobResponse{Job: job}, nil
 }
 

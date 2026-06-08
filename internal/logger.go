@@ -2,6 +2,8 @@ package internal
 
 import (
 	"fmt"
+	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -100,7 +102,7 @@ func shouldLog(level Level) bool {
 	return level >= getLevel()
 }
 
-func log(level Level, msg string, fields Fields) {
+func log(level Level, msg string, fields Fields, callerSkip int) {
 	if !shouldLog(level) {
 		return
 	}
@@ -109,6 +111,7 @@ func log(level Level, msg string, fields Fields) {
 	logger := baseLogger.WithLevel(pterm.LogLevel(currentLevel))
 	loggerMu.RUnlock()
 
+	msg = callerPrefix(callerSkip) + " " + msg
 	args := makeLoggerArgs(fields)
 
 	switch level {
@@ -125,6 +128,14 @@ func log(level Level, msg string, fields Fields) {
 	default:
 		logger.Info(msg, args)
 	}
+}
+
+func callerPrefix(skip int) string {
+	_, file, line, ok := runtime.Caller(skip)
+	if !ok {
+		return "[unknown:0]"
+	}
+	return fmt.Sprintf("[%s:%d]", filepath.Base(file), line)
 }
 
 func makeLoggerArgs(fields Fields) []pterm.LoggerArgument {
@@ -145,7 +156,7 @@ func makeLoggerArgs(fields Fields) []pterm.LoggerArgument {
 	return args
 }
 
-func Debug(msg string, fields Fields) { log(LevelDebug, msg, fields) }
-func Info(msg string, fields Fields)  { log(LevelInfo, msg, fields) }
-func Warn(msg string, fields Fields)  { log(LevelWarn, msg, fields) }
-func Error(msg string, fields Fields) { log(LevelError, msg, fields) }
+func Debug(msg string, fields Fields) { log(LevelDebug, msg, fields, 2) }
+func Info(msg string, fields Fields)  { log(LevelInfo, msg, fields, 2) }
+func Warn(msg string, fields Fields)  { log(LevelWarn, msg, fields, 2) }
+func Error(msg string, fields Fields) { log(LevelError, msg, fields, 2) }

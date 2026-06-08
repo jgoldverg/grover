@@ -107,10 +107,12 @@ func (c *Client) Initialize(ctx context.Context, policy util.RoutePolicy) error 
 	)
 
 	if wantRemote {
-		internal.Info("dialing the remote server", internal.Fields{
+		internal.Info("control-plane dial started", internal.Fields{
 			"server_url":   c.cfg.ServerURL,
 			"ca_cert_file": c.cfg.CACertFile,
+			"insecure":     c.cfg.InsecureControl,
 		})
+		started := time.Now()
 		cc, err = c.dialControl(ctx, c.cfg.ServerURL, c.cfg.CACertFile, c.cfg.InsecureControl)
 		if err != nil {
 			return err
@@ -119,7 +121,11 @@ func (c *Client) Initialize(ctx context.Context, policy util.RoutePolicy) error 
 			_ = cc.Close()
 			return err
 		}
-		internal.Info(cc.GetState().String(), nil)
+		internal.Info("control-plane connection ready", internal.Fields{
+			"server_url": c.cfg.ServerURL,
+			"state":      cc.GetState().String(),
+			"elapsed_ms": time.Since(started).Milliseconds(),
+		})
 
 		ci = cc
 	}

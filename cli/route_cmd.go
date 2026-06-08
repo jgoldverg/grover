@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/jgoldverg/grover/internal"
 	"github.com/jgoldverg/grover/pkg/gclient"
 	pb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
 	"github.com/jgoldverg/grover/pkg/util"
@@ -425,6 +426,13 @@ func materializeRelayChainToEndpoint(cmd *cobra.Command, routeID string, jobID s
 	if next == nil || strings.TrimSpace(next.GetHost()) == "" || next.GetPort() == 0 {
 		return func() {}, nil, nil, fmt.Errorf("data endpoint is required to materialize relay chain")
 	}
+	internal.Info("materializing relay chain", internal.Fields{
+		"route_id":  routeID,
+		"job_id":    jobID,
+		"protocol":  protocol.String(),
+		"relays":    len(relays),
+		"final_hop": endpointLabelForLog(next),
+	})
 	baseCfg := GetAppConfig(cmd)
 	if baseCfg == nil && len(relays) > 0 {
 		return func() {}, nil, nil, fmt.Errorf("app config unavailable")
@@ -436,6 +444,11 @@ func materializeRelayChainToEndpoint(cmd *cobra.Command, routeID string, jobID s
 	leases := []relayLease{}
 	forwards := []*pb.ForwardSession{}
 	cleanup := func() {
+		internal.Info("calling cleanup in materializeRelayForwards", internal.Fields{
+			"jobID":   jobID,
+			"routeID": routeID,
+			"relays":  relays,
+		})
 		for i := len(leases) - 1; i >= 0; i-- {
 			if relay := leases[i].client.RelayControl(); relay != nil {
 				_, _ = relay.DeleteForward(cmd.Context(), leases[i].id)
@@ -446,6 +459,13 @@ func materializeRelayChainToEndpoint(cmd *cobra.Command, routeID string, jobID s
 	for i := len(relays) - 1; i >= 0; i-- {
 		relayCfg := *baseCfg
 		relayCfg.ServerURL = relays[i].ControlEndpoint
+		internal.Info("dialing relay control endpoint", internal.Fields{
+			"route_id": routeID,
+			"job_id":   jobID,
+			"relay":    relays[i].ControlEndpoint,
+			"hop":      i + 1,
+			"egress":   endpointLabelForLog(next),
+		})
 		client := gclient.NewClient(relayCfg)
 		if err := client.Initialize(cmd.Context(), util.RouteForceRemote); err != nil {
 			cleanup()
@@ -470,6 +490,15 @@ func materializeRelayChainToEndpoint(cmd *cobra.Command, routeID string, jobID s
 			cleanup()
 			return func() {}, nil, nil, err
 		}
+		internal.Info("relay forward materialized", internal.Fields{
+			"route_id":   routeID,
+			"job_id":     jobID,
+			"relay":      relays[i].ControlEndpoint,
+			"forward_id": forward.GetForwardId(),
+			"hop":        forward.GetHopIndex(),
+			"ingress":    endpointLabelForLog(forward.GetIngress()),
+			"egress":     endpointLabelForLog(forward.GetEgress()),
+		})
 		leases = append(leases, relayLease{client: client, id: forward.GetForwardId()})
 		forwards = append(forwards, forward)
 		next = clonePBEndpoint(forward.GetIngress())
@@ -528,6 +557,16 @@ func prepareServerRouteSession(cmd *cobra.Command, route *pb.RouteConfig, sessio
 	if sessionID == "" {
 		sessionID = newTransferJobID(route.GetName(), time.Now())
 	}
+	internal.Info("preparing route session", internal.Fields{
+		"route_id":          route.GetName(),
+		"session_id":        sessionID,
+		"source":            route.GetSource(),
+		"destination":       route.GetDestination(),
+		"relays":            len(route.GetVia()),
+		"protocol":          route.GetProtocol().String(),
+		"connection_origin": route.GetConnectionOrigin().String(),
+		"data_direction":    route.GetDataDirection().String(),
+	})
 	tmpl, err := storedRouteTemplateFromServerRoute(route, "/", "/")
 	if err != nil {
 		return nil, err
@@ -544,6 +583,11 @@ func prepareServerRouteSession(cmd *cobra.Command, route *pb.RouteConfig, sessio
 	sourceCfg.ServerURL = route.GetSource()
 	destCfg := *baseCfg
 	destCfg.ServerURL = route.GetDestination()
+	internal.Info("opening source route control", internal.Fields{
+		"route_id":   route.GetName(),
+		"session_id": sessionID,
+		"source":     sourceCfg.ServerURL,
+	})
 	sourceClient := gclient.NewClient(sourceCfg)
 	if err := sourceClient.Initialize(cmd.Context(), util.RouteForceRemote); err != nil {
 		return nil, err
@@ -551,6 +595,11 @@ func prepareServerRouteSession(cmd *cobra.Command, route *pb.RouteConfig, sessio
 	defer sourceClient.Close()
 	destClient := sourceClient
 	if destCfg.ServerURL != sourceCfg.ServerURL {
+		internal.Info("opening destination route control", internal.Fields{
+			"route_id":    route.GetName(),
+			"session_id":  sessionID,
+			"destination": destCfg.ServerURL,
+		})
 		destClient = gclient.NewClient(destCfg)
 		if err := destClient.Initialize(cmd.Context(), util.RouteForceRemote); err != nil {
 			return nil, err
@@ -585,8 +634,23 @@ func prepareServerRouteSession(cmd *cobra.Command, route *pb.RouteConfig, sessio
 		TtlSeconds:       3600,
 	})
 	if err != nil {
+		internal.Error("failed to prepare source endpoint", internal.Fields{
+			internal.FieldError: err.Error(),
+			"sessionID":         sessionID,
+			"jobID":             sessionID,
+			"Role":              pb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_SOURCE,
+			"Protocol":          protocol,
+			"ConnectionOrigin":  connectionOrigin,
+		})
 		return nil, err
 	}
+	internal.Info("source endpoint prepared", internal.Fields{
+		"route_id":    route.GetName(),
+		"session_id":  sessionID,
+		"endpoint_id": source.GetEndpointId(),
+		"data":        endpointLabelForLog(source.GetDataEndpoint()),
+		"root":        source.GetRootPath(),
+	})
 	cleanup := func() {}
 	forwards := []*pb.ForwardSession(nil)
 	destBind := (*pb.DataEndpoint)(nil)
@@ -615,6 +679,13 @@ func prepareServerRouteSession(cmd *cobra.Command, route *pb.RouteConfig, sessio
 		cleanup()
 		return nil, err
 	}
+	internal.Info("destination endpoint prepared", internal.Fields{
+		"route_id":    route.GetName(),
+		"session_id":  sessionID,
+		"endpoint_id": dest.GetEndpointId(),
+		"data":        endpointLabelForLog(dest.GetDataEndpoint()),
+		"root":        dest.GetRootPath(),
+	})
 	if connectionOrigin != pb.ConnectionOrigin_CONNECTION_ORIGIN_DESTINATION {
 		cleanup, forwards, err = materializeRelayForwards(cmd, route.GetName(), sessionID, protocol, plan.Relays, dest)
 		if err != nil {
@@ -651,6 +722,17 @@ func prepareServerRouteSession(cmd *cobra.Command, route *pb.RouteConfig, sessio
 		cleanup()
 		return nil, err
 	}
+	internal.Info("route session ready", internal.Fields{
+		"route_id":            session.GetRouteId(),
+		"session_id":          session.GetSessionId(),
+		"state":               session.GetState().String(),
+		"source_data":         endpointLabelForLog(session.GetSource().GetDataEndpoint()),
+		"destination_data":    endpointLabelForLog(session.GetDestination().GetDataEndpoint()),
+		"reverse_source":      endpointLabelForLog(session.GetReverseSource().GetDataEndpoint()),
+		"reverse_destination": endpointLabelForLog(session.GetReverseDestination().GetDataEndpoint()),
+		"hops":                len(session.GetHops()),
+		"reverse_hops":        len(session.GetReverseHops()),
+	})
 	return session, nil
 }
 
@@ -877,6 +959,13 @@ func clonePBEndpoint(ep *pb.DataEndpoint) *pb.DataEndpoint {
 		return nil
 	}
 	return &pb.DataEndpoint{Host: ep.GetHost(), Port: ep.GetPort()}
+}
+
+func endpointLabelForLog(ep *pb.DataEndpoint) string {
+	if ep == nil || strings.TrimSpace(ep.GetHost()) == "" || ep.GetPort() == 0 {
+		return "(none)"
+	}
+	return fmt.Sprintf("%s:%d", ep.GetHost(), ep.GetPort())
 }
 
 func clonePBTransferEndpoint(ep *pb.TransferEndpoint) *pb.TransferEndpoint {
@@ -1649,7 +1738,8 @@ func routeRelaysLabel(route storedRouteTemplate) string {
 
 func printStoredRouteTemplatePlan(w interface {
 	Write([]byte) (int, error)
-}, route storedRouteTemplate, relays []TransferRelayHop) {
+}, route storedRouteTemplate, relays []TransferRelayHop,
+) {
 	if w == nil {
 		return
 	}
