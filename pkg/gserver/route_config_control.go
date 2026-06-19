@@ -27,10 +27,14 @@ func NewRouteConfigControlService(cfg *internal.ServerConfig) (*RouteConfigContr
 }
 
 func (s *RouteConfigControlService) PutRoute(ctx context.Context, req *pb.PutRouteRequest) (*pb.PutRouteResponse, error) {
+	const rpcName = "RouteConfigControl.PutRoute"
+	started := time.Now()
 	if s == nil || s.store == nil {
-		return nil, status.Error(codes.Unavailable, "route config service unavailable")
+		err := status.Error(codes.Unavailable, "route config service unavailable")
+		internal.RPCFailed(rpcName, err, nil, time.Since(started))
+		return nil, err
 	}
-	internal.Info("rpc RouteConfigControl.PutRoute received", internal.Fields{
+	internal.RPCReceived(rpcName, internal.Fields{
 		"route_id":          req.GetRoute().GetName(),
 		"source":            req.GetRoute().GetSource(),
 		"destination":       req.GetRoute().GetDestination(),
@@ -41,79 +45,95 @@ func (s *RouteConfigControlService) PutRoute(ctx context.Context, req *pb.PutRou
 	})
 	route, err := routeConfigFromPB(req.GetRoute())
 	if err != nil {
-		internal.Warn("rpc RouteConfigControl.PutRoute rejected", internal.Fields{
-			internal.FieldError: err.Error(),
-			"route_id":          req.GetRoute().GetName(),
-		})
+		internal.RPCRejected(rpcName, err, internal.Fields{
+			"route_id": req.GetRoute().GetName(),
+		}, time.Since(started))
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	route, err = s.store.Put(ctx, route)
 	if err != nil {
-		internal.Warn("rpc RouteConfigControl.PutRoute failed", internal.Fields{
-			internal.FieldError: err.Error(),
-			"route_id":          route.Name,
-		})
+		internal.RPCFailed(rpcName, err, internal.Fields{
+			"route_id": route.Name,
+		}, time.Since(started))
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	internal.Info("rpc RouteConfigControl.PutRoute completed", internal.Fields{
+	internal.RPCCompleted(rpcName, internal.Fields{
 		"route_id":    route.Name,
 		"source":      route.Source,
 		"destination": route.Destination,
 		"relays":      len(route.Via),
-	})
+	}, time.Since(started))
 	return &pb.PutRouteResponse{Route: routeConfigToPB(route)}, nil
 }
 
 func (s *RouteConfigControlService) GetRoute(ctx context.Context, req *pb.GetRouteRequest) (*pb.GetRouteResponse, error) {
+	const rpcName = "RouteConfigControl.GetRoute"
+	started := time.Now()
 	if s == nil || s.store == nil {
-		return nil, status.Error(codes.Unavailable, "route config service unavailable")
+		err := status.Error(codes.Unavailable, "route config service unavailable")
+		internal.RPCFailed(rpcName, err, nil, time.Since(started))
+		return nil, err
 	}
 	name := strings.TrimSpace(req.GetName())
-	internal.Info("rpc RouteConfigControl.GetRoute received", internal.Fields{"route_id": name})
+	internal.RPCReceived(rpcName, internal.Fields{"route_id": name})
 	route, ok, err := s.store.Get(ctx, name)
 	if err != nil {
-		internal.Warn("rpc RouteConfigControl.GetRoute failed", internal.Fields{
-			internal.FieldError: err.Error(),
-			"route_id":          name,
-		})
+		internal.RPCFailed(rpcName, err, internal.Fields{
+			"route_id": name,
+		}, time.Since(started))
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	if !ok {
-		internal.Warn("rpc RouteConfigControl.GetRoute not found", internal.Fields{"route_id": name})
-		return nil, status.Errorf(codes.NotFound, "route %q not found", name)
+		err := status.Errorf(codes.NotFound, "route %q not found", name)
+		internal.RPCFailed(rpcName, err, internal.Fields{"route_id": name}, time.Since(started))
+		return nil, err
 	}
-	internal.Info("rpc RouteConfigControl.GetRoute completed", internal.Fields{
+	internal.RPCCompleted(rpcName, internal.Fields{
 		"route_id":    route.Name,
 		"source":      route.Source,
 		"destination": route.Destination,
 		"relays":      len(route.Via),
-	})
+	}, time.Since(started))
 	return &pb.GetRouteResponse{Route: routeConfigToPB(route)}, nil
 }
 
 func (s *RouteConfigControlService) ListRoutes(ctx context.Context, req *pb.ListRoutesRequest) (*pb.ListRoutesResponse, error) {
+	const rpcName = "RouteConfigControl.ListRoutes"
+	started := time.Now()
 	if s == nil || s.store == nil {
-		return nil, status.Error(codes.Unavailable, "route config service unavailable")
+		err := status.Error(codes.Unavailable, "route config service unavailable")
+		internal.RPCFailed(rpcName, err, nil, time.Since(started))
+		return nil, err
 	}
+	internal.RPCReceived(rpcName, nil)
 	routes, err := s.store.List(ctx)
 	if err != nil {
+		internal.RPCFailed(rpcName, err, nil, time.Since(started))
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	out := make([]*pb.RouteConfig, 0, len(routes))
 	for _, route := range routes {
 		out = append(out, routeConfigToPB(route))
 	}
+	internal.RPCCompleted(rpcName, internal.Fields{"routes": len(out)}, time.Since(started))
 	return &pb.ListRoutesResponse{Routes: out}, nil
 }
 
 func (s *RouteConfigControlService) DeleteRoute(ctx context.Context, req *pb.DeleteRouteRequest) (*pb.DeleteRouteResponse, error) {
+	const rpcName = "RouteConfigControl.DeleteRoute"
+	started := time.Now()
 	if s == nil || s.store == nil {
-		return nil, status.Error(codes.Unavailable, "route config service unavailable")
+		err := status.Error(codes.Unavailable, "route config service unavailable")
+		internal.RPCFailed(rpcName, err, nil, time.Since(started))
+		return nil, err
 	}
+	internal.RPCReceived(rpcName, internal.Fields{"route_id": req.GetName()})
 	ok, err := s.store.Delete(ctx, req.GetName())
 	if err != nil {
+		internal.RPCFailed(rpcName, err, internal.Fields{"route_id": req.GetName()}, time.Since(started))
 		return nil, status.Error(codes.Internal, err.Error())
 	}
+	internal.RPCCompleted(rpcName, internal.Fields{"route_id": req.GetName(), "deleted": ok}, time.Since(started))
 	return &pb.DeleteRouteResponse{Ok: ok}, nil
 }
 

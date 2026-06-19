@@ -23,7 +23,9 @@ func NewRouteSessionControlService() *RouteSessionControlService {
 }
 
 func (s *RouteSessionControlService) CreateRouteSession(ctx context.Context, req *groverPb.CreateRouteSessionRequest) (*groverPb.CreateRouteSessionResponse, error) {
-	internal.Info("rpc RouteSessionControl.CreateRouteSession received", internal.Fields{
+	const rpcName = "RouteSessionControl.CreateRouteSession"
+	started := time.Now()
+	internal.RPCReceived(rpcName, internal.Fields{
 		"route_id":          req.GetRouteId(),
 		"session_id":        req.GetSessionId(),
 		"job_id":            req.GetJobId(),
@@ -35,23 +37,21 @@ func (s *RouteSessionControlService) CreateRouteSession(ctx context.Context, req
 	})
 	createReq, err := createRouteSessionRequestFromPB(req)
 	if err != nil {
-		internal.Warn("rpc RouteSessionControl.CreateRouteSession rejected", internal.Fields{
-			internal.FieldError: err.Error(),
-			"route_id":          req.GetRouteId(),
-			"session_id":        req.GetSessionId(),
-		})
+		internal.RPCRejected(rpcName, err, internal.Fields{
+			"route_id":   req.GetRouteId(),
+			"session_id": req.GetSessionId(),
+		}, time.Since(started))
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	session, err := s.manager.Create(createReq)
 	if err != nil {
-		internal.Warn("rpc RouteSessionControl.CreateRouteSession failed", internal.Fields{
-			internal.FieldError: err.Error(),
-			"route_id":          req.GetRouteId(),
-			"session_id":        req.GetSessionId(),
-		})
+		internal.RPCFailed(rpcName, err, internal.Fields{
+			"route_id":   req.GetRouteId(),
+			"session_id": req.GetSessionId(),
+		}, time.Since(started))
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	internal.Info("rpc RouteSessionControl.CreateRouteSession completed", internal.Fields{
+	internal.RPCCompleted(rpcName, internal.Fields{
 		"route_id":            session.RouteID,
 		"session_id":          session.SessionID,
 		"state":               session.State.String(),
@@ -61,79 +61,121 @@ func (s *RouteSessionControlService) CreateRouteSession(ctx context.Context, req
 		"reverse_destination": endpointLabel(session.ReverseDest.GetDataEndpoint()),
 		"hops":                len(session.Hops),
 		"reverse_hops":        len(session.ReverseHops),
-	})
+	}, time.Since(started))
 	return &groverPb.CreateRouteSessionResponse{Session: routeSessionToPB(session)}, nil
 }
 
 func (s *RouteSessionControlService) GetRouteSession(ctx context.Context, req *groverPb.GetRouteSessionRequest) (*groverPb.GetRouteSessionResponse, error) {
+	const rpcName = "RouteSessionControl.GetRouteSession"
+	started := time.Now()
 	sessionID := strings.TrimSpace(req.GetSessionId())
-	internal.Info("rpc RouteSessionControl.GetRouteSession received", internal.Fields{"session_id": sessionID})
+	internal.RPCReceived(rpcName, internal.Fields{"session_id": sessionID})
 	session, ok := s.manager.Get(sessionID)
 	if !ok {
-		internal.Warn("rpc RouteSessionControl.GetRouteSession not found", internal.Fields{"session_id": sessionID})
-		return nil, status.Errorf(codes.NotFound, "route session %q not found", sessionID)
+		err := status.Errorf(codes.NotFound, "route session %q not found", sessionID)
+		internal.RPCFailed(rpcName, err, internal.Fields{"session_id": sessionID}, time.Since(started))
+		return nil, err
 	}
-	internal.Info("rpc RouteSessionControl.GetRouteSession completed", internal.Fields{
+	internal.RPCCompleted(rpcName, internal.Fields{
 		"route_id":   session.RouteID,
 		"session_id": session.SessionID,
 		"state":      session.State.String(),
-	})
+	}, time.Since(started))
 	return &groverPb.GetRouteSessionResponse{Session: routeSessionToPB(session)}, nil
 }
 
 func (s *RouteSessionControlService) ListRouteSessions(ctx context.Context, req *groverPb.ListRouteSessionsRequest) (*groverPb.ListRouteSessionsResponse, error) {
+	const rpcName = "RouteSessionControl.ListRouteSessions"
+	started := time.Now()
+	internal.RPCReceived(rpcName, internal.Fields{
+		"route_id": req.GetRouteId(),
+		"job_id":   req.GetJobId(),
+	})
 	sessions := s.manager.List(req.GetRouteId(), req.GetJobId())
-	internal.Info("rpc RouteSessionControl.ListRouteSessions completed", internal.Fields{
+	internal.RPCCompleted(rpcName, internal.Fields{
 		"route_id": req.GetRouteId(),
 		"job_id":   req.GetJobId(),
 		"sessions": len(sessions),
-	})
+	}, time.Since(started))
 	return &groverPb.ListRouteSessionsResponse{Sessions: routeSessionsToPB(sessions)}, nil
 }
 
 func (s *RouteSessionControlService) DeleteRouteSession(ctx context.Context, req *groverPb.DeleteRouteSessionRequest) (*groverPb.DeleteRouteSessionResponse, error) {
-	return &groverPb.DeleteRouteSessionResponse{Ok: s.manager.Delete(req.GetSessionId())}, nil
+	const rpcName = "RouteSessionControl.DeleteRouteSession"
+	started := time.Now()
+	internal.RPCReceived(rpcName, internal.Fields{"session_id": req.GetSessionId()})
+	ok := s.manager.Delete(req.GetSessionId())
+	internal.RPCCompleted(rpcName, internal.Fields{"session_id": req.GetSessionId(), "deleted": ok}, time.Since(started))
+	return &groverPb.DeleteRouteSessionResponse{Ok: ok}, nil
 }
 
 func (s *RouteSessionControlService) AbortRouteSession(ctx context.Context, req *groverPb.AbortRouteSessionRequest) (*groverPb.AbortRouteSessionResponse, error) {
+	const rpcName = "RouteSessionControl.AbortRouteSession"
+	started := time.Now()
+	internal.RPCReceived(rpcName, internal.Fields{"session_id": req.GetSessionId()})
 	session, err := s.manager.Abort(req.GetSessionId())
 	if err != nil {
+		internal.RPCFailed(rpcName, err, internal.Fields{"session_id": req.GetSessionId()}, time.Since(started))
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
+	internal.RPCCompleted(rpcName, internal.Fields{
+		"route_id":   session.RouteID,
+		"session_id": session.SessionID,
+		"state":      session.State.String(),
+	}, time.Since(started))
 	return &groverPb.AbortRouteSessionResponse{Session: routeSessionToPB(session)}, nil
 }
 
 func (s *RouteSessionControlService) UpdateRouteSessionState(ctx context.Context, req *groverPb.UpdateRouteSessionStateRequest) (*groverPb.UpdateRouteSessionStateResponse, error) {
+	const rpcName = "RouteSessionControl.UpdateRouteSessionState"
+	started := time.Now()
 	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "update route session state request is required")
+		err := status.Error(codes.InvalidArgument, "update route session state request is required")
+		internal.RPCRejected(rpcName, err, nil, time.Since(started))
+		return nil, err
 	}
-	internal.Info("rpc RouteSessionControl.UpdateRouteSessionState received", internal.Fields{
+	internal.RPCReceived(rpcName, internal.Fields{
 		"session_id": req.GetSessionId(),
 		"state":      req.GetState().String(),
 		"error_text": strings.TrimSpace(req.GetErrorMessage()),
 	})
 	state := req.GetState()
 	if !validRouteSessionState(state) {
-		return nil, status.Errorf(codes.InvalidArgument, "unsupported route session state %s", state.String())
+		err := status.Errorf(codes.InvalidArgument, "unsupported route session state %s", state.String())
+		internal.RPCRejected(rpcName, err, internal.Fields{"session_id": req.GetSessionId(), "state": state.String()}, time.Since(started))
+		return nil, err
 	}
 	session, err := s.manager.updateState(req.GetSessionId(), state, strings.TrimSpace(req.GetErrorMessage()))
 	if err != nil {
-		internal.Warn("rpc RouteSessionControl.UpdateRouteSessionState failed", internal.Fields{
-			internal.FieldError: err.Error(),
-			"session_id":        req.GetSessionId(),
-			"state":             state.String(),
-		})
+		internal.RPCFailed(rpcName, err, internal.Fields{
+			"session_id": req.GetSessionId(),
+			"state":      state.String(),
+		}, time.Since(started))
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
-	internal.Info("rpc RouteSessionControl.UpdateRouteSessionState completed", internal.Fields{
+	internal.RPCCompleted(rpcName, internal.Fields{
 		"route_id":   session.RouteID,
 		"session_id": session.SessionID,
 		"state":      session.State.String(),
-	})
+	}, time.Since(started))
 	return &groverPb.UpdateRouteSessionStateResponse{Session: routeSessionToPB(session)}, nil
 }
 
 func (s *RouteSessionControlService) StreamRouteSessionStats(req *groverPb.StreamRouteSessionStatsRequest, stream groverPb.RouteSessionControl_StreamRouteSessionStatsServer) error {
+	const rpcName = "RouteSessionControl.StreamRouteSessionStats"
+	started := time.Now()
+	internal.RPCReceived(rpcName, internal.Fields{
+		"session_id": req.GetSessionId(),
+		"route_id":   req.GetRouteId(),
+		"job_id":     req.GetJobId(),
+	})
+	defer func() {
+		internal.RPCCompleted(rpcName, internal.Fields{
+			"session_id": req.GetSessionId(),
+			"route_id":   req.GetRouteId(),
+			"job_id":     req.GetJobId(),
+		}, time.Since(started))
+	}()
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	for {

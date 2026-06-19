@@ -25,7 +25,9 @@ func NewRelayControlService(cfg *internal.ServerConfig) (*RelayControlService, e
 }
 
 func (s *RelayControlService) CreateForward(ctx context.Context, req *groverPb.CreateForwardRequest) (*groverPb.CreateForwardResponse, error) {
-	internal.Info("rpc RelayControl.CreateForward received", internal.Fields{
+	const rpcName = "RelayControl.CreateForward"
+	started := time.Now()
+	internal.RPCReceived(rpcName, internal.Fields{
 		"route_id":    req.GetRouteId(),
 		"job_id":      req.GetJobId(),
 		"hop_index":   req.GetHopIndex(),
@@ -35,15 +37,14 @@ func (s *RelayControlService) CreateForward(ctx context.Context, req *groverPb.C
 	})
 	forward, err := s.manager.Create(ctx, req)
 	if err != nil {
-		internal.Warn("rpc RelayControl.CreateForward rejected", internal.Fields{
-			internal.FieldError: err.Error(),
-			"route_id":          req.GetRouteId(),
-			"job_id":            req.GetJobId(),
-			"hop_index":         req.GetHopIndex(),
-		})
+		internal.RPCRejected(rpcName, err, internal.Fields{
+			"route_id":  req.GetRouteId(),
+			"job_id":    req.GetJobId(),
+			"hop_index": req.GetHopIndex(),
+		}, time.Since(started))
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	internal.Info("rpc RelayControl.CreateForward completed", internal.Fields{
+	internal.RPCCompleted(rpcName, internal.Fields{
 		"route_id":   forward.GetRouteId(),
 		"job_id":     forward.GetJobId(),
 		"forward_id": forward.GetForwardId(),
@@ -51,37 +52,91 @@ func (s *RelayControlService) CreateForward(ctx context.Context, req *groverPb.C
 		"ingress":    endpointLabel(forward.GetIngress()),
 		"egress":     endpointLabel(forward.GetEgress()),
 		"state":      forward.GetState().String(),
-	})
+	}, time.Since(started))
 	return &groverPb.CreateForwardResponse{Forward: forward}, nil
 }
 
 func (s *RelayControlService) GetForward(ctx context.Context, req *groverPb.GetForwardRequest) (*groverPb.GetForwardResponse, error) {
+	const rpcName = "RelayControl.GetForward"
+	started := time.Now()
+	internal.RPCReceived(rpcName, internal.Fields{"forward_id": req.GetForwardId()})
 	forward, err := s.manager.Get(req.GetForwardId())
 	if err != nil {
+		internal.RPCFailed(rpcName, err, internal.Fields{"forward_id": req.GetForwardId()}, time.Since(started))
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
+	internal.RPCCompleted(rpcName, internal.Fields{
+		"route_id":   forward.GetRouteId(),
+		"job_id":     forward.GetJobId(),
+		"forward_id": forward.GetForwardId(),
+		"state":      forward.GetState().String(),
+	}, time.Since(started))
 	return &groverPb.GetForwardResponse{Forward: forward}, nil
 }
 
 func (s *RelayControlService) ListForwards(ctx context.Context, req *groverPb.ListForwardsRequest) (*groverPb.ListForwardsResponse, error) {
+	const rpcName = "RelayControl.ListForwards"
+	started := time.Now()
+	internal.RPCReceived(rpcName, internal.Fields{
+		"route_id": req.GetRouteId(),
+		"job_id":   req.GetJobId(),
+	})
+	forwards := s.manager.List(req.GetRouteId(), req.GetJobId())
+	internal.RPCCompleted(rpcName, internal.Fields{
+		"route_id": req.GetRouteId(),
+		"job_id":   req.GetJobId(),
+		"forwards": len(forwards),
+	}, time.Since(started))
 	return &groverPb.ListForwardsResponse{
-		Forwards: s.manager.List(req.GetRouteId(), req.GetJobId()),
+		Forwards: forwards,
 	}, nil
 }
 
 func (s *RelayControlService) DeleteForward(ctx context.Context, req *groverPb.DeleteForwardRequest) (*groverPb.DeleteForwardResponse, error) {
-	return &groverPb.DeleteForwardResponse{Ok: s.manager.Delete(req.GetForwardId())}, nil
+	const rpcName = "RelayControl.DeleteForward"
+	started := time.Now()
+	internal.RPCReceived(rpcName, internal.Fields{"forward_id": req.GetForwardId()})
+	ok := s.manager.Delete(req.GetForwardId())
+	internal.RPCCompleted(rpcName, internal.Fields{"forward_id": req.GetForwardId(), "deleted": ok}, time.Since(started))
+	return &groverPb.DeleteForwardResponse{Ok: ok}, nil
 }
 
 func (s *RelayControlService) RenewForward(ctx context.Context, req *groverPb.RenewForwardRequest) (*groverPb.RenewForwardResponse, error) {
+	const rpcName = "RelayControl.RenewForward"
+	started := time.Now()
+	internal.RPCReceived(rpcName, internal.Fields{
+		"forward_id":  req.GetForwardId(),
+		"ttl_seconds": req.GetTtlSeconds(),
+	})
 	forward, err := s.manager.Renew(req.GetForwardId(), req.GetTtlSeconds())
 	if err != nil {
+		internal.RPCFailed(rpcName, err, internal.Fields{"forward_id": req.GetForwardId()}, time.Since(started))
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
+	internal.RPCCompleted(rpcName, internal.Fields{
+		"forward_id": forward.GetForwardId(),
+		"route_id":   forward.GetRouteId(),
+		"job_id":     forward.GetJobId(),
+		"state":      forward.GetState().String(),
+	}, time.Since(started))
 	return &groverPb.RenewForwardResponse{Forward: forward}, nil
 }
 
 func (s *RelayControlService) StreamForwardStats(req *groverPb.StreamForwardStatsRequest, stream groverPb.RelayControl_StreamForwardStatsServer) error {
+	const rpcName = "RelayControl.StreamForwardStats"
+	started := time.Now()
+	internal.RPCReceived(rpcName, internal.Fields{
+		"forward_id": req.GetForwardId(),
+		"route_id":   req.GetRouteId(),
+		"job_id":     req.GetJobId(),
+	})
+	defer func() {
+		internal.RPCCompleted(rpcName, internal.Fields{
+			"forward_id": req.GetForwardId(),
+			"route_id":   req.GetRouteId(),
+			"job_id":     req.GetJobId(),
+		}, time.Since(started))
+	}()
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -126,7 +181,9 @@ func NewTransferJobControlService(cfg *internal.ServerConfig) *TransferJobContro
 }
 
 func (s *TransferJobControlService) PrepareTransferEndpoint(ctx context.Context, req *groverPb.PrepareTransferEndpointRequest) (*groverPb.PrepareTransferEndpointResponse, error) {
-	internal.Info("rpc TransferJobControl.PrepareTransferEndpoint received", internal.Fields{
+	const rpcName = "TransferJobControl.PrepareTransferEndpoint"
+	started := time.Now()
+	internal.RPCReceived(rpcName, internal.Fields{
 		"route_id":          req.GetRouteId(),
 		"session_id":        req.GetSessionId(),
 		"job_id":            req.GetJobId(),
@@ -138,16 +195,15 @@ func (s *TransferJobControlService) PrepareTransferEndpoint(ctx context.Context,
 	})
 	endpoint, err := s.manager.PrepareEndpoint(ctx, req)
 	if err != nil {
-		internal.Warn("rpc TransferJobControl.PrepareTransferEndpoint rejected", internal.Fields{
-			internal.FieldError: err.Error(),
-			"route_id":          req.GetRouteId(),
-			"session_id":        req.GetSessionId(),
-			"job_id":            req.GetJobId(),
-			"role":              req.GetRole().String(),
-		})
+		internal.RPCRejected(rpcName, err, internal.Fields{
+			"route_id":   req.GetRouteId(),
+			"session_id": req.GetSessionId(),
+			"job_id":     req.GetJobId(),
+			"role":       req.GetRole().String(),
+		}, time.Since(started))
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	internal.Info("rpc TransferJobControl.PrepareTransferEndpoint completed", internal.Fields{
+	internal.RPCCompleted(rpcName, internal.Fields{
 		"route_id":    endpoint.GetRouteId(),
 		"session_id":  endpoint.GetSessionId(),
 		"job_id":      endpoint.GetJobId(),
@@ -155,12 +211,14 @@ func (s *TransferJobControlService) PrepareTransferEndpoint(ctx context.Context,
 		"role":        endpoint.GetRole().String(),
 		"data":        endpointLabel(endpoint.GetDataEndpoint()),
 		"root":        endpoint.GetRootPath(),
-	})
+	}, time.Since(started))
 	return &groverPb.PrepareTransferEndpointResponse{Endpoint: endpoint}, nil
 }
 
 func (s *TransferJobControlService) StartTransferJob(ctx context.Context, req *groverPb.StartTransferJobRequest) (*groverPb.StartTransferJobResponse, error) {
-	internal.Info("rpc TransferJobControl.StartTransferJob received", internal.Fields{
+	const rpcName = "TransferJobControl.StartTransferJob"
+	started := time.Now()
+	internal.RPCReceived(rpcName, internal.Fields{
 		"route_id":          req.GetRouteId(),
 		"session_id":        req.GetSessionId(),
 		"job_id":            req.GetJobId(),
@@ -173,53 +231,106 @@ func (s *TransferJobControlService) StartTransferJob(ctx context.Context, req *g
 	})
 	job, err := s.manager.StartJob(ctx, req)
 	if err != nil {
-		internal.Warn("rpc TransferJobControl.StartTransferJob rejected", internal.Fields{
-			internal.FieldError: err.Error(),
-			"route_id":          req.GetRouteId(),
-			"session_id":        req.GetSessionId(),
-			"job_id":            req.GetJobId(),
-		})
+		internal.RPCRejected(rpcName, err, internal.Fields{
+			"route_id":   req.GetRouteId(),
+			"session_id": req.GetSessionId(),
+			"job_id":     req.GetJobId(),
+		}, time.Since(started))
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	internal.Info("rpc TransferJobControl.StartTransferJob completed", internal.Fields{
+	internal.RPCCompleted(rpcName, internal.Fields{
 		"route_id":    job.GetRouteId(),
 		"session_id":  job.GetSessionId(),
 		"job_id":      job.GetJobId(),
 		"state":       job.GetState().String(),
 		"files_total": len(job.GetFiles()),
-	})
+	}, time.Since(started))
 	return &groverPb.StartTransferJobResponse{Job: job}, nil
 }
 
 func (s *TransferJobControlService) GetTransferJob(ctx context.Context, req *groverPb.GetTransferJobRequest) (*groverPb.GetTransferJobResponse, error) {
+	const rpcName = "TransferJobControl.GetTransferJob"
+	started := time.Now()
+	internal.RPCReceived(rpcName, internal.Fields{"job_id": req.GetJobId()})
 	job, err := s.manager.GetJob(req.GetJobId())
 	if err != nil {
+		internal.RPCFailed(rpcName, err, internal.Fields{"job_id": req.GetJobId()}, time.Since(started))
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
+	internal.RPCCompleted(rpcName, internal.Fields{
+		"route_id":    job.GetRouteId(),
+		"session_id":  job.GetSessionId(),
+		"job_id":      job.GetJobId(),
+		"state":       job.GetState().String(),
+		"good_bytes":  job.GetGoodBytes(),
+		"files_done":  job.GetFilesDone(),
+		"files_total": len(job.GetFiles()),
+	}, time.Since(started))
 	return &groverPb.GetTransferJobResponse{Job: job}, nil
 }
 
 func (s *TransferJobControlService) ListTransferJobs(ctx context.Context, req *groverPb.ListTransferJobsRequest) (*groverPb.ListTransferJobsResponse, error) {
-	return &groverPb.ListTransferJobsResponse{Jobs: s.manager.ListJobs(req.GetRouteId())}, nil
+	const rpcName = "TransferJobControl.ListTransferJobs"
+	started := time.Now()
+	internal.RPCReceived(rpcName, internal.Fields{"route_id": req.GetRouteId()})
+	jobs := s.manager.ListJobs(req.GetRouteId())
+	internal.RPCCompleted(rpcName, internal.Fields{"route_id": req.GetRouteId(), "jobs": len(jobs)}, time.Since(started))
+	return &groverPb.ListTransferJobsResponse{Jobs: jobs}, nil
 }
 
 func (s *TransferJobControlService) AbortTransferJob(ctx context.Context, req *groverPb.AbortTransferJobRequest) (*groverPb.AbortTransferJobResponse, error) {
+	const rpcName = "TransferJobControl.AbortTransferJob"
+	started := time.Now()
+	internal.RPCReceived(rpcName, internal.Fields{"job_id": req.GetJobId()})
 	job, err := s.manager.AbortJob(req.GetJobId())
 	if err != nil {
+		internal.RPCFailed(rpcName, err, internal.Fields{"job_id": req.GetJobId()}, time.Since(started))
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
+	internal.RPCCompleted(rpcName, internal.Fields{
+		"route_id": job.GetRouteId(),
+		"job_id":   job.GetJobId(),
+		"state":    job.GetState().String(),
+	}, time.Since(started))
 	return &groverPb.AbortTransferJobResponse{Job: job}, nil
 }
 
 func (s *TransferJobControlService) UpdateTransferConcurrency(ctx context.Context, req *groverPb.UpdateTransferConcurrencyRequest) (*groverPb.UpdateTransferConcurrencyResponse, error) {
+	const rpcName = "TransferJobControl.UpdateTransferConcurrency"
+	started := time.Now()
+	internal.RPCReceived(rpcName, internal.Fields{
+		"job_id":           req.GetJobId(),
+		"files_in_flight":  req.GetFilesInFlight(),
+		"streams_per_file": req.GetStreamsPerFile(),
+	})
 	job, err := s.manager.UpdateConcurrency(req.GetJobId(), req.GetFilesInFlight(), req.GetStreamsPerFile())
 	if err != nil {
+		internal.RPCFailed(rpcName, err, internal.Fields{"job_id": req.GetJobId()}, time.Since(started))
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
+	internal.RPCCompleted(rpcName, internal.Fields{
+		"route_id":         job.GetRouteId(),
+		"job_id":           job.GetJobId(),
+		"state":            job.GetState().String(),
+		"files_in_flight":  job.GetFilesInFlight(),
+		"streams_per_file": job.GetStreamsPerFile(),
+	}, time.Since(started))
 	return &groverPb.UpdateTransferConcurrencyResponse{Job: job}, nil
 }
 
 func (s *TransferJobControlService) StreamTransferStats(req *groverPb.StreamTransferStatsRequest, stream groverPb.TransferJobControl_StreamTransferStatsServer) error {
+	const rpcName = "TransferJobControl.StreamTransferStats"
+	started := time.Now()
+	internal.RPCReceived(rpcName, internal.Fields{
+		"job_id":   req.GetJobId(),
+		"route_id": req.GetRouteId(),
+	})
+	defer func() {
+		internal.RPCCompleted(rpcName, internal.Fields{
+			"job_id":   req.GetJobId(),
+			"route_id": req.GetRouteId(),
+		}, time.Since(started))
+	}()
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	for {

@@ -17,6 +17,9 @@ type FieldKey string
 const (
 	FieldError            FieldKey = "error"
 	FieldMsg              FieldKey = "message"
+	FieldRPC              FieldKey = "rpc"
+	FieldStage            FieldKey = "stage"
+	FieldElapsedMS        FieldKey = "elapsed_ms"
 	FieldRtt              FieldKey = "rtt"
 	FieldServer           FieldKey = "server"
 	FieldPort             FieldKey = "port"
@@ -160,3 +163,43 @@ func Debug(msg string, fields Fields) { log(LevelDebug, msg, fields, 3) }
 func Info(msg string, fields Fields)  { log(LevelInfo, msg, fields, 3) }
 func Warn(msg string, fields Fields)  { log(LevelWarn, msg, fields, 3) }
 func Error(msg string, fields Fields) { log(LevelError, msg, fields, 3) }
+
+func RPCReceived(name string, fields Fields) {
+	log(LevelDebug, "rpc received", rpcFields(name, "received", fields, 0, ""), 3)
+}
+
+func RPCCompleted(name string, fields Fields, elapsed time.Duration) {
+	log(LevelDebug, "rpc completed", rpcFields(name, "completed", fields, elapsed, ""), 3)
+}
+
+func RPCRejected(name string, err error, fields Fields, elapsed time.Duration) {
+	log(LevelWarn, "rpc rejected", rpcFields(name, "rejected", fields, elapsed, errorText(err)), 3)
+}
+
+func RPCFailed(name string, err error, fields Fields, elapsed time.Duration) {
+	log(LevelWarn, "rpc failed", rpcFields(name, "failed", fields, elapsed, errorText(err)), 3)
+}
+
+func rpcFields(name, stage string, fields Fields, elapsed time.Duration, errText string) Fields {
+	out := Fields{
+		FieldRPC:   name,
+		FieldStage: stage,
+	}
+	if elapsed > 0 {
+		out[FieldElapsedMS] = elapsed.Milliseconds()
+	}
+	if errText != "" {
+		out[FieldError] = errText
+	}
+	for k, v := range fields {
+		out[k] = v
+	}
+	return out
+}
+
+func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}

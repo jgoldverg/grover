@@ -3,6 +3,7 @@ package gserver
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jgoldverg/grover/backend"
@@ -23,93 +24,149 @@ func NewCredentialOps(credStore backend.CredentialStorage) *CredentialService {
 }
 
 func (co *CredentialService) List(ctx context.Context, in *pb.ListCredentialsRequest) (*pb.ListCredentialsResponse, error) {
+	const rpcName = "CredentialService.List"
+	started := time.Now()
 	var credentials []*pb.Credential
-	internal.Info("server listing credentials", nil)
+	internal.RPCReceived(rpcName, internal.Fields{"credential_type": in.GetType().String()})
 	if in.GetType() == pb.CredentialType_CREDENTIAL_TYPE_UNSPECIFIED {
 		creds, err := co.storage.ListCredentials()
 		if err != nil {
+			internal.RPCFailed(rpcName, err, internal.Fields{"credential_type": in.GetType().String()}, time.Since(started))
 			return nil, err
 		}
 		for _, cred := range creds {
 			c := toProtoCredential(cred)
 			credentials = append(credentials, c)
 		}
+		internal.RPCCompleted(rpcName, internal.Fields{"credential_type": in.GetType().String(), "credentials": len(credentials)}, time.Since(started))
 		return &pb.ListCredentialsResponse{Credentials: credentials}, nil
 	} else if in.GetType() == pb.CredentialType_BASIC_CREDENTIAL_TYPE || in.GetType() == pb.CredentialType_SSH_CREDENTIAL_TYPE {
 		creds, err := co.storage.ListCredentialsByType(convertCredType(in.GetType()))
 		if err != nil {
+			internal.RPCFailed(rpcName, err, internal.Fields{"credential_type": in.GetType().String()}, time.Since(started))
 			return nil, err
 		}
 		for _, cred := range creds {
 			c := toProtoCredential(cred)
 			credentials = append(credentials, c)
 		}
+		internal.RPCCompleted(rpcName, internal.Fields{"credential_type": in.GetType().String(), "credentials": len(credentials)}, time.Since(started))
 		return &pb.ListCredentialsResponse{Credentials: credentials}, nil
 	} else {
-		return nil, fmt.Errorf("unsupported credential type: %s", in.GetType())
+		err := fmt.Errorf("unsupported credential type: %s", in.GetType())
+		internal.RPCRejected(rpcName, err, internal.Fields{"credential_type": in.GetType().String()}, time.Since(started))
+		return nil, err
 	}
 }
 
 func (co *CredentialService) Create(ctx context.Context, in *pb.CreateCredentialRequest) (*pb.CreateCredentialResponse, error) {
-	internal.Info("Create Credential: ", internal.Fields{
-		"cred_pb_req": in,
+	const rpcName = "CredentialService.Create"
+	started := time.Now()
+	credential := in.GetCredential()
+	internal.RPCReceived(rpcName, internal.Fields{
+		"credential_name": credential.GetCredentialName(),
+		"credential_type": credential.GetType().String(),
 	})
-	cred := toBackendCredential(in.GetCredential())
-	internal.Info("Backend Credential: ", internal.Fields{
-		"cred": cred,
-	})
+	cred := toBackendCredential(credential)
 	err := co.storage.AddCredential(cred)
 	if err != nil {
+		internal.RPCFailed(rpcName, err, internal.Fields{
+			"credential_name": credential.GetCredentialName(),
+			"credential_type": credential.GetType().String(),
+		}, time.Since(started))
 		return nil, err
 	}
+	internal.RPCCompleted(rpcName, internal.Fields{
+		"credential_name": credential.GetCredentialName(),
+		"credential_type": credential.GetType().String(),
+	}, time.Since(started))
 	return &pb.CreateCredentialResponse{}, nil
 }
 
 func (co *CredentialService) Delete(ctx context.Context, in *pb.DeleteCredentialRequest) (*pb.DeleteCredentialResponse, error) {
+	const rpcName = "CredentialService.Delete"
+	started := time.Now()
+	internal.RPCReceived(rpcName, credentialRefFields(in.GetRef()))
 	if in.GetRef().GetCredentialUuid() != "" {
 		credUUID, err := uuid.Parse(in.GetRef().GetCredentialUuid())
 		if err != nil {
+			internal.RPCRejected(rpcName, err, credentialRefFields(in.GetRef()), time.Since(started))
 			return nil, err
 		}
 		err = co.storage.DeleteCredential(credUUID)
 		if err != nil {
+			internal.RPCFailed(rpcName, err, credentialRefFields(in.GetRef()), time.Since(started))
 			return nil, err
 		}
 	}
 	if in.GetRef().GetCredentialName() != "" {
 		err := co.storage.DeleteCredentialByName(in.GetRef().GetCredentialName())
 		if err != nil {
+			internal.RPCFailed(rpcName, err, credentialRefFields(in.GetRef()), time.Since(started))
 			return nil, err
 		}
 	}
 
+	internal.RPCCompleted(rpcName, credentialRefFields(in.GetRef()), time.Since(started))
 	return &pb.DeleteCredentialResponse{}, nil
 }
 
 func (co *CredentialService) Get(ctx context.Context, in *pb.GetCredentialRequest) (*pb.GetCredentialResponse, error) {
+	const rpcName = "CredentialService.Get"
+	started := time.Now()
+	internal.RPCReceived(rpcName, credentialRefFields(in.GetRef()))
 	if in.GetRef().GetCredentialUuid() == "" && in.GetRef().GetCredentialName() == "" {
-		return nil, fmt.Errorf("no credential uuid or credential name")
+		err := fmt.Errorf("no credential uuid or credential name")
+		internal.RPCRejected(rpcName, err, credentialRefFields(in.GetRef()), time.Since(started))
+		return nil, err
 	}
 	if in.GetRef().GetCredentialUuid() != "" {
 		credUUID, err := uuid.Parse(in.GetRef().GetCredentialUuid())
 		if err != nil {
+			internal.RPCRejected(rpcName, err, credentialRefFields(in.GetRef()), time.Since(started))
 			return nil, err
 		}
 		cred, err := co.storage.GetCredentialByUUID(credUUID)
 		if err != nil {
+			internal.RPCFailed(rpcName, err, credentialRefFields(in.GetRef()), time.Since(started))
 			return nil, err
 		}
+		internal.RPCCompleted(rpcName, internal.Fields{
+			"credential_uuid": in.GetRef().GetCredentialUuid(),
+			"credential_name": cred.GetName(),
+			"credential_type": toProtoCredential(cred).GetType().String(),
+		}, time.Since(started))
 		return &pb.GetCredentialResponse{Credential: toProtoCredential(cred)}, nil
 	}
 
 	if in.GetRef().GetCredentialName() != "" {
 		cred, err := co.storage.GetCredentialByName(in.GetRef().GetCredentialName())
 		if err != nil {
+			internal.RPCFailed(rpcName, err, credentialRefFields(in.GetRef()), time.Since(started))
 			return nil, err
 		}
+		internal.RPCCompleted(rpcName, internal.Fields{
+			"credential_name": cred.GetName(),
+			"credential_type": toProtoCredential(cred).GetType().String(),
+		}, time.Since(started))
 		return &pb.GetCredentialResponse{Credential: toProtoCredential(cred)}, nil
 	}
+	internal.RPCCompleted(rpcName, credentialRefFields(in.GetRef()), time.Since(started))
 	return nil, nil
+}
+
+func credentialRefFields(ref *pb.CredentialRef) internal.Fields {
+	fields := internal.Fields{}
+	if ref == nil {
+		return fields
+	}
+	if ref.GetCredentialUuid() != "" {
+		fields["credential_uuid"] = ref.GetCredentialUuid()
+	}
+	if ref.GetCredentialName() != "" {
+		fields["credential_name"] = ref.GetCredentialName()
+	}
+	return fields
 }
 
 func convertCredType(credentialType pb.CredentialType) string {
