@@ -318,6 +318,34 @@ func (s *TransferJobControlService) UpdateTransferConcurrency(ctx context.Contex
 	return &groverPb.UpdateTransferConcurrencyResponse{Job: job}, nil
 }
 
+func (s *TransferJobControlService) UpdateTransferTuning(ctx context.Context, req *groverPb.UpdateTransferTuningRequest) (*groverPb.UpdateTransferTuningResponse, error) {
+	const rpcName = "TransferJobControl.UpdateTransferTuning"
+	started := time.Now()
+	internal.RPCReceived(rpcName, internal.Fields{
+		"job_id":               req.GetJobId(),
+		"concurrency":          req.GetConcurrency(),
+		"parallelism_per_file": req.GetParallelismPerFile(),
+		"chunk_size_bytes":     req.GetChunkSizeBytes(),
+		"tcp_buffer_bytes":     req.GetTcpBufferBytes(),
+		"udp_mtu_bytes":        req.GetUdpMtuBytes(),
+		"udp_flow_control":     req.GetUdpFlowControl(),
+	})
+	job, err := s.manager.UpdateTuning(req)
+	if err != nil {
+		internal.RPCFailed(rpcName, err, internal.Fields{"job_id": req.GetJobId()}, time.Since(started))
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	internal.RPCCompleted(rpcName, internal.Fields{
+		"route_id":             job.GetRouteId(),
+		"job_id":               job.GetJobId(),
+		"state":                job.GetState().String(),
+		"concurrency":          job.GetConcurrency(),
+		"parallelism_per_file": job.GetParallelismPerFile(),
+		"chunk_size_bytes":     job.GetChunkSizeBytes(),
+	}, time.Since(started))
+	return &groverPb.UpdateTransferTuningResponse{Job: job}, nil
+}
+
 func (s *TransferJobControlService) StreamTransferStats(req *groverPb.StreamTransferStatsRequest, stream groverPb.TransferJobControl_StreamTransferStatsServer) error {
 	const rpcName = "TransferJobControl.StreamTransferStats"
 	started := time.Now()

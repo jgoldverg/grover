@@ -6,6 +6,7 @@ import (
 	"net"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,6 +39,8 @@ type CopyOptions struct {
 	UIMode             string
 	UIIntervalMs       int
 	ParallelStreams    int
+	ParallelismPerFile int
+	ChunkSize          string
 	Via                []string
 	UDPFlowControl     string
 	UDPWindowPackets   int
@@ -141,7 +144,10 @@ func SimpleCopy() *cobra.Command {
 	cmd.Flags().StringVar(&opts.RouteStore, "route-store", "", "Path to local route template store")
 	_ = cmd.Flags().MarkHidden("route-store")
 	cmd.Flags().StringVar(&opts.Protocol, "protocol", "", "Transfer data-plane protocol (udp|tcp)")
-	cmd.Flags().IntVar(&opts.ParallelStreams, "parallel-streams", 0, "Per-file parallel streams/ranges (0 uses config)")
+	cmd.Flags().IntVar(&opts.ParallelismPerFile, "parallelism-per-file", 0, "Per-file parallel streams/ranges (0 uses config)")
+	cmd.Flags().IntVar(&opts.ParallelStreams, "parallel-streams", 0, "Compatibility alias for --parallelism-per-file")
+	_ = cmd.Flags().MarkHidden("parallel-streams")
+	cmd.Flags().StringVar(&opts.ChunkSize, "chunk-size", "", "Read/write chunk size per worker, such as 128KiB, 8MiB, or 1048576")
 	addRouteDirectionFlags(cmd, &opts.ConnectionOrigin, &opts.DataDirection)
 	cmd.Flags().StringVar(&opts.Direction, "direction", "forward", "Transfer direction over the prepared route (forward|reverse)")
 	cmd.Flags().StringVar(&opts.SessionID, "session-id", "", "Prepared route session ID")
@@ -339,22 +345,43 @@ func resolveTransferEndpointCredentials(cmd *cobra.Command, refs ...*RemoteRef) 
 
 func TransferTuneCommand() *cobra.Command {
 	var concurrency int
+	var parallelismPerFile int
 	var parallelStreams int
+	var chunkSize string
+	var tcpBuffer string
+	var udpMTU string
+	var udpWindowPackets int
+	var udpBatchPackets int
+	var udpAckEveryPackets int
+	var udpAckEveryMs int
+	var udpSocketReadBuffer string
+	var udpSocketWriteBuffer string
+	var udpFlowControl string
 	var sourceServer string
 	cmd := &cobra.Command{
 		Use:          "tune <transfer_id>",
-		Short:        "Update runtime transfer concurrency",
+		Short:        "Update runtime transfer tuning",
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if concurrency < 0 {
-				return fmt.Errorf("--concurrency must be >= 0")
-			}
-			if parallelStreams < 0 {
-				return fmt.Errorf("--parallel-streams must be >= 0")
-			}
-			if concurrency == 0 && parallelStreams == 0 {
-				return fmt.Errorf("set at least one of --concurrency or --parallel-streams")
+			req, err := buildTransferTuningRequest(args[0], transferTuningFlags{
+				concurrency:              concurrency,
+				parallelismPerFile:       parallelismPerFile,
+				parallelStreams:          parallelStreams,
+				chunkSize:                chunkSize,
+				tcpBuffer:                tcpBuffer,
+				udpMTU:                   udpMTU,
+				udpWindowPackets:         udpWindowPackets,
+				udpBatchPackets:          udpBatchPackets,
+				udpAckEveryPackets:       udpAckEveryPackets,
+				udpAckEveryMs:            udpAckEveryMs,
+				udpSocketReadBuffer:      udpSocketReadBuffer,
+				udpSocketWriteBuffer:     udpSocketWriteBuffer,
+				udpFlowControl:           udpFlowControl,
+				parallelismFlagPreferred: cmd.Flags().Changed("parallelism-per-file"),
+			})
+			if err != nil {
+				return err
 			}
 			cfg := GetAppConfig(cmd)
 			if cfg == nil {
@@ -373,21 +400,119 @@ func TransferTuneCommand() *cobra.Command {
 			if routed == nil {
 				return fmt.Errorf("routed transfer service unavailable")
 			}
-			job, err := routed.UpdateTransferConcurrency(cmd.Context(), args[0], uint32(concurrency), uint32(parallelStreams))
+			job, err := routed.UpdateTransferTuning(cmd.Context(), req)
 			if err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "transfer_job: %s\n", job.GetJobId())
 			fmt.Fprintf(cmd.OutOrStdout(), "state: %s\n", job.GetState().String())
-			fmt.Fprintf(cmd.OutOrStdout(), "files_in_flight: %d\n", job.GetFilesInFlight())
-			fmt.Fprintf(cmd.OutOrStdout(), "streams_per_file: %d\n", job.GetStreamsPerFile())
+			fmt.Fprintf(cmd.OutOrStdout(), "concurrency: %d\n", job.GetConcurrency())
+			fmt.Fprintf(cmd.OutOrStdout(), "parallelism_per_file: %d\n", job.GetParallelismPerFile())
+			fmt.Fprintf(cmd.OutOrStdout(), "chunk_size: %s\n", formatBytes(job.GetChunkSizeBytes()))
 			return nil
 		},
 	}
 	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "Maximum number of files to transfer in parallel")
-	cmd.Flags().IntVar(&parallelStreams, "parallel-streams", 0, "Per-file parallel streams/ranges")
+	cmd.Flags().IntVar(&parallelismPerFile, "parallelism-per-file", 0, "Per-file parallel streams/ranges")
+	cmd.Flags().IntVar(&parallelStreams, "parallel-streams", 0, "Compatibility alias for --parallelism-per-file")
+	_ = cmd.Flags().MarkHidden("parallel-streams")
+	cmd.Flags().StringVar(&chunkSize, "chunk-size", "", "Read/write chunk size per worker, such as 128KiB or 8MiB")
+	cmd.Flags().StringVar(&tcpBuffer, "tcp-buffer", "", "TCP copy buffer size, such as 1MiB")
+	cmd.Flags().StringVar(&udpMTU, "udp-mtu", "", "UDP payload size in bytes")
+	cmd.Flags().IntVar(&udpWindowPackets, "udp-window-packets", 0, "UDP max in-flight packets per stream")
+	cmd.Flags().IntVar(&udpBatchPackets, "udp-batch-packets", 0, "UDP packets per kernel batch call")
+	cmd.Flags().IntVar(&udpAckEveryPackets, "udp-ack-every-packets", 0, "UDP ACK every N packets")
+	cmd.Flags().IntVar(&udpAckEveryMs, "udp-ack-every-ms", 0, "UDP ACK interval in milliseconds")
+	cmd.Flags().StringVar(&udpSocketReadBuffer, "udp-socket-read-buffer", "", "UDP socket read buffer size")
+	cmd.Flags().StringVar(&udpSocketWriteBuffer, "udp-socket-write-buffer", "", "UDP socket write buffer size")
+	cmd.Flags().StringVar(&udpFlowControl, "udp-flow-control", "", "UDP flow control mode (fixed|bbr)")
 	cmd.Flags().StringVar(&sourceServer, "source-server", "", "Control address of the source groverd that owns the transfer job")
 	return cmd
+}
+
+type transferTuningFlags struct {
+	concurrency              int
+	parallelismPerFile       int
+	parallelStreams          int
+	chunkSize                string
+	tcpBuffer                string
+	udpMTU                   string
+	udpWindowPackets         int
+	udpBatchPackets          int
+	udpAckEveryPackets       int
+	udpAckEveryMs            int
+	udpSocketReadBuffer      string
+	udpSocketWriteBuffer     string
+	udpFlowControl           string
+	parallelismFlagPreferred bool
+}
+
+func buildTransferTuningRequest(jobID string, flags transferTuningFlags) (*pb.UpdateTransferTuningRequest, error) {
+	req := &pb.UpdateTransferTuningRequest{JobId: strings.TrimSpace(jobID)}
+	if req.JobId == "" {
+		return nil, fmt.Errorf("transfer_id is required")
+	}
+	if flags.concurrency < 0 {
+		return nil, fmt.Errorf("--concurrency must be >= 0")
+	}
+	if flags.parallelismPerFile < 0 {
+		return nil, fmt.Errorf("--parallelism-per-file must be >= 0")
+	}
+	if flags.parallelStreams < 0 {
+		return nil, fmt.Errorf("--parallel-streams must be >= 0")
+	}
+	if flags.udpWindowPackets < 0 || flags.udpBatchPackets < 0 || flags.udpAckEveryPackets < 0 || flags.udpAckEveryMs < 0 {
+		return nil, fmt.Errorf("udp numeric tuning values must be >= 0")
+	}
+	req.Concurrency = uint32(flags.concurrency)
+	if flags.parallelismFlagPreferred || flags.parallelismPerFile > 0 {
+		req.ParallelismPerFile = uint32(flags.parallelismPerFile)
+	} else {
+		req.ParallelismPerFile = uint32(flags.parallelStreams)
+	}
+	var err error
+	if req.ChunkSizeBytes, err = parseByteSize(flags.chunkSize); err != nil {
+		return nil, fmt.Errorf("--chunk-size: %w", err)
+	}
+	if req.TcpBufferBytes, err = parseByteSize(flags.tcpBuffer); err != nil {
+		return nil, fmt.Errorf("--tcp-buffer: %w", err)
+	}
+	var udpMTU uint64
+	if udpMTU, err = parseByteSize(flags.udpMTU); err != nil {
+		return nil, fmt.Errorf("--udp-mtu: %w", err)
+	}
+	if udpMTU > 0 {
+		if udpMTU > uint64(^uint32(0)) {
+			return nil, fmt.Errorf("--udp-mtu is too large")
+		}
+		req.UdpMtuBytes = uint32(udpMTU)
+	}
+	if req.UdpSocketReadBufferBytes, err = parseByteSize(flags.udpSocketReadBuffer); err != nil {
+		return nil, fmt.Errorf("--udp-socket-read-buffer: %w", err)
+	}
+	if req.UdpSocketWriteBufferBytes, err = parseByteSize(flags.udpSocketWriteBuffer); err != nil {
+		return nil, fmt.Errorf("--udp-socket-write-buffer: %w", err)
+	}
+	req.UdpWindowPackets = uint32(flags.udpWindowPackets)
+	req.UdpBatchPackets = uint32(flags.udpBatchPackets)
+	req.UdpAckEveryPackets = uint32(flags.udpAckEveryPackets)
+	req.UdpAckEveryMs = uint32(flags.udpAckEveryMs)
+	req.UdpFlowControl = strings.TrimSpace(flags.udpFlowControl)
+	if req.GetConcurrency() == 0 &&
+		req.GetParallelismPerFile() == 0 &&
+		req.GetChunkSizeBytes() == 0 &&
+		req.GetTcpBufferBytes() == 0 &&
+		req.GetUdpMtuBytes() == 0 &&
+		req.GetUdpWindowPackets() == 0 &&
+		req.GetUdpBatchPackets() == 0 &&
+		req.GetUdpAckEveryPackets() == 0 &&
+		req.GetUdpAckEveryMs() == 0 &&
+		req.GetUdpSocketReadBufferBytes() == 0 &&
+		req.GetUdpSocketWriteBufferBytes() == 0 &&
+		strings.TrimSpace(req.GetUdpFlowControl()) == "" {
+		return nil, fmt.Errorf("set at least one tuning flag")
+	}
+	return req, nil
 }
 
 func TransferStatusCommand() *cobra.Command {
@@ -725,6 +850,57 @@ func formatByteRate(bytesPerSecond float64) string {
 	return fmt.Sprintf("%s/s", formatBytes(uint64(bytesPerSecond)))
 }
 
+func parseByteSize(raw string) (uint64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	lower := strings.ToLower(raw)
+	multipliers := []struct {
+		suffix string
+		value  uint64
+	}{
+		{"kib", 1024},
+		{"kb", 1000},
+		{"k", 1024},
+		{"mib", 1024 * 1024},
+		{"mb", 1000 * 1000},
+		{"m", 1024 * 1024},
+		{"gib", 1024 * 1024 * 1024},
+		{"gb", 1000 * 1000 * 1000},
+		{"g", 1024 * 1024 * 1024},
+		{"b", 1},
+	}
+	multiplier := uint64(1)
+	number := raw
+	for _, candidate := range multipliers {
+		if strings.HasSuffix(lower, candidate.suffix) {
+			multiplier = candidate.value
+			number = strings.TrimSpace(raw[:len(raw)-len(candidate.suffix)])
+			break
+		}
+	}
+	if number == "" {
+		return 0, fmt.Errorf("missing numeric value in %q", raw)
+	}
+	value, err := strconv.ParseFloat(number, 64)
+	if err != nil {
+		return 0, err
+	}
+	if value < 0 {
+		return 0, fmt.Errorf("must be >= 0")
+	}
+	return uint64(value * float64(multiplier)), nil
+}
+
+func mustParseOptionalByteSize(raw string) uint64 {
+	value, err := parseByteSize(raw)
+	if err != nil {
+		return 0
+	}
+	return value
+}
+
 func formatPercent(v float64) string {
 	if v <= 0 {
 		return "0%"
@@ -880,6 +1056,16 @@ func (opts CopyOptions) effectiveConcurrency() int {
 	return opts.Concurrency
 }
 
+func (opts CopyOptions) effectiveParallelismPerFile() int {
+	if opts.ParallelismPerFile > 0 {
+		return opts.ParallelismPerFile
+	}
+	if opts.ParallelStreams > 0 {
+		return opts.ParallelStreams
+	}
+	return 1
+}
+
 func (opts CopyOptions) shouldUseRoutedJob(plan TransferRoutePlan) bool {
 	return strings.TrimSpace(opts.RouteName) != "" ||
 		strings.TrimSpace(plan.Source.ControlEndpoint) != "" ||
@@ -912,8 +1098,16 @@ func (opts CopyOptions) validate() error {
 	default:
 		return fmt.Errorf("invalid --ui %q: must be summary, live, or none", opts.UIMode)
 	}
+	if opts.ParallelismPerFile < 0 {
+		return fmt.Errorf("--parallelism-per-file must be >= 0")
+	}
 	if opts.ParallelStreams < 0 {
 		return fmt.Errorf("--parallel-streams must be >= 0")
+	}
+	if strings.TrimSpace(opts.ChunkSize) != "" {
+		if _, err := parseByteSize(opts.ChunkSize); err != nil {
+			return fmt.Errorf("invalid --chunk-size: %w", err)
+		}
 	}
 	if opts.UDPWindowPackets < 0 || opts.UDPWindowBytes < 0 || opts.UDPAckEveryPackets < 0 || opts.UDPAckEveryMs < 0 || opts.UDPBatchPackets < 0 {
 		return fmt.Errorf("udp tuning values must be >= 0")

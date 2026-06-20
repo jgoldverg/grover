@@ -72,10 +72,16 @@ type TransferExecutionContext struct {
 	DestRoot         string
 	DestData         *pb.DataEndpoint
 	Protocol         pb.DataProtocol
+	ChunkSizeBytes   uint64
+	TCPBufferBytes   uint64
 	UDPPayload       int
 	UDPFlow          string
 	UDPWindow        int
 	UDPBatch         int
+	UDPAckPackets    int
+	UDPAckEvery      time.Duration
+	UDPSocketRead    uint64
+	UDPSocketWrite   uint64
 	Collector        *metrics.TransferCollector
 	TCPConnProvider  func(context.Context) (net.Conn, error)
 	StreamsFunc      func() uint32
@@ -162,6 +168,16 @@ type transferJobRuntime struct {
 	state          pb.RuntimeState
 	filesInFlight  uint32
 	streamsPerFile uint32
+	chunkSizeBytes uint64
+	tcpBufferBytes uint64
+	udpMTUBytes    uint32
+	udpWindow      uint32
+	udpBatch       uint32
+	udpAckPackets  uint32
+	udpAckMs       uint32
+	udpSocketRead  uint64
+	udpSocketWrite uint64
+	udpFlowControl string
 	errorMessage   string
 	startedAt      time.Time
 	collector      *metrics.TransferCollector
@@ -211,6 +227,9 @@ type transferJobManifest struct {
 	SourceRoot      string                    `json:"source_root"`
 	DestinationRoot string                    `json:"destination_root"`
 	DestinationData string                    `json:"destination_data,omitempty"`
+	Concurrency     uint32                    `json:"concurrency"`
+	Parallelism     uint32                    `json:"parallelism_per_file"`
+	ChunkSizeBytes  uint64                    `json:"chunk_size_bytes,omitempty"`
 	FilesInFlight   uint32                    `json:"files_in_flight"`
 	StreamsPerFile  uint32                    `json:"streams_per_file"`
 	TotalFiles      int                       `json:"total_files"`
@@ -481,13 +500,23 @@ func (m *TransferJobManager) StartJob(ctx context.Context, req *pb.StartTransfer
 	if sessionID == "" {
 		sessionID = jobID
 	}
-	filesInFlight := req.GetFilesInFlight()
+	filesInFlight := req.GetConcurrency()
+	if filesInFlight == 0 {
+		filesInFlight = req.GetFilesInFlight()
+	}
 	if filesInFlight == 0 {
 		filesInFlight = 1
 	}
-	streamsPerFile := req.GetStreamsPerFile()
+	streamsPerFile := req.GetParallelismPerFile()
+	if streamsPerFile == 0 {
+		streamsPerFile = req.GetStreamsPerFile()
+	}
 	if streamsPerFile == 0 {
 		streamsPerFile = 1
+	}
+	chunkSizeBytes := req.GetChunkSizeBytes()
+	if chunkSizeBytes == 0 {
+		chunkSizeBytes = defaultTransferCopyBufferSize
 	}
 	connectionOrigin := req.GetConnectionOrigin()
 	if connectionOrigin == pb.ConnectionOrigin_CONNECTION_ORIGIN_UNSPECIFIED {
@@ -521,6 +550,13 @@ func (m *TransferJobManager) StartJob(ctx context.Context, req *pb.StartTransfer
 		state:           pb.RuntimeState_RUNTIME_STATE_RUNNING,
 		filesInFlight:   filesInFlight,
 		streamsPerFile:  streamsPerFile,
+		chunkSizeBytes:  chunkSizeBytes,
+		udpMTUBytes:     uint32(m.udp.mtu),
+		udpWindow:       uint32(m.udp.windowPackets),
+		udpBatch:        uint32(m.udp.batchPackets),
+		udpAckPackets:   uint32(m.udp.ackEveryPackets),
+		udpAckMs:        uint32(m.udp.ackEvery / time.Millisecond),
+		udpFlowControl:  m.udp.flowControl,
 		startedAt:       time.Now(),
 		collector:       metrics.NewTransferCollector("grover"),
 		files:           make([]*pb.TransferFileState, 0, len(plans)),
@@ -566,8 +602,9 @@ func (m *TransferJobManager) StartJob(ctx context.Context, req *pb.StartTransfer
 		"destination_data": endpointLabel(dest.GetDataEndpoint()),
 		"files":            len(plans),
 		"bytes":            totalPlannedBytes(plans),
-		"files_in_flight":  filesInFlight,
-		"streams_per_file": streamsPerFile,
+		"concurrency":      filesInFlight,
+		"parallelism":      streamsPerFile,
+		"chunk_size_bytes": chunkSizeBytes,
 		"udp_flow_control": m.udp.flowControl,
 	})
 
@@ -626,20 +663,91 @@ func (m *TransferJobManager) AbortJob(jobID string) (*pb.TransferJob, error) {
 }
 
 func (m *TransferJobManager) UpdateConcurrency(jobID string, filesInFlight, streamsPerFile uint32) (*pb.TransferJob, error) {
+	return m.UpdateTuning(&pb.UpdateTransferTuningRequest{
+		JobId:              jobID,
+		Concurrency:        filesInFlight,
+		ParallelismPerFile: streamsPerFile,
+	})
+}
+
+func (m *TransferJobManager) UpdateTuning(req *pb.UpdateTransferTuningRequest) (*pb.TransferJob, error) {
+	if req == nil {
+		return nil, errors.New("transfer tuning request is required")
+	}
+	jobID := strings.TrimSpace(req.GetJobId())
 	runtime := m.lookupJob(jobID)
 	if runtime == nil {
 		return nil, fmt.Errorf("transfer job %q not found", jobID)
 	}
-	runtime.mu.Lock()
-	if filesInFlight > 0 {
-		runtime.filesInFlight = filesInFlight
+	if err := validateTransferTuning(req); err != nil {
+		return nil, err
 	}
-	if streamsPerFile > 0 {
-		runtime.streamsPerFile = streamsPerFile
+	runtime.mu.Lock()
+	if req.GetConcurrency() > 0 {
+		runtime.filesInFlight = req.GetConcurrency()
+	}
+	if req.GetParallelismPerFile() > 0 {
+		runtime.streamsPerFile = req.GetParallelismPerFile()
+	}
+	if req.GetChunkSizeBytes() > 0 {
+		runtime.chunkSizeBytes = req.GetChunkSizeBytes()
+	}
+	if req.GetTcpBufferBytes() > 0 {
+		runtime.tcpBufferBytes = req.GetTcpBufferBytes()
+	}
+	if req.GetUdpMtuBytes() > 0 {
+		runtime.udpMTUBytes = req.GetUdpMtuBytes()
+	}
+	if req.GetUdpWindowPackets() > 0 {
+		runtime.udpWindow = req.GetUdpWindowPackets()
+	}
+	if req.GetUdpBatchPackets() > 0 {
+		runtime.udpBatch = req.GetUdpBatchPackets()
+	}
+	if req.GetUdpAckEveryPackets() > 0 {
+		runtime.udpAckPackets = req.GetUdpAckEveryPackets()
+	}
+	if req.GetUdpAckEveryMs() > 0 {
+		runtime.udpAckMs = req.GetUdpAckEveryMs()
+	}
+	if req.GetUdpSocketReadBufferBytes() > 0 {
+		runtime.udpSocketRead = req.GetUdpSocketReadBufferBytes()
+	}
+	if req.GetUdpSocketWriteBufferBytes() > 0 {
+		runtime.udpSocketWrite = req.GetUdpSocketWriteBufferBytes()
+	}
+	if strings.TrimSpace(req.GetUdpFlowControl()) != "" {
+		runtime.udpFlowControl = strings.ToLower(strings.TrimSpace(req.GetUdpFlowControl()))
 	}
 	runtime.cond.Broadcast()
 	runtime.mu.Unlock()
 	return runtime.snapshot(), nil
+}
+
+func validateTransferTuning(req *pb.UpdateTransferTuningRequest) error {
+	if req.GetChunkSizeBytes() > 0 && req.GetChunkSizeBytes() < 4*1024 {
+		return fmt.Errorf("chunk_size_bytes must be >= 4096")
+	}
+	if req.GetChunkSizeBytes() > 1<<30 {
+		return fmt.Errorf("chunk_size_bytes must be <= 1GiB")
+	}
+	if req.GetTcpBufferBytes() > 0 && req.GetTcpBufferBytes() < 4*1024 {
+		return fmt.Errorf("tcp_buffer_bytes must be >= 4096")
+	}
+	if req.GetUdpMtuBytes() > 0 {
+		if req.GetUdpMtuBytes() < minUDPJobPayloadSize {
+			return fmt.Errorf("udp_mtu_bytes must be >= %d", minUDPJobPayloadSize)
+		}
+		if req.GetUdpMtuBytes() > maxUDPDatagramPayloadSize {
+			return fmt.Errorf("udp_mtu_bytes must be <= %d", maxUDPDatagramPayloadSize)
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(req.GetUdpFlowControl())) {
+	case "", "fixed", "bbr":
+		return nil
+	default:
+		return fmt.Errorf("unsupported udp_flow_control %q", req.GetUdpFlowControl())
+	}
 }
 
 func (m *TransferJobManager) lookupJob(jobID string) *transferJobRuntime {
@@ -960,18 +1068,57 @@ func (m *TransferJobManager) runJob(ctx context.Context, runtime *transferJobRun
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			runtime.mu.Lock()
+			chunkSizeBytes := runtime.chunkSizeBytes
+			tcpBufferBytes := runtime.tcpBufferBytes
+			udpMTUBytes := runtime.udpMTUBytes
+			udpWindow := runtime.udpWindow
+			udpBatch := runtime.udpBatch
+			udpAckPackets := runtime.udpAckPackets
+			udpAckMs := runtime.udpAckMs
+			udpSocketRead := runtime.udpSocketRead
+			udpSocketWrite := runtime.udpSocketWrite
+			udpFlowControl := runtime.udpFlowControl
+			runtime.mu.Unlock()
+			if chunkSizeBytes == 0 {
+				chunkSizeBytes = defaultTransferCopyBufferSize
+			}
+			if udpMTUBytes == 0 {
+				udpMTUBytes = uint32(m.udp.mtu)
+			}
+			if udpWindow == 0 {
+				udpWindow = uint32(m.udp.windowPackets)
+			}
+			if udpBatch == 0 {
+				udpBatch = uint32(m.udp.batchPackets)
+			}
+			if udpAckPackets == 0 {
+				udpAckPackets = uint32(m.udp.ackEveryPackets)
+			}
+			if udpAckMs == 0 {
+				udpAckMs = uint32(m.udp.ackEvery / time.Millisecond)
+			}
+			if strings.TrimSpace(udpFlowControl) == "" {
+				udpFlowControl = m.udp.flowControl
+			}
 			execCtx := &TransferExecutionContext{
-				JobID:      runtime.jobID,
-				RouteID:    runtime.routeID,
-				SourceRoot: runtime.source.GetRootPath(),
-				DestRoot:   runtime.dest.GetRootPath(),
-				DestData:   cloneEndpoint(runtime.dest.GetDataEndpoint()),
-				Protocol:   runtime.protocol,
-				UDPPayload: m.udp.mtu,
-				UDPFlow:    m.udp.flowControl,
-				UDPWindow:  m.udp.windowPackets,
-				UDPBatch:   m.udp.batchPackets,
-				Collector:  runtime.collector,
+				JobID:          runtime.jobID,
+				RouteID:        runtime.routeID,
+				SourceRoot:     runtime.source.GetRootPath(),
+				DestRoot:       runtime.dest.GetRootPath(),
+				DestData:       cloneEndpoint(runtime.dest.GetDataEndpoint()),
+				Protocol:       runtime.protocol,
+				ChunkSizeBytes: chunkSizeBytes,
+				TCPBufferBytes: tcpBufferBytes,
+				UDPPayload:     int(udpMTUBytes),
+				UDPFlow:        udpFlowControl,
+				UDPWindow:      int(udpWindow),
+				UDPBatch:       int(udpBatch),
+				UDPAckPackets:  int(udpAckPackets),
+				UDPAckEvery:    time.Duration(udpAckMs) * time.Millisecond,
+				UDPSocketRead:  udpSocketRead,
+				UDPSocketWrite: udpSocketWrite,
+				Collector:      runtime.collector,
 				TCPConnProvider: func(ctx context.Context) (net.Conn, error) {
 					if runtime.origin != pb.ConnectionOrigin_CONNECTION_ORIGIN_DESTINATION {
 						return nil, nil
@@ -1224,6 +1371,9 @@ func (h *transferJobHistory) writeManifest(runtime *transferJobRuntime, plans []
 		SourceRoot:      runtime.source.GetRootPath(),
 		DestinationRoot: runtime.dest.GetRootPath(),
 		DestinationData: endpointLabel(runtime.dest.GetDataEndpoint()),
+		Concurrency:     runtime.filesInFlight,
+		Parallelism:     runtime.streamsPerFile,
+		ChunkSizeBytes:  runtime.chunkSizeBytes,
 		FilesInFlight:   runtime.filesInFlight,
 		StreamsPerFile:  runtime.streamsPerFile,
 		TotalFiles:      len(plans),
@@ -1566,24 +1716,36 @@ func (r *transferJobRuntime) snapshot() *pb.TransferJob {
 		diskWriteBytes = protocolStats.DiskWriteBytes
 	}
 	return &pb.TransferJob{
-		JobId:          r.jobID,
-		RouteId:        r.routeID,
-		SessionId:      r.sessionID,
-		State:          r.state,
-		Protocol:       r.protocol,
-		Source:         cloneTransferEndpoint(r.source),
-		Destination:    cloneTransferEndpoint(r.dest),
-		FilesInFlight:  r.filesInFlight,
-		StreamsPerFile: r.streamsPerFile,
-		GoodBytes:      goodBytes,
-		NetworkBytes:   observedBytes,
-		DiskReadBytes:  diskReadBytes,
-		DiskWriteBytes: diskWriteBytes,
-		FilesDone:      r.doneCount,
-		FilesActive:    r.active,
-		StreamsActive:  activeStreams,
-		Retransmits:    protocolStats.Retransmissions,
-		Files:          files,
+		JobId:                     r.jobID,
+		RouteId:                   r.routeID,
+		SessionId:                 r.sessionID,
+		State:                     r.state,
+		Protocol:                  r.protocol,
+		Source:                    cloneTransferEndpoint(r.source),
+		Destination:               cloneTransferEndpoint(r.dest),
+		FilesInFlight:             r.filesInFlight,
+		StreamsPerFile:            r.streamsPerFile,
+		Concurrency:               r.filesInFlight,
+		ParallelismPerFile:        r.streamsPerFile,
+		ChunkSizeBytes:            r.chunkSizeBytes,
+		TcpBufferBytes:            r.tcpBufferBytes,
+		UdpMtuBytes:               r.udpMTUBytes,
+		UdpWindowPackets:          r.udpWindow,
+		UdpBatchPackets:           r.udpBatch,
+		UdpAckEveryPackets:        r.udpAckPackets,
+		UdpAckEveryMs:             r.udpAckMs,
+		UdpSocketReadBufferBytes:  r.udpSocketRead,
+		UdpSocketWriteBufferBytes: r.udpSocketWrite,
+		UdpFlowControl:            r.udpFlowControl,
+		GoodBytes:                 goodBytes,
+		NetworkBytes:              observedBytes,
+		DiskReadBytes:             diskReadBytes,
+		DiskWriteBytes:            diskWriteBytes,
+		FilesDone:                 r.doneCount,
+		FilesActive:               r.active,
+		StreamsActive:             activeStreams,
+		Retransmits:               protocolStats.Retransmissions,
+		Files:                     files,
 		Stats: &pb.StatsSnapshot{
 			IngressBytes:         observedBytes,
 			EgressBytes:          observedBytes,
@@ -1760,7 +1922,7 @@ func (localFilesystemTransferExecutor) TransferFile(ctx context.Context, exec *T
 	}
 	defer dst.Close()
 	reportStreamStart(exec, plan, 1, 0, plan.Size)
-	buf := make([]byte, defaultTransferCopyBufferSize)
+	buf := make([]byte, transferChunkSize(exec))
 	for {
 		if err := ctx.Err(); err != nil {
 			reportStreamDone(exec, plan, 1, pb.RuntimeState_RUNTIME_STATE_ABORTED, err.Error())
@@ -1794,6 +1956,16 @@ func (localFilesystemTransferExecutor) TransferFile(ctx context.Context, exec *T
 			return readErr
 		}
 	}
+}
+
+func transferChunkSize(exec *TransferExecutionContext) int {
+	if exec != nil && exec.ChunkSizeBytes > 0 {
+		if exec.ChunkSizeBytes > 1<<30 {
+			return 1 << 30
+		}
+		return int(exec.ChunkSizeBytes)
+	}
+	return defaultTransferCopyBufferSize
 }
 
 func reportStreamStart(exec *TransferExecutionContext, plan TransferFilePlan, streamID uint32, offset uint64, size uint64) {
@@ -2500,7 +2672,7 @@ func sendTCPRange(ctx context.Context, exec *TransferExecutionContext, plan Tran
 	}
 
 	reader := src
-	buf := make([]byte, defaultTransferCopyBufferSize)
+	buf := make([]byte, transferChunkSize(exec))
 	for {
 		if err := ctx.Err(); err != nil {
 			return err

@@ -892,15 +892,18 @@ func startTransferOverPreparedRouteSession(cmd *cobra.Command, src string, dst s
 	dest.RootPath = plan.Destination.Path
 	_, _ = routeSessions.UpdateRouteSessionState(cmd.Context(), session.GetSessionId(), pb.RuntimeState_RUNTIME_STATE_RUNNING, "")
 	job, err := jobRouted.StartTransferJob(cmd.Context(), &pb.StartTransferJobRequest{
-		RouteId:          routeName,
-		JobId:            jobID,
-		SessionId:        session.GetSessionId(),
-		Source:           source,
-		Destination:      dest,
-		Paths:            append([]string(nil), opts.Paths...),
-		FilesInFlight:    uint32(opts.effectiveConcurrency()),
-		StreamsPerFile:   uint32(routeParallelStreams(opts.ParallelStreams)),
-		ConnectionOrigin: connectionOrigin,
+		RouteId:            routeName,
+		JobId:              jobID,
+		SessionId:          session.GetSessionId(),
+		Source:             source,
+		Destination:        dest,
+		Paths:              append([]string(nil), opts.Paths...),
+		FilesInFlight:      uint32(opts.effectiveConcurrency()),
+		StreamsPerFile:     uint32(opts.effectiveParallelismPerFile()),
+		Concurrency:        uint32(opts.effectiveConcurrency()),
+		ParallelismPerFile: uint32(opts.effectiveParallelismPerFile()),
+		ChunkSizeBytes:     mustParseOptionalByteSize(opts.ChunkSize),
+		ConnectionOrigin:   connectionOrigin,
 	})
 	if err != nil {
 		_, _ = routeSessions.UpdateRouteSessionState(cmd.Context(), session.GetSessionId(), pb.RuntimeState_RUNTIME_STATE_FAILED, err.Error())

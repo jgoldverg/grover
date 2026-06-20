@@ -100,6 +100,7 @@ func NewRootCommand() *cobra.Command {
 	rootCmd.AddCommand(SimpleCopy())
 	rootCmd.AddCommand(RouteCommand())
 	rootCmd.AddCommand(ScheduleCommand())
+	rootCmd.AddCommand(JobCommand())
 	rootCmd.AddCommand(ConfigCommand())
 	rootCmd.AddCommand(ProfileCommand())
 

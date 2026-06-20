@@ -74,6 +74,7 @@ func NewGroverServer(ctx context.Context, serverConfig *internal.ServerConfig) *
 	groverPb.RegisterRelayControlServer(server, relayControl)
 	groverPb.RegisterRouteSessionControlServer(server, NewRouteSessionControlService())
 	groverPb.RegisterTransferJobControlServer(server, NewTransferJobControlService(serverConfig))
+	groverPb.RegisterJobHistoryControlServer(server, NewJobHistoryControlService(serverConfig))
 
 	return &GroverServer{
 		config:       serverConfig,

@@ -126,13 +126,13 @@ Run these from any machine that can reach both groverd control-plane addresses.
   transfer 10.137.1.2:22444:/home/ubuntu/data/grover-src/file-20g.bin \
            10.137.132.2:22444:/home/ubuntu/data/grover-dst/file-20g.bin \
   --protocol=tcp \
-  --parallel-streams=6 \
+  --parallelism-per-file=6 \
   --concurrency=1 \
   --ui=live \
   --ui-interval-ms=1000
 ```
 
-Reason: this benchmarks a direct source-groverd to destination-groverd TCP transfer. `--parallel-streams` splits a large file into concurrent byte ranges; `--concurrency` controls files in flight.
+Reason: this benchmarks a direct source-groverd to destination-groverd TCP transfer. `--parallelism-per-file` splits a large file into concurrent byte ranges; `--concurrency` controls files in flight.
 
 ### Direct UDP
 
@@ -141,7 +141,7 @@ Reason: this benchmarks a direct source-groverd to destination-groverd TCP trans
   transfer 10.137.1.2:22444:/home/ubuntu/data/grover-src/file-20g.bin \
            10.137.132.2:22444:/home/ubuntu/data/grover-dst/file-20g.bin \
   --protocol=udp \
-  --parallel-streams=4 \
+  --parallelism-per-file=4 \
   --concurrency=1 \
   --ui=live \
   --ui-interval-ms=1000
@@ -156,7 +156,7 @@ Reason: this exercises Grover's UDP data plane and exposes protocol counters suc
   transfer 10.137.1.2:22444:/home/ubuntu/data/grover-src/ \
            10.137.132.2:22444:/home/ubuntu/data/grover-dst/ \
   --protocol=tcp \
-  --parallel-streams=4 \
+  --parallelism-per-file=4 \
   --concurrency=3 \
   --ui=live
 ```
@@ -198,7 +198,7 @@ Then transfer local test data:
   transfer 127.0.0.1:22444:$HOME/testData/src/ \
            127.0.0.1:22445:$HOME/testData/dst/ \
   --protocol=tcp \
-  --parallel-streams=4 \
+  --parallelism-per-file=4 \
   --concurrency=2 \
   --ui=live
 ```
@@ -226,7 +226,7 @@ Then use `name:/absolute/path`:
   transfer uc:/home/ubuntu/data/grover-src/file-20g.bin \
            edu:/home/ubuntu/data/grover-dst/file-20g.bin \
   --protocol=tcp \
-  --parallel-streams=6 \
+  --parallelism-per-file=6 \
   --ui=live
 ```
 
@@ -268,6 +268,35 @@ Use a profile for one command without changing the default:
 ```
 
 Reason: profiles are control-plane connection settings. Routes still describe the network path between groverd nodes.
+
+## Jobs And Tuning
+
+`job` commands query the selected groverd profile/server. Use them for live jobs and server-side history instead of scraping terminal output.
+
+List live jobs:
+
+```bash
+./bin/grover --profile tacc job list
+./bin/grover --profile tacc job list --route tacc-uc
+```
+
+Inspect one live job:
+
+```bash
+./bin/grover --profile tacc job get <job_id>
+```
+
+Tune a running job:
+
+```bash
+./bin/grover --profile tacc job tune <job_id> \
+  --concurrency=2 \
+  --parallelism-per-file=6 \
+  --chunk-size=8MiB \
+  --tcp-buffer=8MiB
+```
+
+Reason: `--concurrency` controls files in flight, `--parallelism-per-file` controls byte-range streams per file, and `--chunk-size` controls the read/write batch per worker. Runtime changes affect future scheduling and new chunks/ranges; completed work is not rewritten.
 
 ## Routes And Relays
 
@@ -322,7 +351,7 @@ Prepare the route session, then run the transfer over that prepared session:
   /home/ubuntu/data/grover-src/file-20g.bin \
   /home/ubuntu/data/grover-dst/file-20g.bin \
   --session-id edu-pull-001 \
-  --parallel-streams=6 \
+  --parallelism-per-file=6 \
   --ui=live
 ```
 
@@ -352,7 +381,7 @@ Prepare and run a transfer over that route:
   /home/ubuntu/data/grover-src/file-20g.bin \
   /home/ubuntu/data/grover-dst/file-20g.bin \
   --session-id relay-test-001 \
-  --parallel-streams=6 \
+  --parallelism-per-file=6 \
   --ui=live
 ```
 
@@ -412,7 +441,16 @@ sudo cat /var/log/grover/<job_id>/final.json
 sudo cat /var/log/grover/<job_id>/energy.csv
 ```
 
-Reason: CLI output is for live operation; `/var/log/grover/<job_id>` is for reproducible experiment records.
+Query historical job logs through the groverd API:
+
+```bash
+./bin/grover --profile tacc job history list --route tacc-uc --limit=20
+./bin/grover --profile tacc job history get <job_id>
+./bin/grover --profile tacc job history snapshots <job_id> --limit=10
+./bin/grover --profile tacc job history energy <job_id>
+```
+
+Reason: CLI output is for live operation; `/var/log/grover/<job_id>` is for reproducible experiment records. The job history API lets scripts query those records remotely without SSHing into the node.
 
 ## Schedule Execution
 
@@ -450,7 +488,7 @@ Execute rows:
   --destination-root=/home/ubuntu/data/grover-dst/schedule \
   --limit=10 \
   --protocol=tcp \
-  --parallel-streams=6 \
+  --parallelism-per-file=6 \
   --concurrency=1 \
   --ui=summary
 ```
@@ -464,7 +502,7 @@ Queue one future transfer in a local JSON schedule store:
   /home/ubuntu/data/grover-src/file-20g.bin \
   /home/ubuntu/data/grover-dst/file-20g.bin \
   --at 2026-06-01T22:00:00Z \
-  --parallel-streams=6
+  --parallelism-per-file=6
 ```
 
 Run due queued transfers once, or keep polling:
@@ -485,6 +523,13 @@ Inspect local groverd job logs:
 ```bash
 ./bin/grover transfer history --job-log-dir=/var/log/grover
 ./bin/grover transfer history <job_id> --job-log-dir=/var/log/grover --json | jq .
+```
+
+Inspect server-side job history through the API:
+
+```bash
+./bin/grover --profile tacc job history list --route tacc_buff --limit=50 --json | jq .
+./bin/grover --profile tacc job history get <job_id> --json | jq .
 ```
 
 ## Generate Test Files

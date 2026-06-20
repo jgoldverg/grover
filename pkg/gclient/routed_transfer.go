@@ -164,33 +164,42 @@ func (s *RoutedTransferService) AbortTransferJob(ctx context.Context, jobID stri
 }
 
 func (s *RoutedTransferService) UpdateTransferConcurrency(ctx context.Context, jobID string, filesInFlight, streamsPerFile uint32) (*pb.TransferJob, error) {
+	return s.UpdateTransferTuning(ctx, &pb.UpdateTransferTuningRequest{
+		JobId:              jobID,
+		Concurrency:        filesInFlight,
+		ParallelismPerFile: streamsPerFile,
+	})
+}
+
+func (s *RoutedTransferService) UpdateTransferTuning(ctx context.Context, req *pb.UpdateTransferTuningRequest) (*pb.TransferJob, error) {
 	started := time.Now()
-	internal.Debug("grpc TransferJobControl.UpdateTransferConcurrency start", internal.Fields{
-		"job_id":           jobID,
-		"files_in_flight":  filesInFlight,
-		"streams_per_file": streamsPerFile,
+	internal.Debug("grpc TransferJobControl.UpdateTransferTuning start", internal.Fields{
+		"job_id":               req.GetJobId(),
+		"concurrency":          req.GetConcurrency(),
+		"parallelism_per_file": req.GetParallelismPerFile(),
+		"chunk_size_bytes":     req.GetChunkSizeBytes(),
+		"tcp_buffer_bytes":     req.GetTcpBufferBytes(),
+		"udp_mtu_bytes":        req.GetUdpMtuBytes(),
+		"udp_flow_control":     req.GetUdpFlowControl(),
 	})
-	resp, err := s.tc.UpdateTransferConcurrency(ctx, &pb.UpdateTransferConcurrencyRequest{
-		JobId:          jobID,
-		FilesInFlight:  filesInFlight,
-		StreamsPerFile: streamsPerFile,
-	})
+	resp, err := s.tc.UpdateTransferTuning(ctx, req)
 	if err != nil {
-		internal.Warn("grpc TransferJobControl.UpdateTransferConcurrency failed", internal.Fields{
+		internal.Warn("grpc TransferJobControl.UpdateTransferTuning failed", internal.Fields{
 			internal.FieldError: err.Error(),
-			"job_id":            jobID,
+			"job_id":            req.GetJobId(),
 			"elapsed_ms":        time.Since(started).Milliseconds(),
 		})
 		return nil, err
 	}
 	job := resp.GetJob()
-	internal.Debug("grpc TransferJobControl.UpdateTransferConcurrency done", internal.Fields{
-		"route_id":         job.GetRouteId(),
-		"session_id":       job.GetSessionId(),
-		"job_id":           job.GetJobId(),
-		"files_in_flight":  job.GetFilesInFlight(),
-		"streams_per_file": job.GetStreamsPerFile(),
-		"elapsed_ms":       time.Since(started).Milliseconds(),
+	internal.Debug("grpc TransferJobControl.UpdateTransferTuning done", internal.Fields{
+		"route_id":             job.GetRouteId(),
+		"session_id":           job.GetSessionId(),
+		"job_id":               job.GetJobId(),
+		"concurrency":          job.GetConcurrency(),
+		"parallelism_per_file": job.GetParallelismPerFile(),
+		"chunk_size_bytes":     job.GetChunkSizeBytes(),
+		"elapsed_ms":           time.Since(started).Milliseconds(),
 	})
 	return job, nil
 }

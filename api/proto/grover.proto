@@ -352,6 +352,18 @@ message TransferJob {
   StatsSnapshot stats = 18;
   string error_message = 19;
   string session_id = 20;
+  uint32 concurrency = 21;
+  uint32 parallelism_per_file = 22;
+  uint64 chunk_size_bytes = 23;
+  uint64 tcp_buffer_bytes = 24;
+  uint32 udp_mtu_bytes = 25;
+  uint32 udp_window_packets = 26;
+  uint32 udp_batch_packets = 27;
+  uint32 udp_ack_every_packets = 28;
+  uint32 udp_ack_every_ms = 29;
+  uint64 udp_socket_read_buffer_bytes = 30;
+  uint64 udp_socket_write_buffer_bytes = 31;
+  string udp_flow_control = 32;
 }
 
 message PrepareTransferEndpointRequest {
@@ -380,6 +392,9 @@ message StartTransferJobRequest {
   uint32 streams_per_file = 7;
   ConnectionOrigin connection_origin = 8;
   string session_id = 9;
+  uint32 concurrency = 10;
+  uint32 parallelism_per_file = 11;
+  uint64 chunk_size_bytes = 12;
 }
 
 message StartTransferJobResponse {
@@ -420,6 +435,26 @@ message UpdateTransferConcurrencyResponse {
   TransferJob job = 1;
 }
 
+message UpdateTransferTuningRequest {
+  string job_id = 1;
+  uint32 concurrency = 2;
+  uint32 parallelism_per_file = 3;
+  uint64 chunk_size_bytes = 4;
+  uint64 tcp_buffer_bytes = 5;
+  uint32 udp_mtu_bytes = 6;
+  uint32 udp_window_packets = 7;
+  uint32 udp_batch_packets = 8;
+  uint32 udp_ack_every_packets = 9;
+  uint32 udp_ack_every_ms = 10;
+  uint64 udp_socket_read_buffer_bytes = 11;
+  uint64 udp_socket_write_buffer_bytes = 12;
+  string udp_flow_control = 13;
+}
+
+message UpdateTransferTuningResponse {
+  TransferJob job = 1;
+}
+
 message StreamTransferStatsRequest {
   string job_id = 1;
   string route_id = 2;
@@ -432,7 +467,98 @@ service TransferJobControl {
   rpc ListTransferJobs (ListTransferJobsRequest) returns (ListTransferJobsResponse);
   rpc AbortTransferJob (AbortTransferJobRequest) returns (AbortTransferJobResponse);
   rpc UpdateTransferConcurrency (UpdateTransferConcurrencyRequest) returns (UpdateTransferConcurrencyResponse);
+  rpc UpdateTransferTuning (UpdateTransferTuningRequest) returns (UpdateTransferTuningResponse);
   rpc StreamTransferStats (StreamTransferStatsRequest) returns (stream TransferJob);
+}
+
+message JobHistoryManifest {
+  string job_id = 1;
+  string route_id = 2;
+  string protocol = 3;
+  string source_root = 4;
+  string destination_root = 5;
+  string destination_data = 6;
+  uint32 concurrency = 7;
+  uint32 parallelism_per_file = 8;
+  uint32 files_in_flight = 9;
+  uint32 streams_per_file = 10;
+  uint64 chunk_size_bytes = 11;
+  uint32 total_files = 12;
+  uint64 total_bytes = 13;
+  int64 created_at_unix_nano = 14;
+}
+
+message JobHistoryEntry {
+  string job_id = 1;
+  string route_id = 2;
+  string state = 3;
+  string error_message = 4;
+  uint64 total_bytes = 5;
+  uint64 good_bytes = 6;
+  uint64 network_bytes = 7;
+  int64 created_at_unix_nano = 8;
+  string path = 9;
+  JobHistoryManifest manifest = 10;
+}
+
+message ListJobHistoryRequest {
+  string route_id = 1;
+  int64 since_unix_nano = 2;
+  int64 until_unix_nano = 3;
+  uint32 limit = 4;
+}
+
+message ListJobHistoryResponse {
+  repeated JobHistoryEntry jobs = 1;
+}
+
+message GetJobManifestRequest {
+  string job_id = 1;
+}
+
+message GetJobManifestResponse {
+  JobHistoryManifest manifest = 1;
+}
+
+message GetJobFinalRequest {
+  string job_id = 1;
+}
+
+message GetJobFinalResponse {
+  TransferJob job = 1;
+}
+
+message ListJobSnapshotsRequest {
+  string job_id = 1;
+  int64 since_unix_nano = 2;
+  int64 until_unix_nano = 3;
+  uint32 limit = 4;
+}
+
+message ListJobSnapshotsResponse {
+  repeated TransferJob snapshots = 1;
+}
+
+message ListJobEnergyRequest {
+  string job_id = 1;
+  uint32 limit = 2;
+}
+
+message JobEnergyRecord {
+  string csv = 1;
+}
+
+message ListJobEnergyResponse {
+  string header = 1;
+  repeated JobEnergyRecord records = 2;
+}
+
+service JobHistoryControl {
+  rpc ListJobHistory (ListJobHistoryRequest) returns (ListJobHistoryResponse);
+  rpc GetJobManifest (GetJobManifestRequest) returns (GetJobManifestResponse);
+  rpc GetJobFinal (GetJobFinalRequest) returns (GetJobFinalResponse);
+  rpc ListJobSnapshots (ListJobSnapshotsRequest) returns (ListJobSnapshotsResponse);
+  rpc ListJobEnergy (ListJobEnergyRequest) returns (ListJobEnergyResponse);
 }
 
 enum EndpointType {

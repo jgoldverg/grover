@@ -41,6 +41,7 @@ type RoutedTransferAPI interface {
 	ListTransferJobs(ctx context.Context, routeID string) ([]*groverpb.TransferJob, error)
 	AbortTransferJob(ctx context.Context, jobID string) (*groverpb.TransferJob, error)
 	UpdateTransferConcurrency(ctx context.Context, jobID string, filesInFlight, streamsPerFile uint32) (*groverpb.TransferJob, error)
+	UpdateTransferTuning(ctx context.Context, req *groverpb.UpdateTransferTuningRequest) (*groverpb.TransferJob, error)
 	StreamTransferStats(ctx context.Context, jobID, routeID string) (groverpb.TransferJobControl_StreamTransferStatsClient, error)
 }
 
@@ -69,6 +70,14 @@ type RouteConfigAPI interface {
 	DeleteRoute(ctx context.Context, name string) (bool, error)
 }
 
+type JobHistoryAPI interface {
+	ListJobHistory(ctx context.Context, req *groverpb.ListJobHistoryRequest) ([]*groverpb.JobHistoryEntry, error)
+	GetJobManifest(ctx context.Context, jobID string) (*groverpb.JobHistoryManifest, error)
+	GetJobFinal(ctx context.Context, jobID string) (*groverpb.TransferJob, error)
+	ListJobSnapshots(ctx context.Context, req *groverpb.ListJobSnapshotsRequest) ([]*groverpb.TransferJob, error)
+	ListJobEnergy(ctx context.Context, req *groverpb.ListJobEnergyRequest) (*groverpb.ListJobEnergyResponse, error)
+}
+
 type Client struct {
 	cfg  internal.AppConfig
 	conn *grpc.ClientConn
@@ -79,6 +88,7 @@ type Client struct {
 	relay       RelayControlAPI
 	route       RouteSessionAPI
 	routeConfig RouteConfigAPI
+	history     JobHistoryAPI
 }
 
 func NewClient(cfg internal.AppConfig) *Client {
@@ -96,6 +106,8 @@ func (c *Client) RelayControl() RelayControlAPI { return c.relay }
 func (c *Client) RouteSessionControl() RouteSessionAPI { return c.route }
 
 func (c *Client) RouteConfigControl() RouteConfigAPI { return c.routeConfig }
+
+func (c *Client) JobHistoryControl() JobHistoryAPI { return c.history }
 
 func (c *Client) Initialize(ctx context.Context, policy util.RoutePolicy) error {
 	var (
@@ -142,11 +154,13 @@ func (c *Client) Initialize(ctx context.Context, policy util.RoutePolicy) error 
 		c.relay = NewRelayControlService(c.conn)
 		c.route = NewRouteSessionService(c.conn)
 		c.routeConfig = NewRouteConfigService(c.conn)
+		c.history = NewJobHistoryService(c.conn)
 	} else {
 		c.routed = nil
 		c.relay = nil
 		c.route = nil
 		c.routeConfig = nil
+		c.history = nil
 	}
 
 	fileStore, err := backend.NewTomlCredentialStorage(c.cfg.CredentialsFile)
