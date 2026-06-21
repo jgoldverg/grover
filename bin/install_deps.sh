@@ -189,6 +189,28 @@ setup_firewall_linux_ufw() {
   return 0
 }
 
+setup_firewall_linux_firewalld() {
+  if ! command -v firewall-cmd >/dev/null 2>&1; then
+    return 1
+  fi
+  if ! sudo firewall-cmd --state >/dev/null 2>&1; then
+    return 1
+  fi
+  local zone
+  zone="${GROVER_FIREWALLD_ZONE:-$(sudo firewall-cmd --get-default-zone 2>/dev/null || true)}"
+  if [[ -z "$zone" ]]; then
+    zone="public"
+  fi
+  log "configuring active firewalld zone ${zone} for Grover ports"
+  sudo firewall-cmd --zone="$zone" --add-port="${GROVER_CONTROL_PORT}/tcp" >/dev/null || true
+  sudo firewall-cmd --zone="$zone" --add-port="${GROVER_DATA_PORT_MIN}-${GROVER_DATA_PORT_MAX}/tcp" >/dev/null || true
+  sudo firewall-cmd --zone="$zone" --add-port="${GROVER_DATA_PORT_MIN}-${GROVER_DATA_PORT_MAX}/udp" >/dev/null || true
+  sudo firewall-cmd --permanent --zone="$zone" --add-port="${GROVER_CONTROL_PORT}/tcp" >/dev/null || true
+  sudo firewall-cmd --permanent --zone="$zone" --add-port="${GROVER_DATA_PORT_MIN}-${GROVER_DATA_PORT_MAX}/tcp" >/dev/null || true
+  sudo firewall-cmd --permanent --zone="$zone" --add-port="${GROVER_DATA_PORT_MIN}-${GROVER_DATA_PORT_MAX}/udp" >/dev/null || true
+  return 0
+}
+
 setup_firewall_linux_nftables() {
   if ! command -v nft >/dev/null 2>&1; then
     return 1
@@ -197,19 +219,58 @@ setup_firewall_linux_nftables() {
     return 1
   fi
   log "configuring nftables firewall for Grover ports"
-  sudo nft list table inet grover >/dev/null 2>&1 || sudo nft add table inet grover
-  sudo nft list chain inet grover input >/dev/null 2>&1 ||
-    sudo nft 'add chain inet grover input { type filter hook input priority 0; policy accept; }'
-  sudo nft list chain inet grover output >/dev/null 2>&1 ||
-    sudo nft 'add chain inet grover output { type filter hook output priority 0; policy accept; }'
+  local inserted=0
+  local family table chain hook
+  while read -r family table chain hook; do
+    [[ -n "$family" && -n "$table" && -n "$chain" && -n "$hook" ]] || continue
+    if [[ "$hook" == "input" ]]; then
+      nft_insert_once "$family" "$table" "$chain" "grover control tcp" tcp dport "$GROVER_CONTROL_PORT" accept
+      nft_insert_once "$family" "$table" "$chain" "grover data tcp" tcp dport "${GROVER_DATA_PORT_MIN}-${GROVER_DATA_PORT_MAX}" accept
+      nft_insert_once "$family" "$table" "$chain" "grover data udp" udp dport "${GROVER_DATA_PORT_MIN}-${GROVER_DATA_PORT_MAX}" accept
+      inserted=1
+    elif [[ "$hook" == "output" ]]; then
+      nft_insert_once "$family" "$table" "$chain" "grover control tcp out" tcp sport "$GROVER_CONTROL_PORT" accept
+      nft_insert_once "$family" "$table" "$chain" "grover data tcp out" tcp sport "${GROVER_DATA_PORT_MIN}-${GROVER_DATA_PORT_MAX}" accept
+      nft_insert_once "$family" "$table" "$chain" "grover data udp out" udp sport "${GROVER_DATA_PORT_MIN}-${GROVER_DATA_PORT_MAX}" accept
+      inserted=1
+    fi
+  done < <(nft_hook_chains)
 
-  sudo nft add rule inet grover input tcp dport "$GROVER_CONTROL_PORT" accept 2>/dev/null || true
-  sudo nft add rule inet grover input tcp dport "${GROVER_DATA_PORT_MIN}-${GROVER_DATA_PORT_MAX}" accept 2>/dev/null || true
-  sudo nft add rule inet grover input udp dport "${GROVER_DATA_PORT_MIN}-${GROVER_DATA_PORT_MAX}" accept 2>/dev/null || true
-  sudo nft add rule inet grover output tcp sport "$GROVER_CONTROL_PORT" accept 2>/dev/null || true
-  sudo nft add rule inet grover output tcp sport "${GROVER_DATA_PORT_MIN}-${GROVER_DATA_PORT_MAX}" accept 2>/dev/null || true
-  sudo nft add rule inet grover output udp sport "${GROVER_DATA_PORT_MIN}-${GROVER_DATA_PORT_MAX}" accept 2>/dev/null || true
+  if [[ "$inserted" == "0" ]]; then
+    sudo nft list table inet grover >/dev/null 2>&1 || sudo nft add table inet grover
+    sudo nft list chain inet grover input >/dev/null 2>&1 ||
+      sudo nft 'add chain inet grover input { type filter hook input priority -300; policy accept; }'
+    sudo nft list chain inet grover output >/dev/null 2>&1 ||
+      sudo nft 'add chain inet grover output { type filter hook output priority -300; policy accept; }'
+    nft_insert_once inet grover input "grover control tcp" tcp dport "$GROVER_CONTROL_PORT" accept
+    nft_insert_once inet grover input "grover data tcp" tcp dport "${GROVER_DATA_PORT_MIN}-${GROVER_DATA_PORT_MAX}" accept
+    nft_insert_once inet grover input "grover data udp" udp dport "${GROVER_DATA_PORT_MIN}-${GROVER_DATA_PORT_MAX}" accept
+    nft_insert_once inet grover output "grover control tcp out" tcp sport "$GROVER_CONTROL_PORT" accept
+    nft_insert_once inet grover output "grover data tcp out" tcp sport "${GROVER_DATA_PORT_MIN}-${GROVER_DATA_PORT_MAX}" accept
+    nft_insert_once inet grover output "grover data udp out" udp sport "${GROVER_DATA_PORT_MIN}-${GROVER_DATA_PORT_MAX}" accept
+  fi
   return 0
+}
+
+nft_hook_chains() {
+  sudo nft list ruleset 2>/dev/null | awk '
+    $1 == "table" { family=$2; table=$3 }
+    $1 == "chain" { chain=$2 }
+    /hook input/ { print family, table, chain, "input" }
+    /hook output/ { print family, table, chain, "output" }
+  '
+}
+
+nft_insert_once() {
+  local family="$1"
+  local table="$2"
+  local chain="$3"
+  local comment="$4"
+  shift 4
+  if sudo nft list chain "$family" "$table" "$chain" 2>/dev/null | grep -Fq "comment \"$comment\""; then
+    return 0
+  fi
+  sudo nft insert rule "$family" "$table" "$chain" "$@" comment "$comment" 2>/dev/null || true
 }
 
 setup_firewall_linux_iptables() {
@@ -279,17 +340,22 @@ setup_firewall() {
   log "opening Grover firewall ports: control tcp/${GROVER_CONTROL_PORT}, data tcp+udp/${GROVER_DATA_PORT_MIN}-${GROVER_DATA_PORT_MAX}"
   case "$OS" in
   linux)
+    local configured=0
     if setup_firewall_linux_ufw; then
-      return
+      configured=1
     fi
-    if command -v nft >/dev/null 2>&1 && sudo nft list ruleset 2>/dev/null | grep -q .; then
-      setup_firewall_linux_nftables || true
-      return
+    if setup_firewall_linux_firewalld; then
+      configured=1
+    fi
+    if setup_firewall_linux_nftables; then
+      configured=1
     fi
     if setup_firewall_linux_iptables; then
-      return
+      configured=1
     fi
-    setup_firewall_linux_nftables || log "firewall setup skipped; no supported Linux firewall tool found"
+    if [[ "$configured" == "0" ]]; then
+      log "firewall setup skipped; no supported Linux firewall tool found"
+    fi
     ;;
   darwin)
     setup_firewall_macos_pf || log "firewall setup skipped; pfctl not found"
