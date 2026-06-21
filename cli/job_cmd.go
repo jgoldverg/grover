@@ -22,6 +22,7 @@ func JobCommand() *cobra.Command {
 	}
 	cmd.AddCommand(JobListCommand())
 	cmd.AddCommand(JobGetCommand())
+	cmd.AddCommand(JobMonitorCommand())
 	cmd.AddCommand(JobTuneCommand())
 	cmd.AddCommand(JobHistoryCommand())
 	return cmd
@@ -82,6 +83,41 @@ func JobGetCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Print JSON")
+	return cmd
+}
+
+func JobMonitorCommand() *cobra.Command {
+	var routeID string
+	cmd := &cobra.Command{
+		Use:          "monitor <job_id>",
+		Short:        "Watch a live transfer job until it exits",
+		Aliases:      []string{"watch"},
+		Args:         cobra.ExactArgs(1),
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, closeFn, err := openJobClient(cmd)
+			if err != nil {
+				return err
+			}
+			defer closeFn()
+			stream, err := client.RoutedTransfer().StreamTransferStats(cmd.Context(), args[0], routeID)
+			if err != nil {
+				return err
+			}
+			sampler := &transferRateSampler{}
+			for {
+				job, err := stream.Recv()
+				if err != nil {
+					return err
+				}
+				printTransferJobStatus(cmd.OutOrStdout(), job, sampler.Observe(job, time.Now()))
+				if job.GetState() != pb.RuntimeState_RUNTIME_STATE_RUNNING && job.GetState() != pb.RuntimeState_RUNTIME_STATE_PREPARING {
+					return nil
+				}
+			}
+		},
+	}
+	cmd.Flags().StringVar(&routeID, "route", "", "Optional route ID hint for the stats stream")
 	return cmd
 }
 

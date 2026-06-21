@@ -8,6 +8,9 @@ GO_VERSION="${GO_VERSION:-1.25.0}"
 PROTOC_VERSION="${PROTOC_VERSION:-27.2}"
 PROTOC_GEN_GO_VERSION="${PROTOC_GEN_GO_VERSION:-v1.36.1}"
 PROTOC_GEN_GO_GRPC_VERSION="${PROTOC_GEN_GO_GRPC_VERSION:-v1.5.1}"
+GROVER_CONTROL_PORT="${GROVER_CONTROL_PORT:-22444}"
+GROVER_DATA_PORT_MIN="${GROVER_DATA_PORT_MIN:-30000}"
+GROVER_DATA_PORT_MAX="${GROVER_DATA_PORT_MAX:-30199}"
 
 mkdir -p "$BIN_DIR"
 export PATH="$BIN_DIR:$PATH"
@@ -169,6 +172,133 @@ build_project() {
   log "build complete; binaries are in ${ROOT_DIR}/bin"
 }
 
+setup_firewall_linux_ufw() {
+  if ! command -v ufw >/dev/null 2>&1; then
+    return 1
+  fi
+  local status
+  status="$(sudo ufw status 2>/dev/null | head -n 1 || true)"
+  if [[ "$status" != "Status: active" ]]; then
+    return 1
+  fi
+  log "configuring active ufw firewall for Grover ports"
+  sudo ufw allow "${GROVER_CONTROL_PORT}/tcp" comment "grover control" >/dev/null || true
+  sudo ufw allow "${GROVER_DATA_PORT_MIN}:${GROVER_DATA_PORT_MAX}/tcp" comment "grover data tcp" >/dev/null || true
+  sudo ufw allow "${GROVER_DATA_PORT_MIN}:${GROVER_DATA_PORT_MAX}/udp" comment "grover data udp" >/dev/null || true
+  return 0
+}
+
+setup_firewall_linux_nftables() {
+  if ! command -v nft >/dev/null 2>&1; then
+    return 1
+  fi
+  if ! sudo nft list ruleset >/dev/null 2>&1; then
+    return 1
+  fi
+  log "configuring nftables firewall for Grover ports"
+  sudo nft list table inet grover >/dev/null 2>&1 || sudo nft add table inet grover
+  sudo nft list chain inet grover input >/dev/null 2>&1 ||
+    sudo nft 'add chain inet grover input { type filter hook input priority 0; policy accept; }'
+  sudo nft list chain inet grover output >/dev/null 2>&1 ||
+    sudo nft 'add chain inet grover output { type filter hook output priority 0; policy accept; }'
+
+  sudo nft add rule inet grover input tcp dport "$GROVER_CONTROL_PORT" accept 2>/dev/null || true
+  sudo nft add rule inet grover input tcp dport "${GROVER_DATA_PORT_MIN}-${GROVER_DATA_PORT_MAX}" accept 2>/dev/null || true
+  sudo nft add rule inet grover input udp dport "${GROVER_DATA_PORT_MIN}-${GROVER_DATA_PORT_MAX}" accept 2>/dev/null || true
+  sudo nft add rule inet grover output tcp sport "$GROVER_CONTROL_PORT" accept 2>/dev/null || true
+  sudo nft add rule inet grover output tcp sport "${GROVER_DATA_PORT_MIN}-${GROVER_DATA_PORT_MAX}" accept 2>/dev/null || true
+  sudo nft add rule inet grover output udp sport "${GROVER_DATA_PORT_MIN}-${GROVER_DATA_PORT_MAX}" accept 2>/dev/null || true
+  return 0
+}
+
+setup_firewall_linux_iptables() {
+  if ! command -v iptables >/dev/null 2>&1; then
+    return 1
+  fi
+  log "configuring iptables firewall for Grover ports"
+  sudo iptables -C INPUT -p tcp --dport "$GROVER_CONTROL_PORT" -j ACCEPT 2>/dev/null ||
+    sudo iptables -I INPUT -p tcp --dport "$GROVER_CONTROL_PORT" -j ACCEPT
+  sudo iptables -C INPUT -p tcp --dport "${GROVER_DATA_PORT_MIN}:${GROVER_DATA_PORT_MAX}" -j ACCEPT 2>/dev/null ||
+    sudo iptables -I INPUT -p tcp --dport "${GROVER_DATA_PORT_MIN}:${GROVER_DATA_PORT_MAX}" -j ACCEPT
+  sudo iptables -C INPUT -p udp --dport "${GROVER_DATA_PORT_MIN}:${GROVER_DATA_PORT_MAX}" -j ACCEPT 2>/dev/null ||
+    sudo iptables -I INPUT -p udp --dport "${GROVER_DATA_PORT_MIN}:${GROVER_DATA_PORT_MAX}" -j ACCEPT
+
+  sudo iptables -C OUTPUT -p tcp --sport "$GROVER_CONTROL_PORT" -j ACCEPT 2>/dev/null ||
+    sudo iptables -I OUTPUT -p tcp --sport "$GROVER_CONTROL_PORT" -j ACCEPT
+  sudo iptables -C OUTPUT -p tcp --sport "${GROVER_DATA_PORT_MIN}:${GROVER_DATA_PORT_MAX}" -j ACCEPT 2>/dev/null ||
+    sudo iptables -I OUTPUT -p tcp --sport "${GROVER_DATA_PORT_MIN}:${GROVER_DATA_PORT_MAX}" -j ACCEPT
+  sudo iptables -C OUTPUT -p udp --sport "${GROVER_DATA_PORT_MIN}:${GROVER_DATA_PORT_MAX}" -j ACCEPT 2>/dev/null ||
+    sudo iptables -I OUTPUT -p udp --sport "${GROVER_DATA_PORT_MIN}:${GROVER_DATA_PORT_MAX}" -j ACCEPT
+  return 0
+}
+
+setup_firewall_macos_pf() {
+  if ! command -v pfctl >/dev/null 2>&1; then
+    return 1
+  fi
+  local anchor_file="/etc/pf.anchors/grover"
+  local anchor_line='anchor "grover"'
+  local load_line='load anchor "grover" from "/etc/pf.anchors/grover"'
+  log "configuring macOS pf firewall for Grover ports"
+  sudo mkdir -p /etc/pf.anchors
+  printf '%s\n' \
+    "# Grover control and data-plane ports. Managed by bin/install_deps.sh." \
+    "pass in proto tcp from any to any port ${GROVER_CONTROL_PORT} keep state" \
+    "pass in proto tcp from any to any port ${GROVER_DATA_PORT_MIN}:${GROVER_DATA_PORT_MAX} keep state" \
+    "pass in proto udp from any to any port ${GROVER_DATA_PORT_MIN}:${GROVER_DATA_PORT_MAX} keep state" |
+    sudo tee "$anchor_file" >/dev/null
+
+  if ! grep -Fqx "$anchor_line" /etc/pf.conf; then
+    printf '\n%s\n' "$anchor_line" | sudo tee -a /etc/pf.conf >/dev/null
+  fi
+  if ! grep -Fqx "$load_line" /etc/pf.conf; then
+    printf '%s\n' "$load_line" | sudo tee -a /etc/pf.conf >/dev/null
+  fi
+  sudo pfctl -f /etc/pf.conf
+  sudo pfctl -e 2>/dev/null || true
+  return 0
+}
+
+setup_firewall() {
+  if [[ "${GROVER_SETUP_FIREWALL:-1}" == "0" ]]; then
+    log "skipping firewall setup because GROVER_SETUP_FIREWALL=0"
+    return
+  fi
+  if ! [[ "$GROVER_CONTROL_PORT" =~ ^[0-9]+$ && "$GROVER_DATA_PORT_MIN" =~ ^[0-9]+$ && "$GROVER_DATA_PORT_MAX" =~ ^[0-9]+$ ]]; then
+    log "firewall setup skipped; Grover port values must be numeric"
+    return
+  fi
+  if ((GROVER_CONTROL_PORT < 1 || GROVER_CONTROL_PORT > 65535 ||
+    GROVER_DATA_PORT_MIN < 1 || GROVER_DATA_PORT_MAX > 65535 ||
+    GROVER_DATA_PORT_MIN > GROVER_DATA_PORT_MAX)); then
+    log "firewall setup skipped; invalid Grover ports control=${GROVER_CONTROL_PORT} data=${GROVER_DATA_PORT_MIN}-${GROVER_DATA_PORT_MAX}"
+    return
+  fi
+
+  log "opening Grover firewall ports: control tcp/${GROVER_CONTROL_PORT}, data tcp+udp/${GROVER_DATA_PORT_MIN}-${GROVER_DATA_PORT_MAX}"
+  case "$OS" in
+  linux)
+    if setup_firewall_linux_ufw; then
+      return
+    fi
+    if command -v nft >/dev/null 2>&1 && sudo nft list ruleset 2>/dev/null | grep -q .; then
+      setup_firewall_linux_nftables || true
+      return
+    fi
+    if setup_firewall_linux_iptables; then
+      return
+    fi
+    setup_firewall_linux_nftables || log "firewall setup skipped; no supported Linux firewall tool found"
+    ;;
+  darwin)
+    setup_firewall_macos_pf || log "firewall setup skipped; pfctl not found"
+    ;;
+  *)
+    log "firewall setup skipped; unsupported OS ${OS}"
+    ;;
+  esac
+}
+
 setup_rapl_permissions() {
   if [[ "$OS" != "linux" ]]; then
     return
@@ -270,6 +400,7 @@ install_protoc
 install_protoc_plugins
 sync_vendor
 build_project
+setup_firewall
 setup_rapl_permissions
 persist_path
 

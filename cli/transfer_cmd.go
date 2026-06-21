@@ -699,6 +699,7 @@ func percentComplete(done, total uint64) float64 {
 
 func printActiveTransferFiles(w io.Writer, job *pb.TransferJob, nowRate float64) {
 	active := 0
+	limit := activeTransferFileDisplayLimit(job)
 	for _, file := range job.GetFiles() {
 		if file.GetState() != pb.RuntimeState_RUNTIME_STATE_RUNNING {
 			continue
@@ -715,10 +716,43 @@ func printActiveTransferFiles(w io.Writer, job *pb.TransferJob, nowRate float64)
 			formatETA(remainingBytes(file.GetBytesDone(), file.GetSize()), nowRate),
 		)
 		printActiveTransferStreams(w, file)
-		if active >= 3 {
+		if active >= limit {
+			if remaining := countActiveTransferFiles(job) - active; remaining > 0 {
+				fmt.Fprintf(w, "   * ... %d more active files\n", remaining)
+			}
 			break
 		}
 	}
+}
+
+func activeTransferFileDisplayLimit(job *pb.TransferJob) int {
+	if job == nil {
+		return 3
+	}
+	limit := int(job.GetConcurrency())
+	if limit <= 0 {
+		limit = int(job.GetFilesActive())
+	}
+	if limit < 3 {
+		limit = 3
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	return limit
+}
+
+func countActiveTransferFiles(job *pb.TransferJob) int {
+	if job == nil {
+		return 0
+	}
+	count := 0
+	for _, file := range job.GetFiles() {
+		if file.GetState() == pb.RuntimeState_RUNTIME_STATE_RUNNING {
+			count++
+		}
+	}
+	return count
 }
 
 func printActiveTransferStreams(w io.Writer, file *pb.TransferFileState) {
