@@ -7,12 +7,16 @@ import (
 	"io"
 	"net/url"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jgoldverg/grover/backend"
+	"github.com/jgoldverg/grover/pkg/gclient"
 	pb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
+	"github.com/jgoldverg/grover/pkg/util"
 	"github.com/spf13/cobra"
 )
 
@@ -21,13 +25,11 @@ type scheduleRunOptions struct {
 	RouteTemplate   string
 	RouteStore      string
 	DestinationRoot string
-	Protocol        string
-	Concurrency     int
-	ParallelStreams int
 	Limit           int
 	Offset          int
 	DryRun          bool
 	ContinueOnError bool
+	KeepData        bool
 	UIMode          string
 	UIIntervalMs    int
 }
@@ -43,6 +45,7 @@ type scheduleRow struct {
 	CarbonEmissions  string
 	TransferTime     string
 	SlotDurationSecs string
+	FlowCount        int
 	Raw              map[string]string
 }
 
@@ -74,13 +77,11 @@ func scheduleRunCommand(opts *scheduleRunOptions) *cobra.Command {
 	cmd.Flags().StringVar(&opts.RouteStore, "route-store", "", "Path to local route template store")
 	_ = cmd.Flags().MarkHidden("route-store")
 	cmd.Flags().StringVar(&opts.DestinationRoot, "destination-root", "", "Destination root for synthetic schedule payloads when using server routes")
-	cmd.Flags().StringVar(&opts.Protocol, "protocol", "", "Override route protocol (tcp|udp)")
-	cmd.Flags().IntVar(&opts.Concurrency, "concurrency", 0, "Override route files-in-flight")
-	cmd.Flags().IntVar(&opts.ParallelStreams, "parallel-streams", 0, "Override route streams per file")
 	cmd.Flags().IntVar(&opts.Limit, "limit", 0, "Maximum matching rows to execute (0 means all)")
 	cmd.Flags().IntVar(&opts.Offset, "offset", 0, "Skip this many matching rows before executing")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Print planned synthetic transfers without starting jobs")
 	cmd.Flags().BoolVar(&opts.ContinueOnError, "continue-on-error", false, "Continue running later schedule rows if a transfer fails")
+	cmd.Flags().BoolVar(&opts.KeepData, "keep-data", false, "Keep synthetic destination files after each schedule row")
 	cmd.Flags().StringVar(&opts.UIMode, "ui", "summary", "Transfer UI mode for each row (summary|live|none)")
 	cmd.Flags().IntVar(&opts.UIIntervalMs, "ui-interval-ms", 2000, "Live metrics UI refresh interval in milliseconds")
 	return cmd
@@ -286,19 +287,13 @@ func runSchedule(cmd *cobra.Command, schedulePath string, opts *scheduleRunOptio
 		executed++
 		jobID := scheduleTransferJobID(routeKey, row.JobID)
 		syntheticPath := syntheticScheduleSource(row.AllocatedBytes, routeKey, row.JobID)
-		fmt.Fprintf(cmd.OutOrStdout(), "schedule_row: job_id=%s route=%s bytes=%d synthetic=%s destination=%s\n", row.JobID, row.RouteKey, row.AllocatedBytes, syntheticPath, route.Destination)
+		rowRoute := route
+		if row.FlowCount > 0 {
+			rowRoute.ParallelStreams = row.FlowCount
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "schedule_row: job_id=%s route=%s bytes=%d flow_count=%d synthetic=%s destination=%s\n", row.JobID, row.RouteKey, row.AllocatedBytes, rowRoute.ParallelStreams, syntheticPath, route.Destination)
 		if opts.DryRun {
 			continue
-		}
-		rowRoute := route
-		if strings.TrimSpace(opts.Protocol) != "" {
-			rowRoute.Protocol = opts.Protocol
-		}
-		if opts.Concurrency > 0 {
-			rowRoute.Concurrency = opts.Concurrency
-		}
-		if opts.ParallelStreams > 0 {
-			rowRoute.ParallelStreams = opts.ParallelStreams
 		}
 		copyOpts := CopyOptions{
 			Concurrency:     rowRoute.Concurrency,
@@ -324,6 +319,18 @@ func runSchedule(cmd *cobra.Command, schedulePath string, opts *scheduleRunOptio
 				continue
 			}
 			return err
+		}
+		if !opts.KeepData {
+			if cleanupErr := cleanupScheduleDestinationFile(cmd, rowRoute.Destination, row.RouteKey, row.JobID); cleanupErr != nil {
+				msg := fmt.Sprintf("cleanup synthetic destination file for schedule row %s: %v", row.JobID, cleanupErr)
+				if opts.ContinueOnError {
+					fmt.Fprintf(cmd.OutOrStdout(), "schedule_row_cleanup_failed: job_id=%s error=%s\n", row.JobID, cleanupErr)
+				} else {
+					return fmt.Errorf("%s", msg)
+				}
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "schedule_row_cleanup: job_id=%s deleted=%s\n", row.JobID, scheduleDestinationFilePath(rowRoute.Destination, row.RouteKey, row.JobID))
+			}
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "schedule_row_done: job_id=%s transfer_job=%s state=%s\n", row.JobID, job.GetJobId(), shortRuntimeState(job.GetState()))
 		if job.GetErrorMessage() != "" && !opts.ContinueOnError {
@@ -382,18 +389,9 @@ func scheduleTemplateFromServerRoute(cfg *pb.RouteConfig, destinationRoot string
 	if err != nil {
 		return storedRouteTemplate{}, err
 	}
-	concurrency := opts.Concurrency
-	if concurrency <= 0 {
-		concurrency = 1
-	}
-	streams := opts.ParallelStreams
-	if streams <= 0 {
-		streams = 1
-	}
+	concurrency := 1
+	streams := 1
 	protocol := routeProtocolLabel(cfg.GetProtocol())
-	if strings.TrimSpace(opts.Protocol) != "" {
-		protocol = strings.ToLower(strings.TrimSpace(opts.Protocol))
-	}
 	return storedRouteTemplate{
 		Name:             cfg.GetName(),
 		Source:           source,
@@ -452,6 +450,10 @@ func parseScheduleRows(r io.Reader, label string) ([]scheduleRow, error) {
 		if err != nil {
 			return nil, fmt.Errorf("schedule csv %s line %d: %w", label, line+2, err)
 		}
+		flowCount, err := parseOptionalSchedulePositiveInt(raw["flow_count"], "flow_count")
+		if err != nil {
+			return nil, fmt.Errorf("schedule csv %s line %d: %w", label, line+2, err)
+		}
 		rows = append(rows, scheduleRow{
 			JobID:            raw["job_id"],
 			RouteKey:         raw["route"],
@@ -463,6 +465,7 @@ func parseScheduleRows(r io.Reader, label string) ([]scheduleRow, error) {
 			CarbonEmissions:  raw["carbon_emissions"],
 			TransferTime:     raw["transfer_time"],
 			SlotDurationSecs: raw["slot_duration_seconds"],
+			FlowCount:        flowCount,
 			Raw:              raw,
 		})
 	}
@@ -504,9 +507,69 @@ func parseScheduleBytes(raw string) (uint64, error) {
 	return uint64(value), nil
 }
 
+func parseOptionalSchedulePositiveInt(raw, name string) (int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q", name, raw)
+	}
+	if value < 0 {
+		return 0, fmt.Errorf("%s must be non-negative, got %q", name, raw)
+	}
+	intValue := int(value)
+	if value != float64(intValue) {
+		return 0, fmt.Errorf("%s must be an integer, got %q", name, raw)
+	}
+	return intValue, nil
+}
+
 func syntheticScheduleSource(size uint64, routeKey, jobID string) string {
-	rel := filepath.ToSlash(filepath.Join("schedule", safeSchedulePathPart(routeKey), "job-"+safeSchedulePathPart(jobID)+".bin"))
+	rel := syntheticScheduleRelativePath(routeKey, jobID)
 	return fmt.Sprintf("synthetic://%d/%s", size, escapeSchedulePath(rel))
+}
+
+func syntheticScheduleRelativePath(routeKey, jobID string) string {
+	return pathpkg.Join("schedule", safeSchedulePathPart(routeKey), "job-"+safeSchedulePathPart(jobID)+".bin")
+}
+
+func scheduleDestinationFilePath(destination, routeKey, jobID string) string {
+	ref, err := parseLocation(destination)
+	if err != nil || strings.TrimSpace(ref.Path) == "" {
+		return ""
+	}
+	return pathpkg.Join(ref.Path, syntheticScheduleRelativePath(routeKey, jobID))
+}
+
+func cleanupScheduleDestinationFile(cmd *cobra.Command, destination, routeKey, jobID string) error {
+	ref, err := parseLocation(destination)
+	if err != nil {
+		return err
+	}
+	if !ref.isRemote || strings.TrimSpace(ref.ControlEndpoint) == "" {
+		return fmt.Errorf("destination %q is not a groverd endpoint", destination)
+	}
+	targetPath := pathpkg.Join(ref.Path, syntheticScheduleRelativePath(routeKey, jobID))
+	if strings.TrimSpace(targetPath) == "" || targetPath == "." || targetPath == "/" {
+		return fmt.Errorf("refusing unsafe cleanup path %q", targetPath)
+	}
+	baseCfg := GetAppConfig(cmd)
+	if baseCfg == nil {
+		return fmt.Errorf("app config unavailable")
+	}
+	cfg := *baseCfg
+	cfg.ServerURL = ref.ControlEndpoint
+	client := gclient.NewClient(cfg)
+	if err := client.Initialize(cmd.Context(), util.RouteForceRemote); err != nil {
+		return fmt.Errorf("connect to destination groverd %s: %w", ref.ControlEndpoint, err)
+	}
+	defer client.Close()
+	return client.Files().Remove(cmd.Context(), backend.Endpoint{
+		Scheme: string(backend.LOCALFSBackend),
+		Paths:  []string{targetPath},
+	}, targetPath)
 }
 
 func escapeSchedulePath(path string) string {

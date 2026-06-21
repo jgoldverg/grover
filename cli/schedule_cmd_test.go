@@ -11,9 +11,9 @@ import (
 )
 
 func TestParseScheduleRowsSupportsColumnOrder(t *testing.T) {
-	input := `route,allocated_bytes,job_id,source_node,destination_node
-tacc_buff,100030000.0,2309,tacc,buff
-chi_buff,42,7,chi,buff
+	input := `route,allocated_bytes,job_id,source_node,destination_node,flow_count
+tacc_buff,100030000.0,2309,tacc,buff,32
+chi_buff,42,7,chi,buff,
 `
 	rows, err := parseScheduleRows(strings.NewReader(input), "test.csv")
 	if err != nil {
@@ -25,8 +25,14 @@ chi_buff,42,7,chi,buff
 	if rows[0].JobID != "2309" || rows[0].RouteKey != "tacc_buff" || rows[0].AllocatedBytes != 100030000 {
 		t.Fatalf("unexpected first row: %+v", rows[0])
 	}
+	if rows[0].FlowCount != 32 {
+		t.Fatalf("first row flow count = %d, want 32", rows[0].FlowCount)
+	}
 	if rows[1].AllocatedBytes != 42 {
 		t.Fatalf("second row bytes = %d, want 42", rows[1].AllocatedBytes)
+	}
+	if rows[1].FlowCount != 0 {
+		t.Fatalf("second row flow count = %d, want 0", rows[1].FlowCount)
 	}
 }
 
@@ -37,11 +43,29 @@ func TestParseScheduleRowsRejectsMissingRequiredColumns(t *testing.T) {
 	}
 }
 
+func TestParseScheduleRowsRejectsFractionalFlowCount(t *testing.T) {
+	input := `job_id,route,allocated_bytes,flow_count
+1,tacc_buff,10,3.5
+`
+	_, err := parseScheduleRows(strings.NewReader(input), "bad.csv")
+	if err == nil || !strings.Contains(err.Error(), "flow_count must be an integer") {
+		t.Fatalf("error = %v, want fractional flow_count validation", err)
+	}
+}
+
 func TestSyntheticScheduleSourceIsStableAndParseable(t *testing.T) {
 	src := syntheticScheduleSource(1234, "tacc/buff", "job 7")
 	want := "synthetic://1234/schedule/tacc_buff/job-job_7.bin"
 	if src != want {
 		t.Fatalf("synthetic source = %q, want %q", src, want)
+	}
+}
+
+func TestScheduleDestinationFilePathTargetsOnlySyntheticRow(t *testing.T) {
+	got := scheduleDestinationFilePath("192.5.86.166:22444:/home/cc/data/grover-dst/schedules", "tacc_uc", "job 7")
+	want := "/home/cc/data/grover-dst/schedules/schedule/tacc_uc/job-job_7.bin"
+	if got != want {
+		t.Fatalf("destination cleanup path = %q, want %q", got, want)
 	}
 }
 
@@ -70,10 +94,7 @@ func TestScheduleServerRouteTemplateMapsNetworkRouteToSyntheticTransferRoute(t *
 		ConnectionOrigin: pb.ConnectionOrigin_CONNECTION_ORIGIN_SOURCE,
 		DataDirection:    pb.DataDirection_DATA_DIRECTION_SOURCE_TO_DESTINATION,
 	}
-	tmpl, err := scheduleTemplateFromServerRoute(route, "/home/ubuntu/data/grover-dst/schedule", &scheduleRunOptions{
-		Concurrency:     3,
-		ParallelStreams: 4,
-	})
+	tmpl, err := scheduleTemplateFromServerRoute(route, "/home/ubuntu/data/grover-dst/schedule", &scheduleRunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +104,7 @@ func TestScheduleServerRouteTemplateMapsNetworkRouteToSyntheticTransferRoute(t *
 	if tmpl.Destination != "10.137.132.2:22444:/home/ubuntu/data/grover-dst/schedule" {
 		t.Fatalf("destination = %q", tmpl.Destination)
 	}
-	if tmpl.Protocol != "udp" || tmpl.Concurrency != 3 || tmpl.ParallelStreams != 4 {
+	if tmpl.Protocol != "udp" || tmpl.Concurrency != 1 || tmpl.ParallelStreams != 1 {
 		t.Fatalf("template options = %+v", tmpl)
 	}
 	if len(tmpl.Via) != 1 || tmpl.Via[0] != "10.133.3.2:22444" {
