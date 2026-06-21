@@ -195,7 +195,17 @@ setup_rapl_permissions() {
     return
   fi
 
-  local target_user="${GROVER_RAPL_USER:-${SUDO_USER:-${USER:-}}}"
+  local target_user="${GROVER_RAPL_USER:-}"
+  if [[ -z "$target_user" ]]; then
+    if [[ -n "${SUDO_USER:-}" && "${SUDO_USER:-}" != "root" ]]; then
+      target_user="$SUDO_USER"
+    elif command -v logname >/dev/null 2>&1; then
+      target_user="$(logname 2>/dev/null || true)"
+    fi
+  fi
+  if [[ -z "$target_user" || "$target_user" == "root" ]]; then
+    target_user="$(id -un 2>/dev/null || true)"
+  fi
   if [[ -z "$target_user" || "$target_user" == "root" ]]; then
     log "RAPL permission setup skipped; set GROVER_RAPL_USER=<user> when running as root"
     return
