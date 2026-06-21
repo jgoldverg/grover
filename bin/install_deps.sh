@@ -11,6 +11,7 @@ PROTOC_GEN_GO_GRPC_VERSION="${PROTOC_GEN_GO_GRPC_VERSION:-v1.5.1}"
 GROVER_CONTROL_PORT="${GROVER_CONTROL_PORT:-22444}"
 GROVER_DATA_PORT_MIN="${GROVER_DATA_PORT_MIN:-30000}"
 GROVER_DATA_PORT_MAX="${GROVER_DATA_PORT_MAX:-30199}"
+GROVER_DISABLE_RP_FILTER="${GROVER_DISABLE_RP_FILTER:-1}"
 
 mkdir -p "$BIN_DIR"
 export PATH="$BIN_DIR:$PATH"
@@ -299,6 +300,54 @@ setup_firewall() {
   esac
 }
 
+setup_rp_filter() {
+  if [[ "$OS" != "linux" ]]; then
+    return
+  fi
+  if [[ "${GROVER_DISABLE_RP_FILTER:-1}" == "0" ]]; then
+    log "skipping reverse-path filter setup because GROVER_DISABLE_RP_FILTER=0"
+    return
+  fi
+  if ! command -v sysctl >/dev/null 2>&1; then
+    log "reverse-path filter setup skipped; sysctl not found"
+    return
+  fi
+
+  log "disabling Linux reverse-path filtering for floating-IP/asymmetric-route Grover nodes"
+  sudo sysctl -w net.ipv4.conf.all.rp_filter=0 >/dev/null || true
+  sudo sysctl -w net.ipv4.conf.default.rp_filter=0 >/dev/null || true
+
+  local iface
+  for iface_path in /proc/sys/net/ipv4/conf/*/rp_filter; do
+    [[ -e "$iface_path" ]] || continue
+    iface="$(basename "$(dirname "$iface_path")")"
+    if [[ "$iface" == "all" || "$iface" == "default" || "$iface" == "lo" ]]; then
+      continue
+    fi
+    sudo sysctl -w "net.ipv4.conf.${iface}.rp_filter=0" >/dev/null || true
+  done
+
+  local sysctl_file="/etc/sysctl.d/99-grover-network.conf"
+  log "installing persistent reverse-path filter config at ${sysctl_file}"
+  {
+    echo "# Grover: floating IPs, tunnels, overlays, and multi-NIC experiments can use asymmetric routing."
+    echo "# Strict rp_filter may drop valid inbound Grover control/data traffic before groverd can reply."
+    echo "net.ipv4.conf.all.rp_filter=0"
+    echo "net.ipv4.conf.default.rp_filter=0"
+  } | sudo tee "$sysctl_file" >/dev/null
+
+  for iface_path in /proc/sys/net/ipv4/conf/*/rp_filter; do
+    [[ -e "$iface_path" ]] || continue
+    iface="$(basename "$(dirname "$iface_path")")"
+    if [[ "$iface" == "all" || "$iface" == "default" || "$iface" == "lo" ]]; then
+      continue
+    fi
+    echo "net.ipv4.conf.${iface}.rp_filter=0"
+  done | sudo tee -a "$sysctl_file" >/dev/null
+
+  sudo sysctl --system >/dev/null || true
+}
+
 setup_rapl_permissions() {
   if [[ "$OS" != "linux" ]]; then
     return
@@ -401,6 +450,7 @@ install_protoc_plugins
 sync_vendor
 build_project
 setup_firewall
+setup_rp_filter
 setup_rapl_permissions
 persist_path
 
