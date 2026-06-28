@@ -12,6 +12,7 @@ GROVER_CONTROL_PORT="${GROVER_CONTROL_PORT:-22444}"
 GROVER_DATA_PORT_MIN="${GROVER_DATA_PORT_MIN:-30000}"
 GROVER_DATA_PORT_MAX="${GROVER_DATA_PORT_MAX:-30199}"
 GROVER_DISABLE_RP_FILTER="${GROVER_DISABLE_RP_FILTER:-1}"
+GROVER_CPU_BENCHMARK_TIMEOUT="${GROVER_CPU_BENCHMARK_TIMEOUT:-60s}"
 
 mkdir -p "$BIN_DIR"
 export PATH="$BIN_DIR:$PATH"
@@ -46,6 +47,9 @@ install_system_deps() {
         sudo apt-get update
       fi
       sudo apt-get install -y ca-certificates curl tar unzip make
+      sudo apt-get install -y stress-ng cpufrequtils linux-tools-common "linux-tools-$(uname -r)" 2>/dev/null ||
+        sudo apt-get install -y stress-ng cpufrequtils 2>/dev/null ||
+        log "optional CPU benchmark/governor tools could not be installed"
       return
     fi
     ;;
@@ -414,6 +418,64 @@ setup_rp_filter() {
   sudo sysctl --system >/dev/null || true
 }
 
+setup_cpu_governor() {
+  if [[ "$OS" != "linux" ]]; then
+    return
+  fi
+  if [[ "${GROVER_SETUP_CPU_GOVERNOR:-1}" == "0" ]]; then
+    log "skipping CPU governor setup because GROVER_SETUP_CPU_GOVERNOR=0"
+    return
+  fi
+
+  local governors=()
+  local governor_file
+  shopt -s nullglob
+  for governor_file in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+    governors+=("$governor_file")
+  done
+  shopt -u nullglob
+
+  if [[ "${#governors[@]}" -eq 0 ]]; then
+    log "CPU governor setup skipped; cpufreq scaling_governor files are not present"
+    return
+  fi
+
+  log "current CPU governors:"
+  grep -h . "${governors[@]}" 2>/dev/null | sort | uniq -c | sed 's/^/[grover]   /' || true
+
+  log "setting CPU governors to performance"
+  if command -v cpupower >/dev/null 2>&1; then
+    sudo cpupower frequency-set -g performance >/dev/null 2>&1 || true
+  fi
+
+  for governor_file in "${governors[@]}"; do
+    echo performance | sudo tee "$governor_file" >/dev/null 2>&1 || true
+  done
+
+  log "CPU governors after setup:"
+  grep -h . "${governors[@]}" 2>/dev/null | sort | uniq -c | sed 's/^/[grover]   /' || true
+}
+
+run_cpu_benchmark() {
+  if [[ "$OS" != "linux" ]]; then
+    return
+  fi
+  if [[ "${GROVER_RUN_CPU_BENCHMARK:-1}" == "0" ]]; then
+    log "skipping CPU benchmark because GROVER_RUN_CPU_BENCHMARK=0"
+    return
+  fi
+  if ! command -v stress-ng >/dev/null 2>&1; then
+    log "CPU benchmark skipped; stress-ng is not installed"
+    return
+  fi
+
+  log "running CPU baseline: stress-ng --matrix 0 --matrix-method prod --timeout ${GROVER_CPU_BENCHMARK_TIMEOUT} --metrics-brief"
+  stress-ng --matrix 0 --matrix-method prod --timeout "$GROVER_CPU_BENCHMARK_TIMEOUT" --metrics-brief 2>&1 |
+    while IFS= read -r line; do
+      echo "[grover][stress-ng] ${line}"
+    done
+}
+
 setup_rapl_permissions() {
   if [[ "$OS" != "linux" ]]; then
     return
@@ -517,6 +579,8 @@ sync_vendor
 build_project
 setup_firewall
 setup_rp_filter
+setup_cpu_governor
+run_cpu_benchmark
 setup_rapl_permissions
 persist_path
 
