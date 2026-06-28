@@ -334,6 +334,87 @@ func TestTransferJobManagerDirectTCPBetweenManagers(t *testing.T) {
 	assertFileBytes(t, filepath.Join(dst, "file.txt"), payload)
 }
 
+func TestTransferJobManagerDestinationWritesReceiveHistory(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	payload := bytes.Repeat([]byte("history over destination tcp streams\n"), 1024)
+	if err := os.WriteFile(filepath.Join(src, "file.txt"), payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logRoot := t.TempDir()
+	sourceCfg := &internal.ServerConfig{DataBindHost: "127.0.0.1", DataAdvertiseHost: "127.0.0.1"}
+	destCfg := &internal.ServerConfig{DataBindHost: "127.0.0.1", DataAdvertiseHost: "127.0.0.1", JobLogDir: logRoot}
+	sourceManager := NewTransferJobManager(sourceCfg, nil)
+	destManager := NewTransferJobManager(destCfg, nil)
+	defer sourceManager.Close()
+	defer destManager.Close()
+
+	source, err := sourceManager.PrepareEndpoint(context.Background(), &pb.PrepareTransferEndpointRequest{
+		RouteId:  "direct-history",
+		JobId:    "job-direct-history",
+		Role:     pb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_SOURCE,
+		Protocol: pb.DataProtocol_DATA_PROTOCOL_TCP,
+		RootPath: src,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest, err := destManager.PrepareEndpoint(context.Background(), &pb.PrepareTransferEndpointRequest{
+		RouteId:  "direct-history",
+		JobId:    "job-direct-history",
+		Role:     pb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_DESTINATION,
+		Protocol: pb.DataProtocol_DATA_PROTOCOL_TCP,
+		RootPath: dst,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sourceManager.StartJob(context.Background(), &pb.StartTransferJobRequest{
+		RouteId:        "direct-history",
+		JobId:          "job-direct-history",
+		Source:         source,
+		Destination:    dest,
+		FilesInFlight:  1,
+		StreamsPerFile: 4,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitForTransferJobState(t, sourceManager, "job-direct-history", pb.RuntimeState_RUNTIME_STATE_DONE)
+	assertFileBytes(t, filepath.Join(dst, "file.txt"), payload)
+
+	destManager.finalizeDestinationReceives()
+	jobLogDir := filepath.Join(logRoot, "job-direct-history")
+	manifestBytes, err := os.ReadFile(filepath.Join(jobLogDir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest transferJobManifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.JobID != "job-direct-history" || manifest.RouteID != "direct-history" {
+		t.Fatalf("unexpected destination manifest identity: %+v", manifest)
+	}
+	if manifest.DestinationRoot != dst || manifest.TotalFiles != 1 || manifest.TotalBytes != uint64(len(payload)) {
+		t.Fatalf("unexpected destination manifest totals: %+v", manifest)
+	}
+	snapshots, err := os.ReadFile(filepath.Join(jobLogDir, "snapshots.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(snapshots), `"jobId":"job-direct-history"`) {
+		t.Fatalf("destination snapshots are not transfer-job snapshots: %s", snapshots)
+	}
+	final, err := os.ReadFile(filepath.Join(jobLogDir, "final.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalText := string(final)
+	if !strings.Contains(finalText, `"jobId":  "job-direct-history"`) || !strings.Contains(finalText, `"diskWriteBytes":`) {
+		t.Fatalf("unexpected destination final log: %s", finalText)
+	}
+}
+
 func TestTransferJobManagerReverseTCPBetweenManagers(t *testing.T) {
 	routeSourceDst := t.TempDir()
 	routeDestinationSrc := t.TempDir()

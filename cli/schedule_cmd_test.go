@@ -11,9 +11,9 @@ import (
 )
 
 func TestParseScheduleRowsSupportsColumnOrder(t *testing.T) {
-	input := `route,allocated_bytes,job_id,source_node,destination_node,flow_count
-tacc_buff,100030000.0,2309,tacc,buff,32
-chi_buff,42,7,chi,buff,
+	input := `route,allocated_bytes,job_id,source_node,destination_node,flow_count,forecast_id,slot_duration_seconds
+tacc_buff,100030000.0,2309,tacc,buff,32,3,300.0
+chi_buff,42,7,chi,buff,,,
 `
 	rows, err := parseScheduleRows(strings.NewReader(input), "test.csv")
 	if err != nil {
@@ -28,11 +28,36 @@ chi_buff,42,7,chi,buff,
 	if rows[0].FlowCount != 32 {
 		t.Fatalf("first row flow count = %d, want 32", rows[0].FlowCount)
 	}
+	if rows[0].ForecastIndex != 3 || rows[0].SlotDuration != 5*time.Minute {
+		t.Fatalf("first row timing = forecast %d slot %s", rows[0].ForecastIndex, rows[0].SlotDuration)
+	}
 	if rows[1].AllocatedBytes != 42 {
 		t.Fatalf("second row bytes = %d, want 42", rows[1].AllocatedBytes)
 	}
 	if rows[1].FlowCount != 0 {
 		t.Fatalf("second row flow count = %d, want 0", rows[1].FlowCount)
+	}
+}
+
+func TestScheduleEventsGroupRowsByForecastSlot(t *testing.T) {
+	rows := []scheduleRow{
+		{JobID: "late", ForecastIndex: 3, SlotDuration: 5 * time.Minute},
+		{JobID: "now-1", ForecastIndex: 1, SlotDuration: 5 * time.Minute},
+		{JobID: "mid", ForecastIndex: 2, SlotDuration: 5 * time.Minute},
+		{JobID: "now-2"},
+	}
+	events := scheduleEvents(rows)
+	if len(events) != 3 {
+		t.Fatalf("events = %d, want 3", len(events))
+	}
+	if events[0].Offset != 0 || len(events[0].Rows) != 2 {
+		t.Fatalf("first event = %+v, want two immediate rows", events[0])
+	}
+	if events[1].Offset != 5*time.Minute || events[1].Rows[0].JobID != "mid" {
+		t.Fatalf("second event = %+v", events[1])
+	}
+	if events[2].Offset != 10*time.Minute || events[2].Rows[0].JobID != "late" {
+		t.Fatalf("third event = %+v", events[2])
 	}
 }
 

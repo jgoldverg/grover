@@ -9,6 +9,7 @@ import (
 	"os"
 	pathpkg "path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +31,7 @@ type scheduleRunOptions struct {
 	DryRun          bool
 	ContinueOnError bool
 	KeepData        bool
+	TimeScale       float64
 	UIMode          string
 	UIIntervalMs    int
 }
@@ -46,7 +48,14 @@ type scheduleRow struct {
 	TransferTime     string
 	SlotDurationSecs string
 	FlowCount        int
+	ForecastIndex    int
+	SlotDuration     time.Duration
 	Raw              map[string]string
+}
+
+type scheduleEvent struct {
+	Offset time.Duration
+	Rows   []scheduleRow
 }
 
 func ScheduleCommand() *cobra.Command {
@@ -56,6 +65,7 @@ func ScheduleCommand() *cobra.Command {
 		Short: "Run GreenTransferScheduler CSV schedules through groverd",
 	}
 	cmd.AddCommand(scheduleRunCommand(&opts))
+	cmd.AddCommand(scheduleCompareCommand())
 	cmd.AddCommand(scheduleAddCommand())
 	cmd.AddCommand(scheduleListCommand())
 	cmd.AddCommand(scheduleRunPendingCommand())
@@ -82,6 +92,7 @@ func scheduleRunCommand(opts *scheduleRunOptions) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Print planned synthetic transfers without starting jobs")
 	cmd.Flags().BoolVar(&opts.ContinueOnError, "continue-on-error", false, "Continue running later schedule rows if a transfer fails")
 	cmd.Flags().BoolVar(&opts.KeepData, "keep-data", false, "Keep synthetic destination files after each schedule row")
+	cmd.Flags().Float64Var(&opts.TimeScale, "time-scale", 1, "Scale schedule timing delays; 1 is real time, 0 fires all slots immediately")
 	cmd.Flags().StringVar(&opts.UIMode, "ui", "summary", "Transfer UI mode for each row (summary|live|none)")
 	cmd.Flags().IntVar(&opts.UIIntervalMs, "ui-interval-ms", 2000, "Live metrics UI refresh interval in milliseconds")
 	return cmd
@@ -271,77 +282,140 @@ func runSchedule(cmd *cobra.Command, schedulePath string, opts *scheduleRunOptio
 	if err != nil {
 		return err
 	}
+	if opts.TimeScale < 0 {
+		return fmt.Errorf("--time-scale must be >= 0")
+	}
+	selected, matched := selectScheduleRows(rows, routeKey, opts.Offset, opts.Limit)
+	if matched == 0 {
+		return fmt.Errorf("no schedule rows matched route key %q", routeKey)
+	}
+	if len(selected) == 0 {
+		return fmt.Errorf("no schedule rows executed for route key %q after offset/limit", routeKey)
+	}
+	events := scheduleEvents(selected)
+	started := time.Now()
+	for _, event := range events {
+		if !opts.DryRun {
+			if err := waitForScheduleEvent(cmd, started, event.Offset, opts.TimeScale); err != nil {
+				return err
+			}
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "schedule_event: offset=%s rows=%d\n", event.Offset, len(event.Rows))
+		for _, row := range event.Rows {
+			if err := executeScheduleRow(cmd, route, row, opts); err != nil {
+				if opts.ContinueOnError {
+					fmt.Fprintf(cmd.OutOrStdout(), "schedule_row_failed: job_id=%s error=%s\n", row.JobID, err)
+					continue
+				}
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func selectScheduleRows(rows []scheduleRow, routeKey string, offset, limit int) ([]scheduleRow, int) {
 	matched := 0
-	executed := 0
+	selected := make([]scheduleRow, 0, len(rows))
 	for _, row := range rows {
 		if row.RouteKey != routeKey {
 			continue
 		}
 		matched++
-		if opts.Offset > 0 && matched <= opts.Offset {
+		if offset > 0 && matched <= offset {
 			continue
 		}
-		if opts.Limit > 0 && executed >= opts.Limit {
+		if limit > 0 && len(selected) >= limit {
 			break
 		}
-		executed++
-		jobID := scheduleTransferJobID(routeKey, row.JobID)
-		syntheticPath := syntheticScheduleSource(row.AllocatedBytes, routeKey, row.JobID)
-		rowRoute := route
-		if row.FlowCount > 0 {
-			rowRoute.ParallelStreams = row.FlowCount
-		}
-		fmt.Fprintf(cmd.OutOrStdout(), "schedule_row: job_id=%s route=%s bytes=%d flow_count=%d synthetic=%s destination=%s\n", row.JobID, row.RouteKey, row.AllocatedBytes, rowRoute.ParallelStreams, syntheticPath, route.Destination)
-		if opts.DryRun {
-			continue
-		}
-		copyOpts := CopyOptions{
-			Concurrency:     rowRoute.Concurrency,
-			ParallelStreams: rowRoute.ParallelStreams,
-			Protocol:        rowRoute.Protocol,
-			Via:             append([]string(nil), rowRoute.Via...),
-			RouteStore:      opts.RouteStore,
-			RouteName:       rowRoute.Name,
-			UIMode:          opts.UIMode,
-			UIIntervalMs:    opts.UIIntervalMs,
-			Paths:           []string{syntheticPath},
-			JobID:           jobID,
-		}
-		var job *pb.TransferJob
-		if strings.TrimSpace(opts.RouteStore) != "" {
-			err = fmt.Errorf("local route-store schedule execution is no longer supported; store the route on groverd and prepare a route session")
-		} else {
-			job, err = startTransferOverPreparedRouteSession(cmd, rowRoute.Source, rowRoute.Destination, copyOpts)
-		}
-		if err != nil {
-			if opts.ContinueOnError {
-				fmt.Fprintf(cmd.OutOrStdout(), "schedule_row_failed: job_id=%s error=%s\n", row.JobID, err)
-				continue
-			}
-			return err
-		}
-		if !opts.KeepData {
-			if cleanupErr := cleanupScheduleDestinationFile(cmd, rowRoute.Destination, row.RouteKey, row.JobID); cleanupErr != nil {
-				msg := fmt.Sprintf("cleanup synthetic destination file for schedule row %s: %v", row.JobID, cleanupErr)
-				if opts.ContinueOnError {
-					fmt.Fprintf(cmd.OutOrStdout(), "schedule_row_cleanup_failed: job_id=%s error=%s\n", row.JobID, cleanupErr)
-				} else {
-					return fmt.Errorf("%s", msg)
-				}
-			} else {
-				fmt.Fprintf(cmd.OutOrStdout(), "schedule_row_cleanup: job_id=%s deleted=%s\n", row.JobID, scheduleDestinationFilePath(rowRoute.Destination, row.RouteKey, row.JobID))
-			}
-		}
-		fmt.Fprintf(cmd.OutOrStdout(), "schedule_row_done: job_id=%s transfer_job=%s state=%s\n", row.JobID, job.GetJobId(), shortRuntimeState(job.GetState()))
-		if job.GetErrorMessage() != "" && !opts.ContinueOnError {
-			return fmt.Errorf("schedule row %s failed: %s", row.JobID, job.GetErrorMessage())
-		}
+		selected = append(selected, row)
 	}
-	if matched == 0 {
-		return fmt.Errorf("no schedule rows matched route key %q", routeKey)
+	return selected, matched
+}
+
+func scheduleEvents(rows []scheduleRow) []scheduleEvent {
+	byOffset := make(map[time.Duration][]scheduleRow)
+	for _, row := range rows {
+		byOffset[scheduleRowOffset(row)] = append(byOffset[scheduleRowOffset(row)], row)
 	}
-	if executed == 0 {
-		return fmt.Errorf("no schedule rows executed for route key %q after offset/limit", routeKey)
+	events := make([]scheduleEvent, 0, len(byOffset))
+	for offset, rows := range byOffset {
+		events = append(events, scheduleEvent{Offset: offset, Rows: rows})
+	}
+	sort.Slice(events, func(i, j int) bool {
+		return events[i].Offset < events[j].Offset
+	})
+	return events
+}
+
+func scheduleRowOffset(row scheduleRow) time.Duration {
+	if row.ForecastIndex <= 1 || row.SlotDuration <= 0 {
+		return 0
+	}
+	return time.Duration(row.ForecastIndex-1) * row.SlotDuration
+}
+
+func waitForScheduleEvent(cmd *cobra.Command, started time.Time, offset time.Duration, scale float64) error {
+	if scale <= 0 || offset <= 0 {
+		return nil
+	}
+	target := started.Add(time.Duration(float64(offset) * scale))
+	wait := time.Until(target)
+	if wait <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-cmd.Context().Done():
+		return cmd.Context().Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func executeScheduleRow(cmd *cobra.Command, route storedRouteTemplate, row scheduleRow, opts *scheduleRunOptions) error {
+	jobID := scheduleTransferJobID(row.RouteKey, row.JobID)
+	syntheticPath := syntheticScheduleSource(row.AllocatedBytes, row.RouteKey, row.JobID)
+	rowRoute := route
+	if row.FlowCount > 0 {
+		rowRoute.ParallelStreams = row.FlowCount
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "schedule_row: job_id=%s route=%s offset=%s bytes=%d flow_count=%d synthetic=%s destination=%s\n", row.JobID, row.RouteKey, scheduleRowOffset(row), row.AllocatedBytes, rowRoute.ParallelStreams, syntheticPath, route.Destination)
+	if opts.DryRun {
+		return nil
+	}
+	copyOpts := CopyOptions{
+		Concurrency:     rowRoute.Concurrency,
+		ParallelStreams: rowRoute.ParallelStreams,
+		Protocol:        rowRoute.Protocol,
+		Via:             append([]string(nil), rowRoute.Via...),
+		RouteStore:      opts.RouteStore,
+		RouteName:       rowRoute.Name,
+		UIMode:          opts.UIMode,
+		UIIntervalMs:    opts.UIIntervalMs,
+		Paths:           []string{syntheticPath},
+		JobID:           jobID,
+	}
+	var job *pb.TransferJob
+	var err error
+	if strings.TrimSpace(opts.RouteStore) != "" {
+		err = fmt.Errorf("local route-store schedule execution is no longer supported; store the route on groverd and prepare a route session")
+	} else {
+		job, err = startTransferOverPreparedRouteSession(cmd, rowRoute.Source, rowRoute.Destination, copyOpts)
+	}
+	if err != nil {
+		return err
+	}
+	if !opts.KeepData {
+		if cleanupErr := cleanupScheduleDestinationFile(cmd, rowRoute.Destination, row.RouteKey, row.JobID); cleanupErr != nil {
+			return fmt.Errorf("cleanup synthetic destination file for schedule row %s: %w", row.JobID, cleanupErr)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "schedule_row_cleanup: job_id=%s deleted=%s\n", row.JobID, scheduleDestinationFilePath(rowRoute.Destination, row.RouteKey, row.JobID))
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "schedule_row_done: job_id=%s transfer_job=%s state=%s\n", row.JobID, job.GetJobId(), shortRuntimeState(job.GetState()))
+	if job.GetErrorMessage() != "" {
+		return fmt.Errorf("schedule row %s failed: %s", row.JobID, job.GetErrorMessage())
 	}
 	return nil
 }
@@ -454,6 +528,14 @@ func parseScheduleRows(r io.Reader, label string) ([]scheduleRow, error) {
 		if err != nil {
 			return nil, fmt.Errorf("schedule csv %s line %d: %w", label, line+2, err)
 		}
+		forecastIndex, err := parseOptionalSchedulePositiveInt(raw["forecast_id"], "forecast_id")
+		if err != nil {
+			return nil, fmt.Errorf("schedule csv %s line %d: %w", label, line+2, err)
+		}
+		slotDuration, err := parseOptionalScheduleSeconds(raw["slot_duration_seconds"], "slot_duration_seconds")
+		if err != nil {
+			return nil, fmt.Errorf("schedule csv %s line %d: %w", label, line+2, err)
+		}
 		rows = append(rows, scheduleRow{
 			JobID:            raw["job_id"],
 			RouteKey:         raw["route"],
@@ -466,6 +548,8 @@ func parseScheduleRows(r io.Reader, label string) ([]scheduleRow, error) {
 			TransferTime:     raw["transfer_time"],
 			SlotDurationSecs: raw["slot_duration_seconds"],
 			FlowCount:        flowCount,
+			ForecastIndex:    forecastIndex,
+			SlotDuration:     slotDuration,
 			Raw:              raw,
 		})
 	}
@@ -524,6 +608,21 @@ func parseOptionalSchedulePositiveInt(raw, name string) (int, error) {
 		return 0, fmt.Errorf("%s must be an integer, got %q", name, raw)
 	}
 	return intValue, nil
+}
+
+func parseOptionalScheduleSeconds(raw, name string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q", name, raw)
+	}
+	if value < 0 {
+		return 0, fmt.Errorf("%s must be non-negative, got %q", name, raw)
+	}
+	return time.Duration(value * float64(time.Second)), nil
 }
 
 func syntheticScheduleSource(size uint64, routeKey, jobID string) string {

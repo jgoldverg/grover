@@ -114,6 +114,7 @@ type TransferJobManager struct {
 	mu          sync.RWMutex
 	endpoints   map[string]*preparedTransferEndpoint
 	jobs        map[string]*transferJobRuntime
+	receives    map[string]*destinationReceiveRuntime
 	reverseTCP  map[string]*reverseTCPPool
 	registry    TransferEndpointRegistry
 	executor    TransferJobExecutor
@@ -244,6 +245,38 @@ type transferJobManifestFile struct {
 	Size         uint64 `json:"size"`
 }
 
+type destinationReceiveRuntime struct {
+	mu               sync.Mutex
+	jobID            string
+	routeID          string
+	protocol         pb.DataProtocol
+	root             string
+	startedAt        time.Time
+	updatedAt        time.Time
+	totalBytes       uint64
+	receivedBytes    uint64
+	activeStreams    int
+	completedStreams int
+	failedStreams    int
+	files            map[string]uint64
+	streams          map[string]*destinationReceiveStream
+	history          *transferJobHistory
+	finalizeTimer    *time.Timer
+}
+
+type destinationReceiveStream struct {
+	RelativePath string          `json:"relative_path"`
+	StreamID     uint32          `json:"stream_id"`
+	Offset       uint64          `json:"offset"`
+	Size         uint64          `json:"size"`
+	BytesDone    uint64          `json:"bytes_done"`
+	Remote       string          `json:"remote"`
+	State        pb.RuntimeState `json:"state"`
+	Error        string          `json:"error,omitempty"`
+	StartedAt    time.Time       `json:"started_at"`
+	FinishedAt   time.Time       `json:"finished_at,omitempty"`
+}
+
 func NewTransferJobManager(cfg *internal.ServerConfig, executor TransferJobExecutor) *TransferJobManager {
 	if executor == nil {
 		executor = localFilesystemTransferExecutor{}
@@ -268,6 +301,7 @@ func NewTransferJobManager(cfg *internal.ServerConfig, executor TransferJobExecu
 	m := &TransferJobManager{
 		endpoints:   make(map[string]*preparedTransferEndpoint),
 		jobs:        make(map[string]*transferJobRuntime),
+		receives:    make(map[string]*destinationReceiveRuntime),
 		reverseTCP:  make(map[string]*reverseTCPPool),
 		executor:    executor,
 		ports:       ports,
@@ -316,6 +350,7 @@ func (m *TransferJobManager) Close() {
 		for _, endpoint := range endpoints {
 			closePreparedTransferEndpoint(endpoint)
 		}
+		m.finalizeDestinationReceives()
 		if m.energyDone != nil {
 			<-m.energyDone
 		}
@@ -414,11 +449,11 @@ func (m *TransferJobManager) PrepareEndpoint(ctx context.Context, req *pb.Prepar
 	} else if req.GetRole() == pb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_DESTINATION &&
 		connectionOrigin == pb.ConnectionOrigin_CONNECTION_ORIGIN_DESTINATION &&
 		protocol == pb.DataProtocol_DATA_PROTOCOL_TCP {
-		go connectDestinationOriginTCPReceivers(context.Background(), dataEndpoint, root)
+		go m.connectDestinationOriginTCPReceivers(context.Background(), dataEndpoint, root)
 	} else if lease != nil && protocol == pb.DataProtocol_DATA_PROTOCOL_TCP {
-		go serveTransferEndpointTCP(lease.TCPListener, root)
+		go m.serveTransferEndpointTCP(lease.TCPListener, root)
 	} else if lease != nil && protocol == pb.DataProtocol_DATA_PROTOCOL_UDP {
-		go serveTransferEndpointUDP(lease.UDPConn, root, m.udp)
+		go m.serveTransferEndpointUDP(lease.UDPConn, root, m.udp)
 	}
 	m.mu.Lock()
 	m.endpoints[endpoint.EndpointId] = &preparedTransferEndpoint{endpoint: endpoint, expires: time.Now().Add(ttl), lease: lease, reverse: reverse}
@@ -941,7 +976,7 @@ func (m *TransferJobManager) takeReverseTCPConn(ctx context.Context, jobID strin
 	return pool.take(ctx)
 }
 
-func connectDestinationOriginTCPReceivers(ctx context.Context, source *pb.DataEndpoint, root string) {
+func (m *TransferJobManager) connectDestinationOriginTCPReceivers(ctx context.Context, source *pb.DataEndpoint, root string) {
 	if source == nil || strings.TrimSpace(source.GetHost()) == "" || source.GetPort() == 0 {
 		return
 	}
@@ -957,7 +992,7 @@ func connectDestinationOriginTCPReceivers(ctx context.Context, source *pb.DataEn
 				})
 				return
 			}
-			receiveTransferFileTCP(conn, root)
+			m.receiveTransferFileTCP(conn, root)
 		}()
 	}
 }
@@ -1295,6 +1330,273 @@ func (l *nodeEnergyLog) close() error {
 	return err
 }
 
+func (m *TransferJobManager) beginDestinationReceive(jobID, routeID string, protocol pb.DataProtocol, root, relPath string, totalSize, offset, size uint64, streamID uint32, remote string) {
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" || m == nil {
+		return
+	}
+	now := time.Now()
+	m.mu.Lock()
+	runtime := m.receives[jobID]
+	if runtime == nil {
+		runtime = &destinationReceiveRuntime{
+			jobID:     jobID,
+			routeID:   strings.TrimSpace(routeID),
+			protocol:  protocol,
+			root:      root,
+			startedAt: now,
+			files:     make(map[string]uint64),
+			streams:   make(map[string]*destinationReceiveStream),
+		}
+		if m.jobLogDir != "" {
+			if history, err := newTransferJobHistory(m.jobLogDir, jobID, m.energy); err != nil {
+				internal.Warn(jobLogMessage(jobID, "destination receive history disabled"), internal.Fields{
+					internal.FieldError: err.Error(),
+					"job_log_dir":       m.jobLogDir,
+				})
+			} else {
+				runtime.history = history
+				history.appendReceiveEnergy(jobID, runtime.routeID, now)
+			}
+		}
+		m.receives[jobID] = runtime
+	}
+	m.mu.Unlock()
+
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	if runtime.finalizeTimer != nil {
+		runtime.finalizeTimer.Stop()
+		runtime.finalizeTimer = nil
+	}
+	if runtime.routeID == "" {
+		runtime.routeID = strings.TrimSpace(routeID)
+	}
+	if runtime.root == "" {
+		runtime.root = root
+	}
+	runtime.updatedAt = now
+	if _, ok := runtime.files[relPath]; !ok {
+		runtime.files[relPath] = totalSize
+		runtime.totalBytes += totalSize
+	}
+	key := destinationReceiveStreamKey(relPath, streamID, offset)
+	runtime.streams[key] = &destinationReceiveStream{
+		RelativePath: relPath,
+		StreamID:     streamID,
+		Offset:       offset,
+		Size:         size,
+		Remote:       remote,
+		State:        pb.RuntimeState_RUNTIME_STATE_RUNNING,
+		StartedAt:    now,
+	}
+	runtime.activeStreams++
+	if runtime.history != nil {
+		job := destinationReceiveSnapshotLocked(runtime)
+		_ = runtime.history.writeReceiveManifest(job)
+		runtime.history.appendSnapshot(job)
+	}
+}
+
+func (m *TransferJobManager) finishDestinationReceive(jobID, routeID string, protocol pb.DataProtocol, relPath string, offset uint64, streamID uint32, bytesDone uint64, remote string, state pb.RuntimeState, errText string) {
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" || m == nil {
+		return
+	}
+	m.mu.RLock()
+	runtime := m.receives[jobID]
+	m.mu.RUnlock()
+	if runtime == nil {
+		return
+	}
+	now := time.Now()
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	runtime.updatedAt = now
+	key := destinationReceiveStreamKey(relPath, streamID, offset)
+	stream := runtime.streams[key]
+	if stream == nil {
+		stream = &destinationReceiveStream{RelativePath: relPath, StreamID: streamID, Offset: offset, Remote: remote}
+		runtime.streams[key] = stream
+	}
+	stream.BytesDone = bytesDone
+	stream.State = state
+	stream.Error = errText
+	stream.FinishedAt = now
+	if runtime.activeStreams > 0 {
+		runtime.activeStreams--
+	}
+	if state == pb.RuntimeState_RUNTIME_STATE_DONE {
+		runtime.completedStreams++
+		runtime.receivedBytes += bytesDone
+	} else {
+		runtime.failedStreams++
+	}
+	if runtime.history != nil {
+		runtime.history.appendSnapshot(destinationReceiveSnapshotLocked(runtime))
+	}
+	if runtime.activeStreams == 0 {
+		if runtime.history != nil {
+			runtime.history.appendReceiveEnergy(runtime.jobID, runtime.routeID, now)
+		}
+		runtime.finalizeTimer = time.AfterFunc(2*time.Second, func() {
+			m.finalizeDestinationReceive(jobID)
+		})
+	}
+}
+
+func (m *TransferJobManager) finalizeDestinationReceives() {
+	if m == nil {
+		return
+	}
+	m.mu.RLock()
+	ids := make([]string, 0, len(m.receives))
+	for id := range m.receives {
+		ids = append(ids, id)
+	}
+	m.mu.RUnlock()
+	for _, id := range ids {
+		m.finalizeDestinationReceive(id)
+	}
+}
+
+func (m *TransferJobManager) finalizeDestinationReceive(jobID string) {
+	m.mu.Lock()
+	runtime := m.receives[jobID]
+	if runtime != nil {
+		delete(m.receives, jobID)
+	}
+	m.mu.Unlock()
+	if runtime == nil {
+		return
+	}
+	runtime.mu.Lock()
+	if runtime.finalizeTimer != nil {
+		runtime.finalizeTimer.Stop()
+		runtime.finalizeTimer = nil
+	}
+	job := destinationReceiveSnapshotLocked(runtime)
+	history := runtime.history
+	runtime.mu.Unlock()
+	if history != nil {
+		history.appendReceiveEnergy(job.GetJobId(), job.GetRouteId(), time.Now())
+		history.appendSnapshot(job)
+		if err := history.writeFinal(job); err != nil {
+			internal.Warn(jobLogMessage(jobID, "failed to write destination final log"), internal.Fields{
+				internal.FieldError: err.Error(),
+				"job_log_path":      history.dir,
+			})
+		}
+		if err := history.close(); err != nil {
+			internal.Warn(jobLogMessage(jobID, "failed to close destination receive log"), internal.Fields{
+				internal.FieldError: err.Error(),
+				"job_log_path":      history.dir,
+			})
+		}
+	}
+}
+
+func destinationReceiveStreamKey(relPath string, streamID uint32, offset uint64) string {
+	return fmt.Sprintf("%s:%d:%d", relPath, streamID, offset)
+}
+
+func destinationReceiveSnapshotLocked(runtime *destinationReceiveRuntime) *pb.TransferJob {
+	if runtime == nil {
+		return nil
+	}
+	files := make([]*pb.TransferFileState, 0, len(runtime.files))
+	paths := make([]string, 0, len(runtime.files))
+	for path := range runtime.files {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	streamsByPath := make(map[string][]*pb.TransferStreamState)
+	for _, stream := range runtime.streams {
+		streamsByPath[stream.RelativePath] = append(streamsByPath[stream.RelativePath], &pb.TransferStreamState{
+			StreamId:             stream.StreamID,
+			Offset:               stream.Offset,
+			Size:                 stream.Size,
+			BytesDone:            stream.BytesDone,
+			State:                stream.State,
+			NetworkBytes:         stream.BytesDone,
+			AverageThroughputBps: receiveStreamAverageBps(stream),
+			ErrorMessage:         stream.Error,
+		})
+	}
+	for _, path := range paths {
+		streams := streamsByPath[path]
+		sort.Slice(streams, func(i, j int) bool {
+			if streams[i].GetOffset() == streams[j].GetOffset() {
+				return streams[i].GetStreamId() < streams[j].GetStreamId()
+			}
+			return streams[i].GetOffset() < streams[j].GetOffset()
+		})
+		var done uint64
+		for _, stream := range streams {
+			done += stream.GetBytesDone()
+		}
+		state := pb.RuntimeState_RUNTIME_STATE_RUNNING
+		if done >= runtime.files[path] && runtime.files[path] > 0 {
+			state = pb.RuntimeState_RUNTIME_STATE_DONE
+		}
+		files = append(files, &pb.TransferFileState{
+			Path:         path,
+			RelativePath: path,
+			Size:         runtime.files[path],
+			BytesDone:    done,
+			State:        state,
+			Streams:      streams,
+		})
+	}
+	state := pb.RuntimeState_RUNTIME_STATE_RUNNING
+	if runtime.activeStreams == 0 {
+		if runtime.failedStreams > 0 {
+			state = pb.RuntimeState_RUNTIME_STATE_FAILED
+		} else {
+			state = pb.RuntimeState_RUNTIME_STATE_DONE
+		}
+	}
+	elapsed := runtime.updatedAt.Sub(runtime.startedAt).Seconds()
+	var avg float64
+	if elapsed > 0 {
+		avg = float64(runtime.receivedBytes) / elapsed
+	}
+	return &pb.TransferJob{
+		JobId:              runtime.jobID,
+		RouteId:            runtime.routeID,
+		State:              state,
+		Protocol:           runtime.protocol,
+		Destination:        &pb.TransferEndpoint{Role: pb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_DESTINATION, Protocol: runtime.protocol, RootPath: runtime.root},
+		FilesInFlight:      uint32(runtime.activeStreams),
+		StreamsPerFile:     uint32(len(runtime.streams)),
+		Files:              files,
+		GoodBytes:          runtime.receivedBytes,
+		NetworkBytes:       runtime.receivedBytes,
+		DiskWriteBytes:     runtime.receivedBytes,
+		FilesDone:          uint32(len(files)),
+		FilesActive:        uint32(runtime.activeStreams),
+		StreamsActive:      uint32(runtime.activeStreams),
+		ParallelismPerFile: uint32(len(runtime.streams)),
+		Stats: &pb.StatsSnapshot{
+			IngressBytes:         runtime.receivedBytes,
+			EgressBytes:          runtime.receivedBytes,
+			AverageThroughputBps: avg,
+			ActiveStreams:        uint32(runtime.activeStreams),
+			SampledAtUnixNano:    time.Now().UnixNano(),
+		},
+	}
+}
+
+func receiveStreamAverageBps(stream *destinationReceiveStream) float64 {
+	if stream == nil || stream.StartedAt.IsZero() || stream.FinishedAt.IsZero() {
+		return 0
+	}
+	if elapsed := stream.FinishedAt.Sub(stream.StartedAt).Seconds(); elapsed > 0 {
+		return float64(stream.BytesDone) / elapsed
+	}
+	return 0
+}
+
 func newTransferJobHistory(baseDir, jobID string, monitor *energy.RAPLMonitor) (*transferJobHistory, error) {
 	baseDir = strings.TrimSpace(baseDir)
 	if baseDir == "" {
@@ -1384,6 +1686,42 @@ func (h *transferJobHistory) writeManifest(runtime *transferJobRuntime, plans []
 	return h.writeJSONFile("manifest.json", manifest)
 }
 
+func (h *transferJobHistory) writeReceiveManifest(job *pb.TransferJob) error {
+	if h == nil || job == nil {
+		return nil
+	}
+	files := make([]transferJobManifestFile, 0, len(job.GetFiles()))
+	var totalBytes uint64
+	for _, file := range job.GetFiles() {
+		files = append(files, transferJobManifestFile{
+			SourcePath:   file.GetPath(),
+			RelativePath: file.GetRelativePath(),
+			Size:         file.GetSize(),
+		})
+		totalBytes += file.GetSize()
+	}
+	manifest := transferJobManifest{
+		JobID:           job.GetJobId(),
+		RouteID:         job.GetRouteId(),
+		Protocol:        job.GetProtocol().String(),
+		SourceRoot:      "",
+		DestinationRoot: job.GetDestination().GetRootPath(),
+		DestinationData: endpointLabel(job.GetDestination().GetDataEndpoint()),
+		Concurrency:     job.GetFilesActive(),
+		Parallelism:     job.GetParallelismPerFile(),
+		FilesInFlight:   job.GetFilesInFlight(),
+		StreamsPerFile:  job.GetStreamsPerFile(),
+		TotalFiles:      len(files),
+		TotalBytes:      totalBytes,
+		CreatedAt:       time.Unix(0, job.GetStats().GetSampledAtUnixNano()),
+		Files:           files,
+	}
+	if manifest.CreatedAt.IsZero() || job.GetStats().GetSampledAtUnixNano() == 0 {
+		manifest.CreatedAt = time.Now()
+	}
+	return h.writeJSONFile("manifest.json", manifest)
+}
+
 func (h *transferJobHistory) writeFinal(job *pb.TransferJob) error {
 	if h == nil || job == nil {
 		return nil
@@ -1397,6 +1735,25 @@ func (h *transferJobHistory) writeFinal(job *pb.TransferJob) error {
 	}
 	payload = append(payload, '\n')
 	return os.WriteFile(filepath.Join(h.dir, "final.json"), payload, 0o644)
+}
+
+func (h *transferJobHistory) appendReceiveEnergy(jobID, routeID string, now time.Time) {
+	if h == nil || h.energy == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.energyWriter == nil {
+		return
+	}
+	if err := h.energy.WriteCSVRecord(h.energyWriter, h.energyTick, jobID, routeID, now); err != nil {
+		internal.Warn(jobLogMessage(jobID, "failed to sample destination receive energy"), internal.Fields{
+			internal.FieldError: err.Error(),
+			"job_log_path":      h.dir,
+		})
+		return
+	}
+	h.energyTick++
 }
 
 func (h *transferJobHistory) writeJSONFile(name string, value any) error {
@@ -2709,7 +3066,7 @@ func sendTCPRange(ctx context.Context, exec *TransferExecutionContext, plan Tran
 	}
 }
 
-func serveTransferEndpointTCP(listener *net.TCPListener, root string) {
+func (m *TransferJobManager) serveTransferEndpointTCP(listener *net.TCPListener, root string) {
 	if listener == nil {
 		return
 	}
@@ -2719,11 +3076,11 @@ func serveTransferEndpointTCP(listener *net.TCPListener, root string) {
 			internal.Debug("tcp transfer listener closed", internal.Fields{internal.FieldError: err.Error()})
 			return
 		}
-		go receiveTransferFileTCP(conn, root)
+		go m.receiveTransferFileTCP(conn, root)
 	}
 }
 
-func serveTransferEndpointUDP(conn *net.UDPConn, root string, tuning udpTransferTuning) {
+func (m *TransferJobManager) serveTransferEndpointUDP(conn *net.UDPConn, root string, tuning udpTransferTuning) {
 	if conn == nil {
 		return
 	}
@@ -2741,17 +3098,21 @@ func serveTransferEndpointUDP(conn *net.UDPConn, root string, tuning udpTransfer
 			internal.Warn("drop invalid udp transfer start packet", internal.Fields{internal.FieldError: err.Error(), "remote": addr.String()})
 			continue
 		}
-		if err := receiveUDPJobFile(context.Background(), conn, root, addr, start, tuning); err != nil {
+		if err := m.receiveUDPJobFile(context.Background(), conn, root, addr, start, tuning); err != nil {
 			internal.Warn("udp transfer receive failed", internal.Fields{internal.FieldError: err.Error(), "remote": addr.String()})
 		}
 	}
 }
 
-func receiveUDPJobFile(ctx context.Context, conn *net.UDPConn, root string, remote *net.UDPAddr, start udpJobStartPacket, tuning udpTransferTuning) error {
+func (m *TransferJobManager) receiveUDPJobFile(ctx context.Context, conn *net.UDPConn, root string, remote *net.UDPAddr, start udpJobStartPacket, tuning udpTransferTuning) error {
 	if remote == nil {
 		return errors.New("udp transfer start missing remote address")
 	}
 	jobID := start.jobID
+	if len(start.streamIDs) == 0 {
+		return errors.New("udp transfer start missing stream ids")
+	}
+	streamID := start.streamIDs[0]
 	relPath := filepath.Clean(filepath.FromSlash(start.relPath))
 	if filepath.IsAbs(relPath) || relPath == "." || strings.HasPrefix(relPath, "..") {
 		return fmt.Errorf("invalid relative path %q", relPath)
@@ -2772,8 +3133,10 @@ func receiveUDPJobFile(ctx context.Context, conn *net.UDPConn, root string, remo
 		"streams":    len(start.streamIDs),
 		"session_id": start.sessionKey,
 	})
+	m.beginDestinationReceive(jobID, start.routeID, pb.DataProtocol_DATA_PROTOCOL_UDP, root, relPath, start.size, 0, start.size, streamID, remote.String())
 	f, err := os.OpenFile(dstPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o644)
 	if err != nil {
+		m.finishDestinationReceive(jobID, start.routeID, pb.DataProtocol_DATA_PROTOCOL_UDP, relPath, 0, streamID, 0, remote.String(), pb.RuntimeState_RUNTIME_STATE_FAILED, err.Error())
 		return err
 	}
 	defer f.Close()
@@ -2791,6 +3154,7 @@ func receiveUDPJobFile(ctx context.Context, conn *net.UDPConn, root string, remo
 			return err
 		}
 		sendUDPJobDoneBurst(conn, remote, start.sessionKey)
+		m.finishDestinationReceive(jobID, start.routeID, pb.DataProtocol_DATA_PROTOCOL_UDP, relPath, 0, streamID, start.size, remote.String(), pb.RuntimeState_RUNTIME_STATE_DONE, "")
 		internal.Info(jobLogMessage(jobID, "udp receive completed"), internal.Fields{
 			"route_id":   start.routeID,
 			"remote":     remote.String(),
@@ -2806,7 +3170,7 @@ func receiveUDPJobFile(ctx context.Context, conn *net.UDPConn, root string, remo
 		RemoteAddr:      remote,
 		SessionID:       fmt.Sprintf("%d", start.sessionKey),
 		SessionKey:      start.sessionKey,
-		StreamID:        start.streamIDs[0],
+		StreamID:        streamID,
 		StreamIDs:       append([]uint32(nil), start.streamIDs...),
 		BufferSize:      64 * 1024,
 		ExpectedSize:    start.size,
@@ -2821,12 +3185,14 @@ func receiveUDPJobFile(ctx context.Context, conn *net.UDPConn, root string, remo
 		_, receiveErr = udpdataplane.Receive(ctx, cfg, f)
 	}
 	if receiveErr != nil {
+		m.finishDestinationReceive(jobID, start.routeID, pb.DataProtocol_DATA_PROTOCOL_UDP, relPath, 0, streamID, 0, remote.String(), pb.RuntimeState_RUNTIME_STATE_FAILED, receiveErr.Error())
 		return receiveErr
 	}
 	if err := f.Sync(); err != nil {
 		return err
 	}
 	sendUDPJobDoneBurst(conn, remote, start.sessionKey)
+	m.finishDestinationReceive(jobID, start.routeID, pb.DataProtocol_DATA_PROTOCOL_UDP, relPath, 0, streamID, start.size, remote.String(), pb.RuntimeState_RUNTIME_STATE_DONE, "")
 	internal.Info(jobLogMessage(jobID, "udp receive completed"), internal.Fields{
 		"route_id":   start.routeID,
 		"remote":     remote.String(),
@@ -2860,7 +3226,7 @@ func sendUDPJobDoneBurst(conn *net.UDPConn, remote *net.UDPAddr, sessionKey uint
 	}
 }
 
-func receiveTransferFileTCP(conn net.Conn, root string) {
+func (m *TransferJobManager) receiveTransferFileTCP(conn net.Conn, root string) {
 	defer conn.Close()
 	remote := conn.RemoteAddr().String()
 	reader := bufio.NewReader(conn)
@@ -3018,11 +3384,14 @@ func receiveTransferFileTCP(conn net.Conn, root string) {
 		"offset":    offset,
 		"stream_id": streamID,
 	})
+	m.beginDestinationReceive(jobID, routeID, pb.DataProtocol_DATA_PROTOCOL_TCP, effectiveRoot, rel, totalSize, offset, size, streamID, remote)
 	if _, err := io.CopyN(dst, reader, int64(size)); err != nil {
+		m.finishDestinationReceive(jobID, routeID, pb.DataProtocol_DATA_PROTOCOL_TCP, rel, offset, streamID, 0, remote, pb.RuntimeState_RUNTIME_STATE_FAILED, err.Error())
 		internal.Warn("tcp transfer receive failed", internal.Fields{internal.FieldError: err.Error(), "remote": remote, "path": rel, "bytes": size})
 		return
 	}
 	_ = writeFull(context.Background(), conn, []byte("OK"))
+	m.finishDestinationReceive(jobID, routeID, pb.DataProtocol_DATA_PROTOCOL_TCP, rel, offset, streamID, size, remote, pb.RuntimeState_RUNTIME_STATE_DONE, "")
 	internal.Info(jobLogMessage(jobID, "tcp receive completed"), internal.Fields{
 		"route_id":  routeID,
 		"remote":    remote,
