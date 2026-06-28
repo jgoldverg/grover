@@ -65,7 +65,6 @@ func ScheduleCommand() *cobra.Command {
 		Short: "Run GreenTransferScheduler CSV schedules through groverd",
 	}
 	cmd.AddCommand(scheduleRunCommand(&opts))
-	cmd.AddCommand(scheduleCompareCommand())
 	cmd.AddCommand(scheduleAddCommand())
 	cmd.AddCommand(scheduleListCommand())
 	cmd.AddCommand(scheduleRunPendingCommand())
