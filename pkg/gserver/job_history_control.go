@@ -3,11 +3,14 @@ package gserver
 import (
 	"bufio"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -204,7 +207,12 @@ func readJobHistoryEntry(dir string) (*pb.JobHistoryEntry, error) {
 		entry.ErrorMessage = final.GetErrorMessage()
 		entry.GoodBytes = final.GetGoodBytes()
 		entry.NetworkBytes = final.GetNetworkBytes()
+		entry.DurationSeconds = deriveHistoryDurationSeconds(dir, manifest, final)
+		if entry.GetDurationSeconds() > 0 {
+			entry.ThroughputMbps = (float64(entry.GetGoodBytes()) * 8) / entry.GetDurationSeconds() / 1_000_000
+		}
 	}
+	entry.EnergyJoules = deriveHistoryEnergyJoules(dir)
 	return entry, nil
 }
 
@@ -312,6 +320,111 @@ func readJobEnergy(dir string, limit uint32) (*pb.ListJobEnergyResponse, error) 
 		}
 	}
 	return resp, scanner.Err()
+}
+
+func deriveHistoryDurationSeconds(dir string, manifest *pb.JobHistoryManifest, final *pb.TransferJob) float64 {
+	start := manifest.GetCreatedAtUnixNano()
+	end := final.GetStats().GetSampledAtUnixNano()
+	if start > 0 && end > start {
+		return float64(end-start) / float64(time.Second)
+	}
+	firstSnapshot, lastSnapshot := readJobSnapshotTimeBounds(dir)
+	if firstSnapshot > 0 && lastSnapshot > firstSnapshot {
+		return float64(lastSnapshot-firstSnapshot) / float64(time.Second)
+	}
+	return 0
+}
+
+func readJobSnapshotTimeBounds(dir string) (int64, int64) {
+	path := filepath.Join(dir, "snapshots.jsonl")
+	file, err := os.Open(path)
+	if err != nil {
+		return 0, 0
+	}
+	defer file.Close()
+
+	var first int64
+	var last int64
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 64*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var job pb.TransferJob
+		if err := protojson.Unmarshal([]byte(line), &job); err != nil {
+			continue
+		}
+		ts := job.GetStats().GetSampledAtUnixNano()
+		if ts <= 0 {
+			continue
+		}
+		if first == 0 {
+			first = ts
+		}
+		last = ts
+	}
+	return first, last
+}
+
+func deriveHistoryEnergyJoules(dir string) float64 {
+	path := filepath.Join(dir, "energy.csv")
+	file, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+	header, err := reader.Read()
+	if err != nil {
+		return 0
+	}
+	totalIndex := -1
+	for i, column := range header {
+		if strings.TrimSpace(column) == "energy_uj_total" {
+			totalIndex = i
+			break
+		}
+	}
+	if totalIndex < 0 {
+		for i, column := range header {
+			if strings.TrimSpace(column) == "energy_uj_sum_all" {
+				totalIndex = i
+				break
+			}
+		}
+	}
+	if totalIndex < 0 {
+		return 0
+	}
+
+	var first float64
+	var last float64
+	var seen bool
+	for {
+		record, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil || totalIndex >= len(record) {
+			continue
+		}
+		value, err := strconv.ParseFloat(strings.TrimSpace(record[totalIndex]), 64)
+		if err != nil {
+			continue
+		}
+		if !seen {
+			first = value
+			seen = true
+		}
+		last = value
+	}
+	if !seen || last < first {
+		return 0
+	}
+	return (last - first) / 1_000_000
 }
 
 func safeJobLogDirName(value string) string {

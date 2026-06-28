@@ -4399,6 +4399,9 @@ type JobHistoryEntry struct {
 	CreatedAtUnixNano int64                  `protobuf:"varint,8,opt,name=created_at_unix_nano,json=createdAtUnixNano,proto3" json:"created_at_unix_nano,omitempty"`
 	Path              string                 `protobuf:"bytes,9,opt,name=path,proto3" json:"path,omitempty"`
 	Manifest          *JobHistoryManifest    `protobuf:"bytes,10,opt,name=manifest,proto3" json:"manifest,omitempty"`
+	DurationSeconds   float64                `protobuf:"fixed64,11,opt,name=duration_seconds,json=durationSeconds,proto3" json:"duration_seconds,omitempty"`
+	ThroughputMbps    float64                `protobuf:"fixed64,12,opt,name=throughput_mbps,json=throughputMbps,proto3" json:"throughput_mbps,omitempty"`
+	EnergyJoules      float64                `protobuf:"fixed64,13,opt,name=energy_joules,json=energyJoules,proto3" json:"energy_joules,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -4501,6 +4504,27 @@ func (x *JobHistoryEntry) GetManifest() *JobHistoryManifest {
 		return x.Manifest
 	}
 	return nil
+}
+
+func (x *JobHistoryEntry) GetDurationSeconds() float64 {
+	if x != nil {
+		return x.DurationSeconds
+	}
+	return 0
+}
+
+func (x *JobHistoryEntry) GetThroughputMbps() float64 {
+	if x != nil {
+		return x.ThroughputMbps
+	}
+	return 0
+}
+
+func (x *JobHistoryEntry) GetEnergyJoules() float64 {
+	if x != nil {
+		return x.EnergyJoules
+	}
+	return 0
 }
 
 type ListJobHistoryRequest struct {
@@ -6540,7 +6564,7 @@ const file_grover_proto_rawDesc = "" +
 	"totalFiles\x12\x1f\n" +
 	"\vtotal_bytes\x18\r \x01(\x04R\n" +
 	"totalBytes\x12/\n" +
-	"\x14created_at_unix_nano\x18\x0e \x01(\x03R\x11createdAtUnixNano\"\xe3\x02\n" +
+	"\x14created_at_unix_nano\x18\x0e \x01(\x03R\x11createdAtUnixNano\"\xdc\x03\n" +
 	"\x0fJobHistoryEntry\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x19\n" +
 	"\broute_id\x18\x02 \x01(\tR\arouteId\x12\x14\n" +
@@ -6554,7 +6578,10 @@ const file_grover_proto_rawDesc = "" +
 	"\x14created_at_unix_nano\x18\b \x01(\x03R\x11createdAtUnixNano\x12\x12\n" +
 	"\x04path\x18\t \x01(\tR\x04path\x129\n" +
 	"\bmanifest\x18\n" +
-	" \x01(\v2\x1d.grover.v1.JobHistoryManifestR\bmanifest\"\x98\x01\n" +
+	" \x01(\v2\x1d.grover.v1.JobHistoryManifestR\bmanifest\x12)\n" +
+	"\x10duration_seconds\x18\v \x01(\x01R\x0fdurationSeconds\x12'\n" +
+	"\x0fthroughput_mbps\x18\f \x01(\x01R\x0ethroughputMbps\x12#\n" +
+	"\renergy_joules\x18\r \x01(\x01R\fenergyJoules\"\x98\x01\n" +
 	"\x15ListJobHistoryRequest\x12\x19\n" +
 	"\broute_id\x18\x01 \x01(\tR\arouteId\x12&\n" +
 	"\x0fsince_unix_nano\x18\x02 \x01(\x03R\rsinceUnixNano\x12&\n" +

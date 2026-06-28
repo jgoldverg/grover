@@ -499,6 +499,9 @@ message JobHistoryEntry {
   int64 created_at_unix_nano = 8;
   string path = 9;
   JobHistoryManifest manifest = 10;
+  double duration_seconds = 11;
+  double throughput_mbps = 12;
+  double energy_joules = 13;
 }
 
 message ListJobHistoryRequest {

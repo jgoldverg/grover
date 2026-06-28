@@ -354,14 +354,16 @@ func printHistoryJobTable(w io.Writer, jobs []*pb.JobHistoryEntry) {
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "JOB\tROUTE\tSTATE\tGOOD\tWIRE\tCREATED\tPATH")
+	fmt.Fprintln(tw, "JOB\tROUTE\tSTATE\tGOOD\tWIRE\tTHROUGHPUT\tENERGY\tCREATED\tPATH")
 	for _, job := range jobs {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			job.GetJobId(),
 			emptyDash(job.GetRouteId()),
 			emptyDash(strings.TrimPrefix(job.GetState(), "RUNTIME_STATE_")),
 			formatBytes(job.GetGoodBytes()),
 			formatBytes(job.GetNetworkBytes()),
+			formatMbps(job.GetThroughputMbps()),
+			formatJoules(job.GetEnergyJoules()),
 			formatUnixNano(job.GetCreatedAtUnixNano()),
 			job.GetPath(),
 		)
@@ -405,4 +407,18 @@ func formatUnixNano(ns int64) string {
 		return "-"
 	}
 	return time.Unix(0, ns).Format(time.RFC3339)
+}
+
+func formatMbps(value float64) string {
+	if value <= 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.2f Mbps", value)
+}
+
+func formatJoules(value float64) string {
+	if value <= 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.3f J", value)
 }
