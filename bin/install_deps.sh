@@ -13,6 +13,7 @@ GROVER_DATA_PORT_MIN="${GROVER_DATA_PORT_MIN:-30000}"
 GROVER_DATA_PORT_MAX="${GROVER_DATA_PORT_MAX:-30199}"
 GROVER_DISABLE_RP_FILTER="${GROVER_DISABLE_RP_FILTER:-1}"
 GROVER_CPU_BENCHMARK_TIMEOUT="${GROVER_CPU_BENCHMARK_TIMEOUT:-60s}"
+GROVER_RAPL_MODE="${GROVER_RAPL_MODE:-0444}"
 
 mkdir -p "$BIN_DIR"
 export PATH="$BIN_DIR:$PATH"
@@ -491,14 +492,14 @@ setup_rapl_permissions() {
 
   local energy_files=()
   local file
-  shopt -s nullglob
-  for file in /sys/class/powercap/intel-rapl*/energy_uj; do
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
     energy_files+=("$file")
-  done
-  for file in /sys/devices/virtual/powercap/intel-rapl*/energy_uj; do
-    energy_files+=("$file")
-  done
-  shopt -u nullglob
+  done < <(
+    find -L /sys/class/powercap /sys/devices/virtual/powercap \
+      -path '*intel-rapl*' -name energy_uj -type f -print 2>/dev/null |
+      sort -u
+  )
 
   if [[ "${#energy_files[@]}" -eq 0 ]]; then
     log "RAPL permission setup skipped; no energy_uj counters found"
@@ -531,7 +532,7 @@ setup_rapl_permissions() {
 
   for file in "${energy_files[@]}"; do
     sudo chgrp rapl "$file" || true
-    sudo chmod 0440 "$file" || true
+    sudo chmod "$GROVER_RAPL_MODE" "$file" || true
     if command -v setfacl >/dev/null 2>&1; then
       sudo setfacl -m "u:${target_user}:r" "$file" 2>/dev/null || true
     fi
@@ -542,8 +543,10 @@ setup_rapl_permissions() {
     log "installing persistent RAPL tmpfiles rule at ${tmpfiles_rule}"
     printf '%s\n' \
       '# Allow grover users in group rapl to read Intel RAPL energy counters.' \
-      'z /sys/class/powercap/intel-rapl*/energy_uj 0440 root rapl - -' \
-      'z /sys/devices/virtual/powercap/intel-rapl*/energy_uj 0440 root rapl - -' |
+      "z /sys/class/powercap/intel-rapl*/energy_uj ${GROVER_RAPL_MODE} root rapl - -" \
+      "z /sys/class/powercap/intel-rapl*/intel-rapl*/energy_uj ${GROVER_RAPL_MODE} root rapl - -" \
+      "z /sys/devices/virtual/powercap/intel-rapl*/energy_uj ${GROVER_RAPL_MODE} root rapl - -" \
+      "z /sys/devices/virtual/powercap/intel-rapl*/intel-rapl*/energy_uj ${GROVER_RAPL_MODE} root rapl - -" |
       sudo tee "$tmpfiles_rule" >/dev/null
     sudo systemd-tmpfiles --create "$tmpfiles_rule" || true
   else
@@ -552,7 +555,7 @@ setup_rapl_permissions() {
 
   local readable=0
   for file in "${energy_files[@]}"; do
-    if sudo -u "$target_user" test -r "$file" 2>/dev/null; then
+    if sudo -u "$target_user" sh -c 'test -r "$1" && head -c 1 "$1" >/dev/null' sh "$file" 2>/dev/null; then
       readable=1
       break
     fi
