@@ -47,8 +47,8 @@ install_system_deps() {
         sudo apt-get update
       fi
       sudo apt-get install -y ca-certificates curl tar unzip make
-      sudo apt-get install -y stress-ng cpufrequtils linux-tools-common "linux-tools-$(uname -r)" 2>/dev/null ||
-        sudo apt-get install -y stress-ng cpufrequtils 2>/dev/null ||
+      sudo apt-get install -y stress-ng cpufrequtils acl linux-tools-common "linux-tools-$(uname -r)" 2>/dev/null ||
+        sudo apt-get install -y stress-ng cpufrequtils acl 2>/dev/null ||
         log "optional CPU benchmark/governor tools could not be installed"
       return
     fi
@@ -495,6 +495,9 @@ setup_rapl_permissions() {
   for file in /sys/class/powercap/intel-rapl*/energy_uj; do
     energy_files+=("$file")
   done
+  for file in /sys/devices/virtual/powercap/intel-rapl*/energy_uj; do
+    energy_files+=("$file")
+  done
   shopt -u nullglob
 
   if [[ "${#energy_files[@]}" -eq 0 ]]; then
@@ -529,6 +532,9 @@ setup_rapl_permissions() {
   for file in "${energy_files[@]}"; do
     sudo chgrp rapl "$file" || true
     sudo chmod 0440 "$file" || true
+    if command -v setfacl >/dev/null 2>&1; then
+      sudo setfacl -m "u:${target_user}:r" "$file" 2>/dev/null || true
+    fi
   done
 
   if command -v systemd-tmpfiles >/dev/null 2>&1; then
@@ -536,11 +542,25 @@ setup_rapl_permissions() {
     log "installing persistent RAPL tmpfiles rule at ${tmpfiles_rule}"
     printf '%s\n' \
       '# Allow grover users in group rapl to read Intel RAPL energy counters.' \
-      'z /sys/class/powercap/intel-rapl*/energy_uj 0440 root rapl - -' |
+      'z /sys/class/powercap/intel-rapl*/energy_uj 0440 root rapl - -' \
+      'z /sys/devices/virtual/powercap/intel-rapl*/energy_uj 0440 root rapl - -' |
       sudo tee "$tmpfiles_rule" >/dev/null
     sudo systemd-tmpfiles --create "$tmpfiles_rule" || true
   else
     log "systemd-tmpfiles not found; RAPL permissions may need to be reapplied after reboot"
+  fi
+
+  local readable=0
+  for file in "${energy_files[@]}"; do
+    if sudo -u "$target_user" test -r "$file" 2>/dev/null; then
+      readable=1
+      break
+    fi
+  done
+  if [[ "$readable" == "1" ]]; then
+    log "verified ${target_user} can read at least one RAPL energy counter"
+  else
+    log "RAPL counters are still not readable by ${target_user}; run 'newgrp rapl' or log out/in, then retry"
   fi
 
   if id -nG "$target_user" | tr ' ' '\n' | grep -qx rapl; then

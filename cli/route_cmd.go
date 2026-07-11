@@ -235,8 +235,7 @@ func routePrepareCommand(opts *routeCommandOptions) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "prepared route session %s\n", session.GetSessionId())
-				printRouteSessions(cmd.OutOrStdout(), []*pb.RouteSession{session})
+				printPreparedRouteSession(cmd.OutOrStdout(), session)
 				return nil
 			}
 			var source, destination string
@@ -1200,6 +1199,59 @@ func printRouteSessions(w io.Writer, sessions []*pb.RouteSession) {
 	}
 }
 
+func printPreparedRouteSession(w io.Writer, session *pb.RouteSession) {
+	if session == nil {
+		fmt.Fprintln(w, "route session: unavailable")
+		return
+	}
+	fmt.Fprintf(w, "Route session ready: %s\n", session.GetSessionId())
+	fmt.Fprintf(w, "  Route:     %s\n", session.GetRouteId())
+	fmt.Fprintf(w, "  Protocol:  %s\n", shortDataProtocol(session.GetProtocol()))
+	fmt.Fprintf(w, "  Connect:   %s\n", shortConnectionOrigin(session.GetConnectionOrigin()))
+	fmt.Fprintf(w, "  Flow:      %s\n", shortDataDirection(session.GetDataDirection()))
+	fmt.Fprintf(w, "  State:     %s\n", shortRuntimeState(session.GetState()))
+	fmt.Fprintln(w)
+
+	fmt.Fprintln(w, "Control")
+	fmt.Fprintf(w, "  Source:      %s\n", preparedEndpointControlLabel(session.GetSource()))
+	fmt.Fprintf(w, "  Destination: %s\n", preparedEndpointControlLabel(session.GetDestination()))
+	if len(session.GetHops()) == 0 {
+		fmt.Fprintln(w, "  Relays:      direct")
+	} else {
+		fmt.Fprintf(w, "  Relays:      %d prepared\n", len(session.GetHops()))
+	}
+	fmt.Fprintln(w)
+
+	fmt.Fprintln(w, "Data path")
+	fmt.Fprintf(w, "  Source listener:      %s\n", dataEndpointLabel(session.GetSource().GetDataEndpoint()))
+	fmt.Fprintf(w, "  Destination listener: %s\n", dataEndpointLabel(session.GetDestination().GetDataEndpoint()))
+	if len(session.GetHops()) > 0 {
+		for _, hop := range session.GetHops() {
+			fmt.Fprintf(w, "  Relay %d:              %s -> %s\n",
+				hop.GetHopIndex(),
+				dataEndpointLabel(hop.GetIngress()),
+				dataEndpointLabel(hop.GetEgress()),
+			)
+		}
+	}
+
+	if session.GetReverseSource() != nil || session.GetReverseDestination() != nil || len(session.GetReverseHops()) > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Reverse data path")
+		fmt.Fprintf(w, "  Source listener:      %s\n", dataEndpointLabel(session.GetReverseSource().GetDataEndpoint()))
+		fmt.Fprintf(w, "  Destination listener: %s\n", dataEndpointLabel(session.GetReverseDestination().GetDataEndpoint()))
+		if len(session.GetReverseHops()) > 0 {
+			for _, hop := range session.GetReverseHops() {
+				fmt.Fprintf(w, "  Relay %d:              %s -> %s\n",
+					hop.GetHopIndex(),
+					dataEndpointLabel(hop.GetIngress()),
+					dataEndpointLabel(hop.GetEgress()),
+				)
+			}
+		}
+	}
+}
+
 func printRouteSessionPath(w io.Writer, session *pb.RouteSession) {
 	if w == nil || session == nil {
 		return
@@ -1306,6 +1358,43 @@ func dataEndpointLabel(endpoint *pb.DataEndpoint) string {
 		host = "[" + host + "]"
 	}
 	return fmt.Sprintf("%s:%d", host, endpoint.GetPort())
+}
+
+func preparedEndpointControlLabel(endpoint *pb.TransferEndpoint) string {
+	if endpoint == nil {
+		return "(not prepared)"
+	}
+	role := strings.TrimPrefix(endpoint.GetRole().String(), "TRANSFER_ENDPOINT_ROLE_")
+	if role == "" || role == "UNSPECIFIED" {
+		role = "endpoint"
+	}
+	root := endpoint.GetRootPath()
+	if strings.TrimSpace(root) == "" {
+		root = "/"
+	}
+	return fmt.Sprintf("%s ready, root=%s", strings.ToLower(role), root)
+}
+
+func shortConnectionOrigin(origin pb.ConnectionOrigin) string {
+	switch origin {
+	case pb.ConnectionOrigin_CONNECTION_ORIGIN_SOURCE:
+		return "source opens data connections"
+	case pb.ConnectionOrigin_CONNECTION_ORIGIN_DESTINATION:
+		return "destination opens data connections"
+	default:
+		return "unknown"
+	}
+}
+
+func shortDataDirection(direction pb.DataDirection) string {
+	switch direction {
+	case pb.DataDirection_DATA_DIRECTION_SOURCE_TO_DESTINATION:
+		return "source -> destination"
+	case pb.DataDirection_DATA_DIRECTION_DESTINATION_TO_SOURCE:
+		return "destination -> source"
+	default:
+		return "unknown"
+	}
 }
 
 func emptyLabel(value, fallback string) string {
