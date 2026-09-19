@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/spf13/viper"
@@ -26,8 +27,54 @@ type AppConfig struct {
 	HeartBeatErrorCount int                   `mapstructure:"heart_beat_error_count"`
 	HeartBeatTimeout    int                   `mapstructure:"heart_beat_timeout"`
 	HeartBeatRtts       int                   `mapstructure:"heart_beat_rtts"`
-	ClientUuid          string                `mapstructure:"client_uuid"`
+	ClientUUID          string                `mapstructure:"client_uuid"`
 	LogLevel            string                `mapstructure:"log_level"`
+}
+
+type TransferRuntimeConfig struct {
+	Concurrency        int
+	ParallelismPerFile int
+	ChunkSizeBytes     int
+	TCP                TCPRuntimeConfig
+	UDP                UDPRuntimeConfig
+}
+
+type TCPRuntimeConfig struct {
+	BufferSizeBytes int
+}
+
+type UDPRuntimeConfig struct {
+	MTU              int
+	WindowPackets    int
+	BatchPackets     int
+	AckEveryPackets  int
+	AckEvery         time.Duration
+	WriteFlushBytes  int
+	ReadBufferBytes  int
+	WriteBufferBytes int
+	FlowControl      string
+}
+
+func DefaultTransferRuntimeConfig() TransferRuntimeConfig {
+	return TransferRuntimeConfig{
+		Concurrency:        1,
+		ParallelismPerFile: 1,
+		ChunkSizeBytes:     128 * 1024,
+		TCP: TCPRuntimeConfig{
+			BufferSizeBytes: 128 * 1024,
+		},
+		UDP: UDPRuntimeConfig{
+			MTU:              1500,
+			WindowPackets:    4096,
+			BatchPackets:     64,
+			AckEveryPackets:  32,
+			AckEvery:         5 * time.Millisecond,
+			WriteFlushBytes:  128 * 1024,
+			ReadBufferBytes:  8 << 20,
+			WriteBufferBytes: 8 << 20,
+			FlowControl:      "fixed",
+		},
+	}
 }
 
 type AppProfile struct {
@@ -152,6 +199,7 @@ type ServerConfig struct {
 	UDPAckEveryPackets    int    `mapstructure:"udp_ack_every_packets"`
 	UDPAckEveryMs         int    `mapstructure:"udp_ack_every_ms"`
 	UDPBatchPackets       int    `mapstructure:"udp_batch_packets"`
+	UDPWriteFlushBytes    int    `mapstructure:"udp_write_flush_bytes"`
 	UDPPacketWorkers      int    `mapstructure:"udp_packet_workers"`
 	UDPReadTimeoutMs      int    `mapstructure:"udp_read_timeout_ms"`
 	UDPQueueDepth         int    `mapstructure:"udp_queue_depth"`
@@ -192,6 +240,7 @@ func LoadServerConfig(configPath string) (*ServerConfig, error) {
 	v.SetDefault("udp_ack_every_packets", 32)
 	v.SetDefault("udp_ack_every_ms", 5)
 	v.SetDefault("udp_batch_packets", 64)
+	v.SetDefault("udp_write_flush_bytes", 128*1024)
 	v.SetDefault("udp_packet_workers", 10)
 	v.SetDefault("udp_read_timeout_ms", 10_000)
 	v.SetDefault("udp_queue_depth", 0)
@@ -241,6 +290,41 @@ func (cfg *ServerConfig) LoadTLSCredentials() (credentials.TransportCredentials,
 	cert := expandPath(cfg.ServerCertificatePath)
 	key := expandPath(cfg.ServerKeyPath)
 	return credentials.NewServerTLSFromFile(cert, key)
+}
+
+func (cfg *ServerConfig) TransferRuntimeConfig() TransferRuntimeConfig {
+	runtime := DefaultTransferRuntimeConfig()
+	if cfg == nil {
+		return runtime
+	}
+	if cfg.UDPMTUSize > 0 {
+		runtime.UDP.MTU = cfg.UDPMTUSize
+	}
+	if cfg.UDPWindowPackets > 0 {
+		runtime.UDP.WindowPackets = cfg.UDPWindowPackets
+	}
+	if cfg.UDPBatchPackets > 0 {
+		runtime.UDP.BatchPackets = cfg.UDPBatchPackets
+	}
+	if cfg.UDPAckEveryPackets > 0 {
+		runtime.UDP.AckEveryPackets = cfg.UDPAckEveryPackets
+	}
+	if cfg.UDPAckEveryMs > 0 {
+		runtime.UDP.AckEvery = time.Duration(cfg.UDPAckEveryMs) * time.Millisecond
+	}
+	if cfg.UDPReadBufferSize > 0 {
+		runtime.UDP.ReadBufferBytes = cfg.UDPReadBufferSize
+	}
+	if cfg.UDPWriteBufferSize > 0 {
+		runtime.UDP.WriteBufferBytes = cfg.UDPWriteBufferSize
+	}
+	if cfg.UDPWriteFlushBytes > 0 {
+		runtime.UDP.WriteFlushBytes = cfg.UDPWriteFlushBytes
+	}
+	if strings.TrimSpace(cfg.UDPFlowControl) != "" {
+		runtime.UDP.FlowControl = normalizeUDPFlowControl(cfg.UDPFlowControl)
+	}
+	return runtime
 }
 
 func initViper(configPath, defaultDir, defaultName, defaultType, envPrefix string) (*viper.Viper, error) {
@@ -296,7 +380,7 @@ func (cfg *AppConfig) Save(path string) (string, error) {
 	v.Set("heart_beat_error_count", cfg.HeartBeatErrorCount)
 	v.Set("heart_beat_timeout", cfg.HeartBeatTimeout)
 	v.Set("heart_beat_rtts", cfg.HeartBeatRtts)
-	v.Set("client_uuid", cfg.ClientUuid)
+	v.Set("client_uuid", cfg.ClientUUID)
 	v.Set("log_level", cfg.LogLevel)
 
 	if err := v.WriteConfigAs(path); err != nil {
@@ -357,6 +441,7 @@ func (cfg *ServerConfig) Save(path string) (string, error) {
 	v.Set("udp_ack_every_packets", cfg.UDPAckEveryPackets)
 	v.Set("udp_ack_every_ms", cfg.UDPAckEveryMs)
 	v.Set("udp_batch_packets", cfg.UDPBatchPackets)
+	v.Set("udp_write_flush_bytes", cfg.UDPWriteFlushBytes)
 	v.Set("udp_packet_workers", cfg.UDPPacketWorkers)
 	v.Set("udp_read_timeout_ms", cfg.UDPReadTimeoutMs)
 	v.Set("udp_queue_depth", cfg.UDPQueueDepth)

@@ -395,6 +395,15 @@ message StartTransferJobRequest {
   uint32 concurrency = 10;
   uint32 parallelism_per_file = 11;
   uint64 chunk_size_bytes = 12;
+  uint64 tcp_buffer_bytes = 13;
+  uint32 udp_mtu_bytes = 14;
+  uint32 udp_window_packets = 15;
+  uint32 udp_batch_packets = 16;
+  uint32 udp_ack_every_packets = 17;
+  uint32 udp_ack_every_ms = 18;
+  uint64 udp_socket_read_buffer_bytes = 19;
+  uint64 udp_socket_write_buffer_bytes = 20;
+  string udp_flow_control = 21;
 }
 
 message StartTransferJobResponse {

@@ -40,6 +40,7 @@ func main() {
 		udpAckPackets   int
 		udpAckMs        int
 		udpBatchPackets int
+		udpWriteFlush   int
 		udpReadBuffer   int
 		udpWriteBuffer  int
 	)
@@ -69,6 +70,7 @@ func main() {
 	flags.IntVar(&udpAckPackets, "udp-ack-every-packets", 0, "UDP ACK every N packets for server receive path")
 	flags.IntVar(&udpAckMs, "udp-ack-every-ms", 0, "UDP ACK interval in milliseconds for server receive path")
 	flags.IntVar(&udpBatchPackets, "udp-batch-packets", 0, "UDP packets per kernel batch call")
+	flags.IntVar(&udpWriteFlush, "udp-write-flush-bytes", 0, "UDP receive bytes to coalesce before filesystem WriteAt")
 	flags.IntVar(&udpReadBuffer, "udp-read-buffer", 0, "UDP socket read buffer bytes")
 	flags.IntVar(&udpWriteBuffer, "udp-write-buffer", 0, "UDP socket write buffer bytes")
 	if err := flags.Parse(os.Args[1:]); err != nil {
@@ -168,6 +170,9 @@ func main() {
 	}
 	if udpBatchPackets > 0 {
 		cfg.UDPBatchPackets = udpBatchPackets
+	}
+	if udpWriteFlush > 0 {
+		cfg.UDPWriteFlushBytes = udpWriteFlush
 	}
 	if udpReadBuffer > 0 {
 		cfg.UDPReadBufferSize = udpReadBuffer

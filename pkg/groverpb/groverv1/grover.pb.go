@@ -3460,21 +3460,30 @@ func (x *PrepareTransferEndpointResponse) GetEndpoint() *TransferEndpoint {
 }
 
 type StartTransferJobRequest struct {
-	state              protoimpl.MessageState `protogen:"open.v1"`
-	RouteId            string                 `protobuf:"bytes,1,opt,name=route_id,json=routeId,proto3" json:"route_id,omitempty"`
-	JobId              string                 `protobuf:"bytes,2,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
-	Source             *TransferEndpoint      `protobuf:"bytes,3,opt,name=source,proto3" json:"source,omitempty"`
-	Destination        *TransferEndpoint      `protobuf:"bytes,4,opt,name=destination,proto3" json:"destination,omitempty"`
-	Paths              []string               `protobuf:"bytes,5,rep,name=paths,proto3" json:"paths,omitempty"`
-	FilesInFlight      uint32                 `protobuf:"varint,6,opt,name=files_in_flight,json=filesInFlight,proto3" json:"files_in_flight,omitempty"`
-	StreamsPerFile     uint32                 `protobuf:"varint,7,opt,name=streams_per_file,json=streamsPerFile,proto3" json:"streams_per_file,omitempty"`
-	ConnectionOrigin   ConnectionOrigin       `protobuf:"varint,8,opt,name=connection_origin,json=connectionOrigin,proto3,enum=grover.v1.ConnectionOrigin" json:"connection_origin,omitempty"`
-	SessionId          string                 `protobuf:"bytes,9,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Concurrency        uint32                 `protobuf:"varint,10,opt,name=concurrency,proto3" json:"concurrency,omitempty"`
-	ParallelismPerFile uint32                 `protobuf:"varint,11,opt,name=parallelism_per_file,json=parallelismPerFile,proto3" json:"parallelism_per_file,omitempty"`
-	ChunkSizeBytes     uint64                 `protobuf:"varint,12,opt,name=chunk_size_bytes,json=chunkSizeBytes,proto3" json:"chunk_size_bytes,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	state                     protoimpl.MessageState `protogen:"open.v1"`
+	RouteId                   string                 `protobuf:"bytes,1,opt,name=route_id,json=routeId,proto3" json:"route_id,omitempty"`
+	JobId                     string                 `protobuf:"bytes,2,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	Source                    *TransferEndpoint      `protobuf:"bytes,3,opt,name=source,proto3" json:"source,omitempty"`
+	Destination               *TransferEndpoint      `protobuf:"bytes,4,opt,name=destination,proto3" json:"destination,omitempty"`
+	Paths                     []string               `protobuf:"bytes,5,rep,name=paths,proto3" json:"paths,omitempty"`
+	FilesInFlight             uint32                 `protobuf:"varint,6,opt,name=files_in_flight,json=filesInFlight,proto3" json:"files_in_flight,omitempty"`
+	StreamsPerFile            uint32                 `protobuf:"varint,7,opt,name=streams_per_file,json=streamsPerFile,proto3" json:"streams_per_file,omitempty"`
+	ConnectionOrigin          ConnectionOrigin       `protobuf:"varint,8,opt,name=connection_origin,json=connectionOrigin,proto3,enum=grover.v1.ConnectionOrigin" json:"connection_origin,omitempty"`
+	SessionId                 string                 `protobuf:"bytes,9,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Concurrency               uint32                 `protobuf:"varint,10,opt,name=concurrency,proto3" json:"concurrency,omitempty"`
+	ParallelismPerFile        uint32                 `protobuf:"varint,11,opt,name=parallelism_per_file,json=parallelismPerFile,proto3" json:"parallelism_per_file,omitempty"`
+	ChunkSizeBytes            uint64                 `protobuf:"varint,12,opt,name=chunk_size_bytes,json=chunkSizeBytes,proto3" json:"chunk_size_bytes,omitempty"`
+	TcpBufferBytes            uint64                 `protobuf:"varint,13,opt,name=tcp_buffer_bytes,json=tcpBufferBytes,proto3" json:"tcp_buffer_bytes,omitempty"`
+	UdpMtuBytes               uint32                 `protobuf:"varint,14,opt,name=udp_mtu_bytes,json=udpMtuBytes,proto3" json:"udp_mtu_bytes,omitempty"`
+	UdpWindowPackets          uint32                 `protobuf:"varint,15,opt,name=udp_window_packets,json=udpWindowPackets,proto3" json:"udp_window_packets,omitempty"`
+	UdpBatchPackets           uint32                 `protobuf:"varint,16,opt,name=udp_batch_packets,json=udpBatchPackets,proto3" json:"udp_batch_packets,omitempty"`
+	UdpAckEveryPackets        uint32                 `protobuf:"varint,17,opt,name=udp_ack_every_packets,json=udpAckEveryPackets,proto3" json:"udp_ack_every_packets,omitempty"`
+	UdpAckEveryMs             uint32                 `protobuf:"varint,18,opt,name=udp_ack_every_ms,json=udpAckEveryMs,proto3" json:"udp_ack_every_ms,omitempty"`
+	UdpSocketReadBufferBytes  uint64                 `protobuf:"varint,19,opt,name=udp_socket_read_buffer_bytes,json=udpSocketReadBufferBytes,proto3" json:"udp_socket_read_buffer_bytes,omitempty"`
+	UdpSocketWriteBufferBytes uint64                 `protobuf:"varint,20,opt,name=udp_socket_write_buffer_bytes,json=udpSocketWriteBufferBytes,proto3" json:"udp_socket_write_buffer_bytes,omitempty"`
+	UdpFlowControl            string                 `protobuf:"bytes,21,opt,name=udp_flow_control,json=udpFlowControl,proto3" json:"udp_flow_control,omitempty"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
 }
 
 func (x *StartTransferJobRequest) Reset() {
@@ -3589,6 +3598,69 @@ func (x *StartTransferJobRequest) GetChunkSizeBytes() uint64 {
 		return x.ChunkSizeBytes
 	}
 	return 0
+}
+
+func (x *StartTransferJobRequest) GetTcpBufferBytes() uint64 {
+	if x != nil {
+		return x.TcpBufferBytes
+	}
+	return 0
+}
+
+func (x *StartTransferJobRequest) GetUdpMtuBytes() uint32 {
+	if x != nil {
+		return x.UdpMtuBytes
+	}
+	return 0
+}
+
+func (x *StartTransferJobRequest) GetUdpWindowPackets() uint32 {
+	if x != nil {
+		return x.UdpWindowPackets
+	}
+	return 0
+}
+
+func (x *StartTransferJobRequest) GetUdpBatchPackets() uint32 {
+	if x != nil {
+		return x.UdpBatchPackets
+	}
+	return 0
+}
+
+func (x *StartTransferJobRequest) GetUdpAckEveryPackets() uint32 {
+	if x != nil {
+		return x.UdpAckEveryPackets
+	}
+	return 0
+}
+
+func (x *StartTransferJobRequest) GetUdpAckEveryMs() uint32 {
+	if x != nil {
+		return x.UdpAckEveryMs
+	}
+	return 0
+}
+
+func (x *StartTransferJobRequest) GetUdpSocketReadBufferBytes() uint64 {
+	if x != nil {
+		return x.UdpSocketReadBufferBytes
+	}
+	return 0
+}
+
+func (x *StartTransferJobRequest) GetUdpSocketWriteBufferBytes() uint64 {
+	if x != nil {
+		return x.UdpSocketWriteBufferBytes
+	}
+	return 0
+}
+
+func (x *StartTransferJobRequest) GetUdpFlowControl() string {
+	if x != nil {
+		return x.UdpFlowControl
+	}
+	return ""
 }
 
 type StartTransferJobResponse struct {
@@ -6490,7 +6562,7 @@ const file_grover_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\t \x01(\tR\tsessionId\"Z\n" +
 	"\x1fPrepareTransferEndpointResponse\x127\n" +
-	"\bendpoint\x18\x01 \x01(\v2\x1b.grover.v1.TransferEndpointR\bendpoint\"\x8e\x04\n" +
+	"\bendpoint\x18\x01 \x01(\v2\x1b.grover.v1.TransferEndpointR\bendpoint\"\xbe\a\n" +
 	"\x17StartTransferJobRequest\x12\x19\n" +
 	"\broute_id\x18\x01 \x01(\tR\arouteId\x12\x15\n" +
 	"\x06job_id\x18\x02 \x01(\tR\x05jobId\x123\n" +
@@ -6505,7 +6577,16 @@ const file_grover_proto_rawDesc = "" +
 	"\vconcurrency\x18\n" +
 	" \x01(\rR\vconcurrency\x120\n" +
 	"\x14parallelism_per_file\x18\v \x01(\rR\x12parallelismPerFile\x12(\n" +
-	"\x10chunk_size_bytes\x18\f \x01(\x04R\x0echunkSizeBytes\"D\n" +
+	"\x10chunk_size_bytes\x18\f \x01(\x04R\x0echunkSizeBytes\x12(\n" +
+	"\x10tcp_buffer_bytes\x18\r \x01(\x04R\x0etcpBufferBytes\x12\"\n" +
+	"\rudp_mtu_bytes\x18\x0e \x01(\rR\vudpMtuBytes\x12,\n" +
+	"\x12udp_window_packets\x18\x0f \x01(\rR\x10udpWindowPackets\x12*\n" +
+	"\x11udp_batch_packets\x18\x10 \x01(\rR\x0fudpBatchPackets\x121\n" +
+	"\x15udp_ack_every_packets\x18\x11 \x01(\rR\x12udpAckEveryPackets\x12'\n" +
+	"\x10udp_ack_every_ms\x18\x12 \x01(\rR\rudpAckEveryMs\x12>\n" +
+	"\x1cudp_socket_read_buffer_bytes\x18\x13 \x01(\x04R\x18udpSocketReadBufferBytes\x12@\n" +
+	"\x1dudp_socket_write_buffer_bytes\x18\x14 \x01(\x04R\x19udpSocketWriteBufferBytes\x12(\n" +
+	"\x10udp_flow_control\x18\x15 \x01(\tR\x0eudpFlowControl\"D\n" +
 	"\x18StartTransferJobResponse\x12(\n" +
 	"\x03job\x18\x01 \x01(\v2\x16.grover.v1.TransferJobR\x03job\".\n" +
 	"\x15GetTransferJobRequest\x12\x15\n" +

@@ -14,6 +14,7 @@ import (
 
 const (
 	defaultPowercapRoot = "/sys/class/powercap"
+	virtualPowercapRoot = "/sys/devices/virtual/powercap"
 	powercapRootEnv     = "GROVER_RAPL_ROOT"
 )
 
@@ -40,8 +41,14 @@ func NewRAPLMonitor(root string) (*RAPLMonitor, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(domains) == 0 && root == defaultPowercapRoot {
+		if fallbackDomains, fallbackErr := discoverRAPLDomains(virtualPowercapRoot); fallbackErr == nil && len(fallbackDomains) > 0 {
+			root = virtualPowercapRoot
+			domains = fallbackDomains
+		}
+	}
 	if len(domains) == 0 {
-		return nil, fmt.Errorf("no readable RAPL domains found under %s", root)
+		return nil, fmt.Errorf("no readable RAPL domains found under %s: %s", root, diagnoseRAPLRoot(root))
 	}
 	monitor := &RAPLMonitor{root: root, domains: domains}
 	monitor.totalIndexes = chooseTotalIndexes(domains)
@@ -158,7 +165,7 @@ func discoverRAPLDomains(root string) ([]RAPLDomain, error) {
 			}
 		}
 		for _, entry := range entries {
-			if entry.IsDir() && strings.HasPrefix(entry.Name(), "intel-rapl") {
+			if strings.HasPrefix(entry.Name(), "intel-rapl") && entryIsDir(filepath.Join(dir, entry.Name()), entry) {
 				if err := visit(filepath.Join(dir, entry.Name())); err != nil {
 					return err
 				}
@@ -172,6 +179,33 @@ func discoverRAPLDomains(root string) ([]RAPLDomain, error) {
 		}
 	}
 	return domains, nil
+}
+
+func entryIsDir(path string, entry os.DirEntry) bool {
+	if entry.IsDir() {
+		return true
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func diagnoseRAPLRoot(root string) string {
+	matches, _ := filepath.Glob(filepath.Join(root, "intel-rapl*", "energy_uj"))
+	nested, _ := filepath.Glob(filepath.Join(root, "intel-rapl*", "intel-rapl*", "energy_uj"))
+	matches = append(matches, nested...)
+	sort.Strings(matches)
+	if len(matches) == 0 {
+		return "no energy_uj files found"
+	}
+	var parts []string
+	for _, path := range matches {
+		if _, err := readUintFile(path); err != nil {
+			parts = append(parts, fmt.Sprintf("%s unreadable: %v", path, err))
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s readable", path))
+	}
+	return strings.Join(parts, "; ")
 }
 
 func globIntelRAPL(root string) []string {

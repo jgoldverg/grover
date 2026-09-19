@@ -52,6 +52,11 @@ type ReceiveConfig struct {
 	AckEveryPackets int
 	AckEvery        time.Duration
 	BatchPackets    int
+	// WriteFlushBytes enables receive-side payload coalescing before WriteAt.
+	// A zero value preserves direct packet-sized writes.
+	WriteFlushBytes uint64
+	// MaxBufferedWriteBytes bounds coalescing memory. A zero value derives from WriteFlushBytes.
+	MaxBufferedWriteBytes uint64
 	// OnRemoteAddr is called the first time we learn the peer address (for unconnected sockets).
 	OnRemoteAddr func(*net.UDPAddr)
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/jgoldverg/grover/internal"
 	pb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 func TestTransferJobManagerLocalFilesystemLifecycle(t *testing.T) {
@@ -409,9 +410,12 @@ func TestTransferJobManagerDestinationWritesReceiveHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	finalText := string(final)
-	if !strings.Contains(finalText, `"jobId":  "job-direct-history"`) || !strings.Contains(finalText, `"diskWriteBytes":`) {
-		t.Fatalf("unexpected destination final log: %s", finalText)
+	var finalJob pb.TransferJob
+	if err := protojson.Unmarshal(final, &finalJob); err != nil {
+		t.Fatalf("parse destination final log: %v\n%s", err, final)
+	}
+	if finalJob.GetJobId() != "job-direct-history" || finalJob.GetDiskWriteBytes() == 0 {
+		t.Fatalf("unexpected destination final log: %s", final)
 	}
 }
 
@@ -815,11 +819,11 @@ func TestUDPJobPayloadSizeRespectsMTUAndPacketLimit(t *testing.T) {
 }
 
 func TestNormalizedUDPTransferTuningIncludesFlowControl(t *testing.T) {
-	tuning := normalizedUDPTransferTuning(&internal.ServerConfig{UDPFlowControl: "bbr"})
-	if tuning.flowControl != "bbr" {
-		t.Fatalf("flow control = %q, want bbr", tuning.flowControl)
+	tuning := normalizeTransferRuntimeConfig((&internal.ServerConfig{UDPFlowControl: "bbr"}).TransferRuntimeConfig())
+	if tuning.UDP.FlowControl != "bbr" {
+		t.Fatalf("flow control = %q, want bbr", tuning.UDP.FlowControl)
 	}
-	if got := udpFlowControl(&TransferExecutionContext{UDPFlow: tuning.flowControl}); got != "bbr" {
+	if got := udpFlowControl(&TransferExecutionContext{UDPFlow: tuning.UDP.FlowControl}); got != "bbr" {
 		t.Fatalf("exec flow control = %q, want bbr", got)
 	}
 	if got := udpFlowControl(&TransferExecutionContext{UDPFlow: "unknown"}); got != "fixed" {

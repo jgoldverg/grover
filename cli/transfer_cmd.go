@@ -48,6 +48,9 @@ type CopyOptions struct {
 	UDPAckEveryPackets int
 	UDPAckEveryMs      int
 	UDPBatchPackets    int
+	UDPSocketRead      string
+	UDPSocketWrite     string
+	TCPBuffer          string
 	MTU                string
 	Paths              []string
 	JobID              string
@@ -157,6 +160,9 @@ func SimpleCopy() *cobra.Command {
 	cmd.Flags().IntVar(&opts.UDPAckEveryPackets, "udp-ack-every-packets", 0, "UDP ACK every N packets (0 uses config)")
 	cmd.Flags().IntVar(&opts.UDPAckEveryMs, "udp-ack-every-ms", 0, "UDP ACK interval in milliseconds (0 uses config)")
 	cmd.Flags().IntVar(&opts.UDPBatchPackets, "udp-batch-packets", 0, "UDP packets per kernel batch call (0 uses config)")
+	cmd.Flags().StringVar(&opts.UDPSocketRead, "udp-socket-read-buffer", "", "UDP socket read buffer size (0 uses config)")
+	cmd.Flags().StringVar(&opts.UDPSocketWrite, "udp-socket-write-buffer", "", "UDP socket write buffer size (0 uses config)")
+	cmd.Flags().StringVar(&opts.TCPBuffer, "tcp-buffer", "", "TCP copy buffer size (0 uses config)")
 	cmd.Flags().StringVar(&opts.MTU, "mtu", "", "UDP MTU override (auto|bytes)")
 	cmd.Flags().StringVar(&opts.UIMode, "ui", "summary", "Transfer UI mode (summary|live|none)")
 	cmd.Flags().IntVar(&opts.UIIntervalMs, "ui-interval-ms", 2000, "Live metrics UI refresh interval in milliseconds")
@@ -935,6 +941,17 @@ func mustParseOptionalByteSize(raw string) uint64 {
 	return value
 }
 
+func mustParseOptionalUint32ByteSize(raw string) uint32 {
+	if strings.TrimSpace(raw) == "" || strings.EqualFold(strings.TrimSpace(raw), "auto") {
+		return 0
+	}
+	value := mustParseOptionalByteSize(raw)
+	if value > uint64(^uint32(0)) {
+		return 0
+	}
+	return uint32(value)
+}
+
 func formatPercent(v float64) string {
 	if v <= 0 {
 		return "0%"
@@ -1141,6 +1158,30 @@ func (opts CopyOptions) validate() error {
 	if strings.TrimSpace(opts.ChunkSize) != "" {
 		if _, err := parseByteSize(opts.ChunkSize); err != nil {
 			return fmt.Errorf("invalid --chunk-size: %w", err)
+		}
+	}
+	if strings.TrimSpace(opts.TCPBuffer) != "" {
+		if _, err := parseByteSize(opts.TCPBuffer); err != nil {
+			return fmt.Errorf("invalid --tcp-buffer: %w", err)
+		}
+	}
+	if strings.TrimSpace(opts.UDPSocketRead) != "" {
+		if _, err := parseByteSize(opts.UDPSocketRead); err != nil {
+			return fmt.Errorf("invalid --udp-socket-read-buffer: %w", err)
+		}
+	}
+	if strings.TrimSpace(opts.UDPSocketWrite) != "" {
+		if _, err := parseByteSize(opts.UDPSocketWrite); err != nil {
+			return fmt.Errorf("invalid --udp-socket-write-buffer: %w", err)
+		}
+	}
+	if strings.TrimSpace(opts.MTU) != "" && strings.TrimSpace(opts.MTU) != "auto" {
+		value, err := parseByteSize(opts.MTU)
+		if err != nil {
+			return fmt.Errorf("invalid --mtu: %w", err)
+		}
+		if value > uint64(^uint32(0)) {
+			return fmt.Errorf("invalid --mtu: value is too large")
 		}
 	}
 	if opts.UDPWindowPackets < 0 || opts.UDPWindowBytes < 0 || opts.UDPAckEveryPackets < 0 || opts.UDPAckEveryMs < 0 || opts.UDPBatchPackets < 0 {

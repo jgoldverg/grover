@@ -169,7 +169,10 @@ func Receive(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint64, e
 	var sackScratch []udpwire.SackRange
 	var packet udpwire.DataPacket
 	var total uint64
-	progress := newRangeTracker(cfg.ExpectedSize)
+	payloadWriter, err := newPayloadWriter(dst, cfg.ExpectedSize, cfg.WriteFlushBytes, cfg.MaxBufferedWriteBytes)
+	if err != nil {
+		return 0, err
+	}
 	acks := newAckCoalescer(cfg.AckEveryPackets, cfg.AckEvery)
 	batchTransport, useBatch := cfg.Transport.(BatchTransport)
 	useBatch = useBatch && runtime.GOOS == "linux"
@@ -213,26 +216,11 @@ func Receive(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint64, e
 					payloadLen = int(cfg.ExpectedSize - packet.Offset)
 				}
 			}
-			if payloadLen > 0 {
-				n, err := dst.WriteAt(packet.Payload[:payloadLen], int64(packet.Offset))
-				if err != nil {
-					return false, fmt.Errorf("write payload: %w", err)
-				}
-				if n != payloadLen {
-					return false, io.ErrShortWrite
-				}
+			added, finished, err := payloadWriter.WritePayload(packet.Offset, packet.Payload[:payloadLen])
+			if err != nil {
+				return false, err
 			}
-			end := packet.Offset + uint64(payloadLen)
-			added := uint64(0)
-			finished := false
-			if progress != nil {
-				added = progress.addCovered(packet.Offset, end)
-				finished = progress.complete()
-				total = progress.covered
-			} else if end > total {
-				total = end
-				added = uint64(payloadLen)
-			}
+			total = payloadWriter.DurableBytes()
 			if added > 0 {
 				recordPacketReceive(cfg.Collector)
 				recordReceiveMetric(cfg.Collector, int(added))
@@ -286,6 +274,9 @@ func Receive(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint64, e
 					continue
 				}
 				if isClosedNetworkError(err) || errors.Is(err, io.EOF) {
+					if err := ensureReceiveComplete(payloadWriter, cfg.ExpectedSize); err != nil {
+						return total, err
+					}
 					return total, nil
 				}
 				return total, err
@@ -299,6 +290,9 @@ func Receive(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint64, e
 					return total, err
 				}
 				if finished {
+					if err := payloadWriter.Flush(); err != nil {
+						return total, err
+					}
 					emitStatusPacket(cfg.Transport, remote, cfg.SessionID, cfg.SessionKey, cfg.StreamID, tracker, statusBuf, &sackScratch)
 					lingerStatus(ctx, cfg, remote, tracker, statusBuf, &sackScratch, buf, &packet)
 					return total, nil
@@ -313,6 +307,9 @@ func Receive(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint64, e
 					continue
 				}
 				if isClosedNetworkError(err) || errors.Is(err, io.EOF) {
+					if err := ensureReceiveComplete(payloadWriter, cfg.ExpectedSize); err != nil {
+						return total, err
+					}
 					return total, nil
 				}
 				return total, err
@@ -330,6 +327,9 @@ func Receive(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint64, e
 				continue
 			}
 			if isClosedNetworkError(err) || errors.Is(err, io.EOF) {
+				if err := ensureReceiveComplete(payloadWriter, cfg.ExpectedSize); err != nil {
+					return total, err
+				}
 				return total, nil
 			}
 			return total, err
@@ -342,6 +342,9 @@ func Receive(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint64, e
 			return total, err
 		}
 		if finished {
+			if err := payloadWriter.Flush(); err != nil {
+				return total, err
+			}
 			emitStatusPacket(cfg.Transport, remote, cfg.SessionID, cfg.SessionKey, cfg.StreamID, tracker, statusBuf, &sackScratch)
 			lingerStatus(ctx, cfg, remote, tracker, statusBuf, &sackScratch, buf, &packet)
 			return total, nil
@@ -392,7 +395,10 @@ func ReceiveMany(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint6
 	statusBuf := make([]byte, udpwire.StatusHeaderLen+udpwire.MaxSackRanges*udpwire.SackBlockLen)
 	var packet udpwire.DataPacket
 	var total uint64
-	progress := newRangeTracker(cfg.ExpectedSize)
+	payloadWriter, err := newPayloadWriter(dst, cfg.ExpectedSize, cfg.WriteFlushBytes, cfg.MaxBufferedWriteBytes)
+	if err != nil {
+		return 0, err
+	}
 	batchTransport, useBatch := cfg.Transport.(BatchTransport)
 	useBatch = useBatch && runtime.GOOS == "linux"
 	batchMax := batchPacketCount(cfg.BatchPackets)
@@ -440,26 +446,11 @@ func ReceiveMany(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint6
 				payloadLen = int(cfg.ExpectedSize - packet.Offset)
 			}
 		}
-		if payloadLen > 0 {
-			n, err := dst.WriteAt(packet.Payload[:payloadLen], int64(packet.Offset))
-			if err != nil {
-				return false, fmt.Errorf("write payload: %w", err)
-			}
-			if n != payloadLen {
-				return false, io.ErrShortWrite
-			}
+		added, finished, err := payloadWriter.WritePayload(packet.Offset, packet.Payload[:payloadLen])
+		if err != nil {
+			return false, err
 		}
-		end := packet.Offset + uint64(payloadLen)
-		added := uint64(0)
-		finished := false
-		if progress != nil {
-			added = progress.addCovered(packet.Offset, end)
-			finished = progress.complete()
-			total = progress.covered
-		} else if end > total {
-			total = end
-			added = uint64(payloadLen)
-		}
+		total = payloadWriter.DurableBytes()
 		if added > 0 {
 			recordPacketReceive(cfg.Collector)
 			recordReceiveMetric(cfg.Collector, int(added))
@@ -502,6 +493,9 @@ func ReceiveMany(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint6
 					continue
 				}
 				if isClosedNetworkError(err) || errors.Is(err, io.EOF) {
+					if err := ensureReceiveComplete(payloadWriter, cfg.ExpectedSize); err != nil {
+						return total, err
+					}
 					return total, nil
 				}
 				return total, err
@@ -515,6 +509,9 @@ func ReceiveMany(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint6
 					return total, err
 				}
 				if finished {
+					if err := payloadWriter.Flush(); err != nil {
+						return total, err
+					}
 					for streamID, st := range states {
 						if st.remote != nil {
 							emitStatusPacket(cfg.Transport, st.remote, cfg.SessionID, cfg.SessionKey, streamID, st.tracker, statusBuf, &st.sackScratch)
@@ -530,6 +527,9 @@ func ReceiveMany(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint6
 					continue
 				}
 				if isClosedNetworkError(err) || errors.Is(err, io.EOF) {
+					if err := ensureReceiveComplete(payloadWriter, cfg.ExpectedSize); err != nil {
+						return total, err
+					}
 					return total, nil
 				}
 				return total, err
@@ -544,6 +544,9 @@ func ReceiveMany(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint6
 				continue
 			}
 			if isClosedNetworkError(err) || errors.Is(err, io.EOF) {
+				if err := ensureReceiveComplete(payloadWriter, cfg.ExpectedSize); err != nil {
+					return total, err
+				}
 				return total, nil
 			}
 			return total, err
@@ -553,6 +556,9 @@ func ReceiveMany(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint6
 			return total, err
 		}
 		if finished {
+			if err := payloadWriter.Flush(); err != nil {
+				return total, err
+			}
 			for streamID, st := range states {
 				if st.remote != nil {
 					emitStatusPacket(cfg.Transport, st.remote, cfg.SessionID, cfg.SessionKey, streamID, st.tracker, statusBuf, &st.sackScratch)
@@ -562,6 +568,16 @@ func ReceiveMany(ctx context.Context, cfg ReceiveConfig, dst io.WriterAt) (uint6
 			return total, nil
 		}
 	}
+}
+
+func ensureReceiveComplete(writer PayloadWriter, expected uint64) error {
+	if expected == 0 || writer == nil {
+		return nil
+	}
+	if got := writer.DurableBytes(); got < expected {
+		return fmt.Errorf("udp receive incomplete: durable=%d expected=%d", got, expected)
+	}
+	return nil
 }
 
 func setReceiveDeadline(ctx context.Context, transport Transport, acks *ackCoalescer) error {

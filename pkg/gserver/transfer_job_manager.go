@@ -29,11 +29,10 @@ import (
 )
 
 const (
-	defaultTransferEndpointTTL    = 10 * time.Minute
-	defaultTransferCopyBufferSize = 128 * 1024
-	defaultReverseTCPConnections  = 32
-	maxUDPDatagramPayloadSize     = 65507
-	minUDPJobPayloadSize          = 512
+	defaultTransferEndpointTTL   = 10 * time.Minute
+	defaultReverseTCPConnections = 32
+	maxUDPDatagramPayloadSize    = 65507
+	minUDPJobPayloadSize         = 512
 )
 
 const (
@@ -120,7 +119,7 @@ type TransferJobManager struct {
 	executor    TransferJobExecutor
 	ports       *DataPortAllocator
 	portErr     error
-	udp         udpTransferTuning
+	runtimeCfg  internal.TransferRuntimeConfig
 	jobLogDir   string
 	energy      *energy.RAPLMonitor
 	energyEvery time.Duration
@@ -128,15 +127,6 @@ type TransferJobManager struct {
 	energyDone  chan struct{}
 	stop        chan struct{}
 	closeOnce   sync.Once
-}
-
-type udpTransferTuning struct {
-	mtu             int
-	flowControl     string
-	windowPackets   int
-	ackEveryPackets int
-	ackEvery        time.Duration
-	batchPackets    int
 }
 
 type preparedTransferEndpoint struct {
@@ -281,10 +271,12 @@ func NewTransferJobManager(cfg *internal.ServerConfig, executor TransferJobExecu
 	if executor == nil {
 		executor = localFilesystemTransferExecutor{}
 	}
+	runtimeCfg := normalizeTransferRuntimeConfig(internal.DefaultTransferRuntimeConfig())
 	jobLogDir := ""
 	var energyMonitor *energy.RAPLMonitor
 	energyEvery := time.Second
 	if cfg != nil {
+		runtimeCfg = normalizeTransferRuntimeConfig(cfg.TransferRuntimeConfig())
 		jobLogDir = strings.TrimSpace(cfg.JobLogDir)
 		if cfg.EnergySampleMs > 0 {
 			energyEvery = time.Duration(cfg.EnergySampleMs) * time.Millisecond
@@ -306,7 +298,7 @@ func NewTransferJobManager(cfg *internal.ServerConfig, executor TransferJobExecu
 		executor:    executor,
 		ports:       ports,
 		portErr:     portErr,
-		udp:         normalizedUDPTransferTuning(cfg),
+		runtimeCfg:  runtimeCfg,
 		jobLogDir:   jobLogDir,
 		energy:      energyMonitor,
 		energyEvery: energyEvery,
@@ -453,7 +445,7 @@ func (m *TransferJobManager) PrepareEndpoint(ctx context.Context, req *pb.Prepar
 	} else if lease != nil && protocol == pb.DataProtocol_DATA_PROTOCOL_TCP {
 		go m.serveTransferEndpointTCP(lease.TCPListener, root)
 	} else if lease != nil && protocol == pb.DataProtocol_DATA_PROTOCOL_UDP {
-		go m.serveTransferEndpointUDP(lease.UDPConn, root, m.udp)
+		go m.serveTransferEndpointUDP(lease.UDPConn, root, m.runtimeCfg.UDP)
 	}
 	m.mu.Lock()
 	m.endpoints[endpoint.EndpointId] = &preparedTransferEndpoint{endpoint: endpoint, expires: time.Now().Add(ttl), lease: lease, reverse: reverse}
@@ -478,6 +470,9 @@ func (m *TransferJobManager) GetEndpoint(id string) (*pb.TransferEndpoint, bool)
 func (m *TransferJobManager) StartJob(ctx context.Context, req *pb.StartTransferJobRequest) (*pb.TransferJob, error) {
 	if req == nil {
 		return nil, errors.New("start transfer job request is required")
+	}
+	if err := validateStartTransferTuning(req); err != nil {
+		return nil, err
 	}
 	source := cloneTransferEndpoint(req.GetSource())
 	dest := cloneTransferEndpoint(req.GetDestination())
@@ -535,23 +530,24 @@ func (m *TransferJobManager) StartJob(ctx context.Context, req *pb.StartTransfer
 	if sessionID == "" {
 		sessionID = jobID
 	}
+	jobCfg := applyStartTransferRuntimeConfig(m.runtimeCfg, req)
 	filesInFlight := req.GetConcurrency()
 	if filesInFlight == 0 {
 		filesInFlight = req.GetFilesInFlight()
 	}
 	if filesInFlight == 0 {
-		filesInFlight = 1
+		filesInFlight = uint32(jobCfg.Concurrency)
 	}
 	streamsPerFile := req.GetParallelismPerFile()
 	if streamsPerFile == 0 {
 		streamsPerFile = req.GetStreamsPerFile()
 	}
 	if streamsPerFile == 0 {
-		streamsPerFile = 1
+		streamsPerFile = uint32(jobCfg.ParallelismPerFile)
 	}
 	chunkSizeBytes := req.GetChunkSizeBytes()
 	if chunkSizeBytes == 0 {
-		chunkSizeBytes = defaultTransferCopyBufferSize
+		chunkSizeBytes = uint64(jobCfg.ChunkSizeBytes)
 	}
 	connectionOrigin := req.GetConnectionOrigin()
 	if connectionOrigin == pb.ConnectionOrigin_CONNECTION_ORIGIN_UNSPECIFIED {
@@ -586,12 +582,15 @@ func (m *TransferJobManager) StartJob(ctx context.Context, req *pb.StartTransfer
 		filesInFlight:   filesInFlight,
 		streamsPerFile:  streamsPerFile,
 		chunkSizeBytes:  chunkSizeBytes,
-		udpMTUBytes:     uint32(m.udp.mtu),
-		udpWindow:       uint32(m.udp.windowPackets),
-		udpBatch:        uint32(m.udp.batchPackets),
-		udpAckPackets:   uint32(m.udp.ackEveryPackets),
-		udpAckMs:        uint32(m.udp.ackEvery / time.Millisecond),
-		udpFlowControl:  m.udp.flowControl,
+		tcpBufferBytes:  uint64(jobCfg.TCP.BufferSizeBytes),
+		udpMTUBytes:     uint32(jobCfg.UDP.MTU),
+		udpWindow:       uint32(jobCfg.UDP.WindowPackets),
+		udpBatch:        uint32(jobCfg.UDP.BatchPackets),
+		udpAckPackets:   uint32(jobCfg.UDP.AckEveryPackets),
+		udpAckMs:        uint32(jobCfg.UDP.AckEvery / time.Millisecond),
+		udpSocketRead:   uint64(jobCfg.UDP.ReadBufferBytes),
+		udpSocketWrite:  uint64(jobCfg.UDP.WriteBufferBytes),
+		udpFlowControl:  jobCfg.UDP.FlowControl,
 		startedAt:       time.Now(),
 		collector:       metrics.NewTransferCollector("grover"),
 		files:           make([]*pb.TransferFileState, 0, len(plans)),
@@ -640,7 +639,7 @@ func (m *TransferJobManager) StartJob(ctx context.Context, req *pb.StartTransfer
 		"concurrency":      filesInFlight,
 		"parallelism":      streamsPerFile,
 		"chunk_size_bytes": chunkSizeBytes,
-		"udp_flow_control": m.udp.flowControl,
+		"udp_flow_control": runtime.udpFlowControl,
 	})
 
 	m.mu.Lock()
@@ -760,6 +759,38 @@ func (m *TransferJobManager) UpdateTuning(req *pb.UpdateTransferTuningRequest) (
 }
 
 func validateTransferTuning(req *pb.UpdateTransferTuningRequest) error {
+	if req == nil {
+		return errors.New("transfer tuning request is required")
+	}
+	if req.GetChunkSizeBytes() > 0 && req.GetChunkSizeBytes() < 4*1024 {
+		return fmt.Errorf("chunk_size_bytes must be >= 4096")
+	}
+	if req.GetChunkSizeBytes() > 1<<30 {
+		return fmt.Errorf("chunk_size_bytes must be <= 1GiB")
+	}
+	if req.GetTcpBufferBytes() > 0 && req.GetTcpBufferBytes() < 4*1024 {
+		return fmt.Errorf("tcp_buffer_bytes must be >= 4096")
+	}
+	if req.GetUdpMtuBytes() > 0 {
+		if req.GetUdpMtuBytes() < minUDPJobPayloadSize {
+			return fmt.Errorf("udp_mtu_bytes must be >= %d", minUDPJobPayloadSize)
+		}
+		if req.GetUdpMtuBytes() > maxUDPDatagramPayloadSize {
+			return fmt.Errorf("udp_mtu_bytes must be <= %d", maxUDPDatagramPayloadSize)
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(req.GetUdpFlowControl())) {
+	case "", "fixed", "bbr":
+		return nil
+	default:
+		return fmt.Errorf("unsupported udp_flow_control %q", req.GetUdpFlowControl())
+	}
+}
+
+func validateStartTransferTuning(req *pb.StartTransferJobRequest) error {
+	if req == nil {
+		return errors.New("start transfer job request is required")
+	}
 	if req.GetChunkSizeBytes() > 0 && req.GetChunkSizeBytes() < 4*1024 {
 		return fmt.Errorf("chunk_size_bytes must be >= 4096")
 	}
@@ -997,43 +1028,105 @@ func (m *TransferJobManager) connectDestinationOriginTCPReceivers(ctx context.Co
 	}
 }
 
-func normalizedUDPTransferTuning(cfg *internal.ServerConfig) udpTransferTuning {
-	tuning := udpTransferTuning{
-		mtu:             1200,
-		flowControl:     "fixed",
-		windowPackets:   4096,
-		ackEveryPackets: 32,
-		ackEvery:        5 * time.Millisecond,
-		batchPackets:    64,
+func normalizeTransferRuntimeConfig(cfg internal.TransferRuntimeConfig) internal.TransferRuntimeConfig {
+	defaults := internal.DefaultTransferRuntimeConfig()
+	if cfg.Concurrency <= 0 {
+		cfg.Concurrency = defaults.Concurrency
 	}
-	if cfg == nil {
-		return tuning
+	if cfg.ParallelismPerFile <= 0 {
+		cfg.ParallelismPerFile = defaults.ParallelismPerFile
 	}
-	if cfg.UDPMTUSize > 0 {
-		tuning.mtu = cfg.UDPMTUSize
-		if tuning.mtu > maxUDPDatagramPayloadSize {
-			tuning.mtu = maxUDPDatagramPayloadSize
-		}
-		if tuning.mtu < minUDPJobPayloadSize {
-			tuning.mtu = minUDPJobPayloadSize
-		}
+	if cfg.ChunkSizeBytes <= 0 {
+		cfg.ChunkSizeBytes = defaults.ChunkSizeBytes
 	}
-	if strings.TrimSpace(cfg.UDPFlowControl) != "" {
-		tuning.flowControl = strings.ToLower(strings.TrimSpace(cfg.UDPFlowControl))
+	if cfg.TCP.BufferSizeBytes <= 0 {
+		cfg.TCP.BufferSizeBytes = defaults.TCP.BufferSizeBytes
 	}
-	if cfg.UDPWindowPackets > 0 {
-		tuning.windowPackets = cfg.UDPWindowPackets
+	if cfg.UDP.MTU <= 0 {
+		cfg.UDP.MTU = defaults.UDP.MTU
 	}
-	if cfg.UDPAckEveryPackets > 0 {
-		tuning.ackEveryPackets = cfg.UDPAckEveryPackets
+	if cfg.UDP.MTU > maxUDPDatagramPayloadSize {
+		cfg.UDP.MTU = maxUDPDatagramPayloadSize
 	}
-	if cfg.UDPAckEveryMs > 0 {
-		tuning.ackEvery = time.Duration(cfg.UDPAckEveryMs) * time.Millisecond
+	if cfg.UDP.MTU < minUDPJobPayloadSize {
+		cfg.UDP.MTU = minUDPJobPayloadSize
 	}
-	if cfg.UDPBatchPackets > 0 {
-		tuning.batchPackets = cfg.UDPBatchPackets
+	if cfg.UDP.WindowPackets <= 0 {
+		cfg.UDP.WindowPackets = defaults.UDP.WindowPackets
 	}
-	return tuning
+	if cfg.UDP.BatchPackets <= 0 {
+		cfg.UDP.BatchPackets = defaults.UDP.BatchPackets
+	}
+	if cfg.UDP.AckEveryPackets <= 0 {
+		cfg.UDP.AckEveryPackets = defaults.UDP.AckEveryPackets
+	}
+	if cfg.UDP.AckEvery <= 0 {
+		cfg.UDP.AckEvery = defaults.UDP.AckEvery
+	}
+	if cfg.UDP.WriteFlushBytes <= 0 {
+		cfg.UDP.WriteFlushBytes = defaults.UDP.WriteFlushBytes
+	}
+	if cfg.UDP.ReadBufferBytes <= 0 {
+		cfg.UDP.ReadBufferBytes = defaults.UDP.ReadBufferBytes
+	}
+	if cfg.UDP.WriteBufferBytes <= 0 {
+		cfg.UDP.WriteBufferBytes = defaults.UDP.WriteBufferBytes
+	}
+	switch strings.ToLower(strings.TrimSpace(cfg.UDP.FlowControl)) {
+	case "bbr":
+		cfg.UDP.FlowControl = "bbr"
+	default:
+		cfg.UDP.FlowControl = "fixed"
+	}
+	return cfg
+}
+
+func applyStartTransferRuntimeConfig(cfg internal.TransferRuntimeConfig, req *pb.StartTransferJobRequest) internal.TransferRuntimeConfig {
+	cfg = normalizeTransferRuntimeConfig(cfg)
+	if req == nil {
+		return cfg
+	}
+	if req.GetConcurrency() > 0 {
+		cfg.Concurrency = int(req.GetConcurrency())
+	} else if req.GetFilesInFlight() > 0 {
+		cfg.Concurrency = int(req.GetFilesInFlight())
+	}
+	if req.GetParallelismPerFile() > 0 {
+		cfg.ParallelismPerFile = int(req.GetParallelismPerFile())
+	} else if req.GetStreamsPerFile() > 0 {
+		cfg.ParallelismPerFile = int(req.GetStreamsPerFile())
+	}
+	if req.GetChunkSizeBytes() > 0 {
+		cfg.ChunkSizeBytes = int(req.GetChunkSizeBytes())
+	}
+	if req.GetTcpBufferBytes() > 0 {
+		cfg.TCP.BufferSizeBytes = int(req.GetTcpBufferBytes())
+	}
+	if req.GetUdpMtuBytes() > 0 {
+		cfg.UDP.MTU = int(req.GetUdpMtuBytes())
+	}
+	if req.GetUdpWindowPackets() > 0 {
+		cfg.UDP.WindowPackets = int(req.GetUdpWindowPackets())
+	}
+	if req.GetUdpBatchPackets() > 0 {
+		cfg.UDP.BatchPackets = int(req.GetUdpBatchPackets())
+	}
+	if req.GetUdpAckEveryPackets() > 0 {
+		cfg.UDP.AckEveryPackets = int(req.GetUdpAckEveryPackets())
+	}
+	if req.GetUdpAckEveryMs() > 0 {
+		cfg.UDP.AckEvery = time.Duration(req.GetUdpAckEveryMs()) * time.Millisecond
+	}
+	if req.GetUdpSocketReadBufferBytes() > 0 {
+		cfg.UDP.ReadBufferBytes = int(req.GetUdpSocketReadBufferBytes())
+	}
+	if req.GetUdpSocketWriteBufferBytes() > 0 {
+		cfg.UDP.WriteBufferBytes = int(req.GetUdpSocketWriteBufferBytes())
+	}
+	if strings.TrimSpace(req.GetUdpFlowControl()) != "" {
+		cfg.UDP.FlowControl = req.GetUdpFlowControl()
+	}
+	return normalizeTransferRuntimeConfig(cfg)
 }
 
 func (m *TransferJobManager) runJob(ctx context.Context, runtime *transferJobRuntime, plans []TransferFilePlan) {
@@ -1116,25 +1209,25 @@ func (m *TransferJobManager) runJob(ctx context.Context, runtime *transferJobRun
 			udpFlowControl := runtime.udpFlowControl
 			runtime.mu.Unlock()
 			if chunkSizeBytes == 0 {
-				chunkSizeBytes = defaultTransferCopyBufferSize
+				chunkSizeBytes = uint64(m.runtimeCfg.ChunkSizeBytes)
 			}
 			if udpMTUBytes == 0 {
-				udpMTUBytes = uint32(m.udp.mtu)
+				udpMTUBytes = uint32(m.runtimeCfg.UDP.MTU)
 			}
 			if udpWindow == 0 {
-				udpWindow = uint32(m.udp.windowPackets)
+				udpWindow = uint32(m.runtimeCfg.UDP.WindowPackets)
 			}
 			if udpBatch == 0 {
-				udpBatch = uint32(m.udp.batchPackets)
+				udpBatch = uint32(m.runtimeCfg.UDP.BatchPackets)
 			}
 			if udpAckPackets == 0 {
-				udpAckPackets = uint32(m.udp.ackEveryPackets)
+				udpAckPackets = uint32(m.runtimeCfg.UDP.AckEveryPackets)
 			}
 			if udpAckMs == 0 {
-				udpAckMs = uint32(m.udp.ackEvery / time.Millisecond)
+				udpAckMs = uint32(m.runtimeCfg.UDP.AckEvery / time.Millisecond)
 			}
 			if strings.TrimSpace(udpFlowControl) == "" {
-				udpFlowControl = m.udp.flowControl
+				udpFlowControl = m.runtimeCfg.UDP.FlowControl
 			}
 			execCtx := &TransferExecutionContext{
 				JobID:          runtime.jobID,
@@ -2322,7 +2415,7 @@ func transferChunkSize(exec *TransferExecutionContext) int {
 		}
 		return int(exec.ChunkSizeBytes)
 	}
-	return defaultTransferCopyBufferSize
+	return internal.DefaultTransferRuntimeConfig().ChunkSizeBytes
 }
 
 func reportStreamStart(exec *TransferExecutionContext, plan TransferFilePlan, streamID uint32, offset uint64, size uint64) {
@@ -2491,7 +2584,7 @@ func sendFileToUDPDestination(ctx context.Context, exec *TransferExecutionContex
 			FlowControl:     udpFlowControl(exec),
 			WindowPackets:   udpWindowPackets(exec),
 			BatchPackets:    udpBatchPackets(exec),
-			RequireFinalAck: false,
+			RequireFinalAck: true,
 		}, newProgressReader(src, func(n int) {
 			if exec.Collector != nil && transferPlanReadsDisk(plan) {
 				exec.Collector.ObserveDiskRead(n)
@@ -2557,7 +2650,7 @@ func sendFileToUDPDestinationParallel(ctx context.Context, exec *TransferExecuti
 				FlowControl:     udpFlowControl(exec),
 				WindowPackets:   udpWindowPackets(exec),
 				BatchPackets:    udpBatchPackets(exec),
-				RequireFinalAck: false,
+				RequireFinalAck: true,
 			}, newProgressReader(sr, func(n int) {
 				if exec.Collector != nil && transferPlanReadsDisk(plan) {
 					exec.Collector.ObserveDiskRead(n)
@@ -2586,7 +2679,7 @@ func udpWindowPackets(exec *TransferExecutionContext) int {
 	if exec != nil && exec.UDPWindow > 0 {
 		return exec.UDPWindow
 	}
-	return 4096
+	return internal.DefaultTransferRuntimeConfig().UDP.WindowPackets
 }
 
 func udpFlowControl(exec *TransferExecutionContext) string {
@@ -2596,18 +2689,18 @@ func udpFlowControl(exec *TransferExecutionContext) string {
 			return "bbr"
 		}
 	}
-	return "fixed"
+	return internal.DefaultTransferRuntimeConfig().UDP.FlowControl
 }
 
 func udpBatchPackets(exec *TransferExecutionContext) int {
 	if exec != nil && exec.UDPBatch > 0 {
 		return exec.UDPBatch
 	}
-	return 64
+	return internal.DefaultTransferRuntimeConfig().UDP.BatchPackets
 }
 
 func udpJobPayloadSize(exec *TransferExecutionContext, relPath string) int {
-	mtu := 1200
+	mtu := internal.DefaultTransferRuntimeConfig().UDP.MTU
 	if exec != nil && exec.UDPPayload > 0 {
 		mtu = exec.UDPPayload
 	}
@@ -3080,7 +3173,7 @@ func (m *TransferJobManager) serveTransferEndpointTCP(listener *net.TCPListener,
 	}
 }
 
-func (m *TransferJobManager) serveTransferEndpointUDP(conn *net.UDPConn, root string, tuning udpTransferTuning) {
+func (m *TransferJobManager) serveTransferEndpointUDP(conn *net.UDPConn, root string, tuning internal.UDPRuntimeConfig) {
 	if conn == nil {
 		return
 	}
@@ -3104,7 +3197,7 @@ func (m *TransferJobManager) serveTransferEndpointUDP(conn *net.UDPConn, root st
 	}
 }
 
-func (m *TransferJobManager) receiveUDPJobFile(ctx context.Context, conn *net.UDPConn, root string, remote *net.UDPAddr, start udpJobStartPacket, tuning udpTransferTuning) error {
+func (m *TransferJobManager) receiveUDPJobFile(ctx context.Context, conn *net.UDPConn, root string, remote *net.UDPAddr, start udpJobStartPacket, tuning internal.UDPRuntimeConfig) error {
 	if remote == nil {
 		return errors.New("udp transfer start missing remote address")
 	}
@@ -3174,9 +3267,10 @@ func (m *TransferJobManager) receiveUDPJobFile(ctx context.Context, conn *net.UD
 		StreamIDs:       append([]uint32(nil), start.streamIDs...),
 		BufferSize:      64 * 1024,
 		ExpectedSize:    start.size,
-		AckEveryPackets: tuning.ackEveryPackets,
-		AckEvery:        tuning.ackEvery,
-		BatchPackets:    tuning.batchPackets,
+		AckEveryPackets: tuning.AckEveryPackets,
+		AckEvery:        tuning.AckEvery,
+		BatchPackets:    tuning.BatchPackets,
+		WriteFlushBytes: uint64(tuning.WriteFlushBytes),
 	}
 	var receiveErr error
 	if len(start.streamIDs) > 1 {
