@@ -383,7 +383,7 @@ func TestTransferJobManagerDestinationWritesReceiveHistory(t *testing.T) {
 	waitForTransferJobState(t, sourceManager, "job-direct-history", pb.RuntimeState_RUNTIME_STATE_DONE)
 	assertFileBytes(t, filepath.Join(dst, "file.txt"), payload)
 
-	destManager.finalizeDestinationReceives()
+	destManager.receiver.finalizeDestinationReceives()
 	jobLogDir := filepath.Join(logRoot, "job-direct-history")
 	manifestBytes, err := os.ReadFile(filepath.Join(jobLogDir, "manifest.json"))
 	if err != nil {

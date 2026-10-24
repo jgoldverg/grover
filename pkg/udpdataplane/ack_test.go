@@ -72,13 +72,13 @@ func (timeoutErr) Timeout() bool   { return true }
 func (timeoutErr) Temporary() bool { return true }
 
 func TestFastRetransmitMissingRespectsSacksAndLimit(t *testing.T) {
-	pending := []pendingPacket{
-		{seq: 10, payloadLen: 1, data: []byte("10")},
-		{seq: 11, payloadLen: 1, data: []byte("11")},
-		{seq: 12, payloadLen: 1, data: []byte("12")},
-		{seq: 13, payloadLen: 1, data: []byte("13")},
-		{seq: 14, payloadLen: 1, data: []byte("14")},
-		{seq: 15, payloadLen: 1, data: []byte("15")},
+	pending := []SentPacket{
+		{Sequence: 10, PayloadBytes: 1, Data: []byte("10")},
+		{Sequence: 11, PayloadBytes: 1, Data: []byte("11")},
+		{Sequence: 12, PayloadBytes: 1, Data: []byte("12")},
+		{Sequence: 13, PayloadBytes: 1, Data: []byte("13")},
+		{Sequence: 14, PayloadBytes: 1, Data: []byte("14")},
+		{Sequence: 15, PayloadBytes: 1, Data: []byte("15")},
 	}
 	status := &udpwire.StatusPacket{
 		AckSeq: 9,
@@ -89,7 +89,9 @@ func TestFastRetransmitMissingRespectsSacksAndLimit(t *testing.T) {
 	}
 	transport := &recordingTransport{}
 
-	if err := fastRetransmitMissing(context.Background(), transport, nil, status, &pending, nil, 2); err != nil {
+	r := newSACKReliabilityController(SendConfig{Transport: transport}, nil)
+	r.outstanding.packets = pending
+	if err := r.retransmit(context.Background(), (sackRecovery{limit: 2}).OnFeedback(pending, status)); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := len(transport.writes), 2; got != want {
@@ -101,11 +103,11 @@ func TestFastRetransmitMissingRespectsSacksAndLimit(t *testing.T) {
 }
 
 func TestFastRetransmitMissingIgnoresUnprovenTail(t *testing.T) {
-	pending := []pendingPacket{
-		{seq: 10, payloadLen: 1, data: []byte("10")},
-		{seq: 11, payloadLen: 1, data: []byte("11")},
-		{seq: 12, payloadLen: 1, data: []byte("12")},
-		{seq: 13, payloadLen: 1, data: []byte("13")},
+	pending := []SentPacket{
+		{Sequence: 10, PayloadBytes: 1, Data: []byte("10")},
+		{Sequence: 11, PayloadBytes: 1, Data: []byte("11")},
+		{Sequence: 12, PayloadBytes: 1, Data: []byte("12")},
+		{Sequence: 13, PayloadBytes: 1, Data: []byte("13")},
 	}
 	status := &udpwire.StatusPacket{
 		AckSeq: 9,
@@ -113,7 +115,9 @@ func TestFastRetransmitMissingIgnoresUnprovenTail(t *testing.T) {
 	}
 	transport := &recordingTransport{}
 
-	if err := fastRetransmitMissing(context.Background(), transport, nil, status, &pending, nil, 10); err != nil {
+	r := newSACKReliabilityController(SendConfig{Transport: transport}, nil)
+	r.outstanding.packets = pending
+	if err := r.retransmit(context.Background(), (sackRecovery{limit: 10}).OnFeedback(pending, status)); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := len(transport.writes), 2; got != want {
@@ -132,34 +136,21 @@ func TestDrainStatusPacketsCanStopAfterProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	transport := &queuedStatusTransport{packets: [][]byte{append([]byte(nil), buf[:n]...)}}
-	pending := []pendingPacket{
-		{seq: 1, payloadLen: 100, data: []byte("1"), sentAt: time.Now().Add(-time.Millisecond)},
-		{seq: 2, payloadLen: 100, data: []byte("2"), sentAt: time.Now().Add(-time.Millisecond)},
+	pending := []SentPacket{
+		{Sequence: 1, PayloadBytes: 100, Data: []byte("1"), SentAt: time.Now().Add(-time.Millisecond)},
+		{Sequence: 2, PayloadBytes: 100, Data: []byte("2"), SentAt: time.Now().Add(-time.Millisecond)},
 	}
-	var remote *net.UDPAddr
-	var ackPkt udpwire.StatusPacket
-	acked, err := drainStatusPackets(
-		context.Background(),
-		transport,
-		&remote,
-		7,
-		make([]byte, udpwire.StatusHeaderLen+udpwire.MaxSackRanges*udpwire.SackBlockLen),
-		&ackPkt,
-		&pending,
-		nil,
-		time.Millisecond,
-		false,
-		true,
-		0,
-		nil,
-	)
+	r := newSACKReliabilityController(SendConfig{Transport: transport, StreamID: 7}, nil)
+	r.outstanding.packets = pending
+	acked, err := r.DrainFeedback(context.Background(), time.Millisecond, FeedbackUntilProgress)
+	pending = r.outstanding.packets
 	if err != nil {
 		t.Fatal(err)
 	}
 	if acked != 100 {
 		t.Fatalf("acked = %d, want 100", acked)
 	}
-	if len(pending) != 1 || pending[0].seq != 2 {
+	if len(pending) != 1 || pending[0].Sequence != 2 {
 		t.Fatalf("pending = %+v, want only seq 2", pending)
 	}
 	if transport.reads != 1 {

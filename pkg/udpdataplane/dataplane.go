@@ -67,7 +67,7 @@ type Sender interface {
 }
 
 // DefaultSender implements a SACK-aware congestion-controlled sender.
-var DefaultSender Sender = NewBBRSender()
+var DefaultSender Sender = NewPacketSender()
 
 // Send reads from src and sends UDP data packets using the configured sender.
 func Send(ctx context.Context, cfg SendConfig, src io.Reader) (uint64, error) {
