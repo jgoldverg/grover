@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jgoldverg/grover/pkg/transfer"
+
 	"github.com/jgoldverg/grover/internal"
 	pb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
 	"google.golang.org/grpc/codes"
@@ -222,7 +224,7 @@ func readJobHistoryManifest(dir string) (*pb.JobHistoryManifest, error) {
 	if err != nil {
 		return nil, err
 	}
-	var manifest transferJobManifest
+	var manifest transfer.Manifest
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}

@@ -1,4 +1,4 @@
-package gserver
+package transfer
 
 import (
 	"context"
@@ -18,9 +18,9 @@ const syntheticTransferScheme = "synthetic"
 // FilesystemSourcePlanner resolves local paths and synthetic payload descriptions.
 type FilesystemSourcePlanner struct{}
 
-func (FilesystemSourcePlanner) PlanFiles(ctx context.Context, source *pb.TransferEndpoint, paths []string) ([]TransferFilePlan, error) {
+func (FilesystemSourcePlanner) PlanFiles(ctx context.Context, source *pb.TransferEndpoint, paths []string) ([]FilePlan, error) {
 	root := filepath.Clean(source.GetRootPath())
-	var plans []TransferFilePlan
+	var plans []FilePlan
 	relativePathForFile := func(full string) (string, error) {
 		rel, err := filepath.Rel(root, full)
 		if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
@@ -42,7 +42,7 @@ func (FilesystemSourcePlanner) PlanFiles(ctx context.Context, source *pb.Transfe
 			if err != nil {
 				return err
 			}
-			plans = append(plans, TransferFilePlan{
+			plans = append(plans, FilePlan{
 				SourcePath:   p,
 				RelativePath: synthetic.RelativePath,
 				Size:         synthetic.Size,
@@ -73,7 +73,7 @@ func (FilesystemSourcePlanner) PlanFiles(ctx context.Context, source *pb.Transfe
 				if err != nil {
 					return err
 				}
-				plans = append(plans, TransferFilePlan{SourcePath: path, RelativePath: rel, Size: uint64(info.Size())})
+				plans = append(plans, FilePlan{SourcePath: path, RelativePath: rel, Size: uint64(info.Size())})
 				return nil
 			})
 		}
@@ -81,7 +81,7 @@ func (FilesystemSourcePlanner) PlanFiles(ctx context.Context, source *pb.Transfe
 		if err != nil {
 			return err
 		}
-		plans = append(plans, TransferFilePlan{SourcePath: full, RelativePath: rel, Size: uint64(info.Size())})
+		plans = append(plans, FilePlan{SourcePath: full, RelativePath: rel, Size: uint64(info.Size())})
 		return nil
 	}
 	if len(paths) == 0 {
@@ -137,7 +137,7 @@ func parseSyntheticSize(raw string) (uint64, error) {
 	return size, nil
 }
 
-func openTransferPlanReader(plan TransferFilePlan, offset, length int64) (io.ReadCloser, error) {
+func openTransferPlanReader(plan FilePlan, offset, length int64) (io.ReadCloser, error) {
 	if offset < 0 || length < 0 {
 		return nil, fmt.Errorf("invalid transfer reader range: offset=%d length=%d", offset, length)
 	}
@@ -167,7 +167,7 @@ func openTransferPlanReader(plan TransferFilePlan, offset, length int64) (io.Rea
 	}{Reader: io.LimitReader(src, length), Closer: src}, nil
 }
 
-func transferPlanReadsDisk(plan TransferFilePlan) bool {
+func transferPlanReadsDisk(plan FilePlan) bool {
 	_, ok, err := parseSyntheticTransferSource(plan.SourcePath)
 	return err == nil && !ok
 }

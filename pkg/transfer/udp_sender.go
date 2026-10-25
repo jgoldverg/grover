@@ -1,4 +1,4 @@
-package gserver
+package transfer
 
 import (
 	"context"
@@ -16,17 +16,17 @@ import (
 	"github.com/jgoldverg/grover/pkg/udpdataplane"
 )
 
-// UDPTransferExecutor performs the job handshake and delegates packet movement
+// UDPExecutor performs the job handshake and delegates packet movement
 // to udpdataplane. File metadata remains in this transfer layer.
-type UDPTransferExecutor struct{}
+type UDPExecutor struct{}
 
-func (UDPTransferExecutor) TransferFile(ctx context.Context, exec *TransferExecutionContext, plan TransferFilePlan) error {
+func (UDPExecutor) TransferFile(ctx context.Context, exec *Execution, plan FilePlan) error {
 	src, err := openTransferPlanReader(plan, 0, int64(plan.Size))
 	if err != nil {
 		return err
 	}
 	defer src.Close()
-	addr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(exec.DestData.GetHost(), fmt.Sprintf("%d", exec.DestData.GetPort())))
+	addr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(exec.Target.Data.GetHost(), fmt.Sprintf("%d", exec.Target.Data.GetPort())))
 	if err != nil {
 		return err
 	}
@@ -37,8 +37,8 @@ func (UDPTransferExecutor) TransferFile(ctx context.Context, exec *TransferExecu
 	defer conn.Close()
 
 	streamCount := 1
-	if exec.StreamsFunc != nil {
-		streamCount = int(exec.StreamsFunc())
+	if exec.Hooks.StreamsPerFile != nil {
+		streamCount = int(exec.Hooks.StreamsPerFile())
 	}
 	if streamCount <= 0 {
 		streamCount = 1
@@ -57,7 +57,9 @@ func (UDPTransferExecutor) TransferFile(ctx context.Context, exec *TransferExecu
 	if err != nil {
 		return err
 	}
-	if err := sendUDPJobStartAndWait(ctx, conn, exec, plan.RelativePath, plan.Size, sessionKey, streamIDs); err != nil {
+	start := udpJobStartPacket{sessionKey: sessionKey, size: plan.Size, streamIDs: streamIDs,
+		relPath: plan.RelativePath, jobID: exec.Job.ID, routeID: exec.Job.RouteID}
+	if err := sendUDPJobStartAndWait(ctx, conn, start); err != nil {
 		return err
 	}
 	if plan.Size == 0 {
@@ -73,10 +75,10 @@ func (UDPTransferExecutor) TransferFile(ctx context.Context, exec *TransferExecu
 		reportStreamStart(exec, plan, streamIDs[0], 0, plan.Size)
 		_, err := udpdataplane.Send(ctx, udpdataplane.SendConfig{
 			Transport:       udpdataplane.NewUDPConnTransport(conn),
-			SessionID:       exec.JobID,
+			SessionID:       exec.Job.ID,
 			SessionKey:      sessionKey,
 			StreamID:        streamIDs[0],
-			MTU:             exec.UDPPayload,
+			MTU:             exec.UDP.MTU,
 			Collector:       exec.Collector,
 			FlowControl:     udpFlowControl(exec),
 			WindowPackets:   udpWindowPackets(exec),
@@ -105,12 +107,12 @@ func (UDPTransferExecutor) TransferFile(ctx context.Context, exec *TransferExecu
 	return waitUDPJobDone(ctx, conn, sessionKey)
 }
 
-func sendFileToUDPDestinationParallel(ctx context.Context, exec *TransferExecutionContext, plan TransferFilePlan, sessionKey uint32, streamIDs []uint32) error {
+func sendFileToUDPDestinationParallel(ctx context.Context, exec *Execution, plan FilePlan, sessionKey uint32, streamIDs []uint32) error {
 	ranges, err := planByteRanges(int64(plan.Size), len(streamIDs))
 	if err != nil {
 		return err
 	}
-	addr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(exec.DestData.GetHost(), fmt.Sprintf("%d", exec.DestData.GetPort())))
+	addr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(exec.Target.Data.GetHost(), fmt.Sprintf("%d", exec.Target.Data.GetPort())))
 	if err != nil {
 		return err
 	}
@@ -138,11 +140,11 @@ func sendFileToUDPDestinationParallel(ctx context.Context, exec *TransferExecuti
 			defer sr.Close()
 			_, err = udpdataplane.Send(ctx, udpdataplane.SendConfig{
 				Transport:       udpdataplane.NewUDPConnTransport(conn),
-				SessionID:       exec.JobID,
+				SessionID:       exec.Job.ID,
 				SessionKey:      sessionKey,
 				StreamID:        streamID,
 				BaseOffset:      uint64(br.offset),
-				MTU:             exec.UDPPayload,
+				MTU:             exec.UDP.MTU,
 				Collector:       exec.Collector,
 				FlowControl:     udpFlowControl(exec),
 				WindowPackets:   udpWindowPackets(exec),
@@ -172,16 +174,16 @@ func sendFileToUDPDestinationParallel(ctx context.Context, exec *TransferExecuti
 	return nil
 }
 
-func udpWindowPackets(exec *TransferExecutionContext) int {
-	if exec != nil && exec.UDPWindow > 0 {
-		return exec.UDPWindow
+func udpWindowPackets(exec *Execution) int {
+	if exec != nil && exec.UDP.WindowPackets > 0 {
+		return exec.UDP.WindowPackets
 	}
 	return internal.DefaultTransferRuntimeConfig().UDP.WindowPackets
 }
 
-func udpFlowControl(exec *TransferExecutionContext) string {
+func udpFlowControl(exec *Execution) string {
 	if exec != nil {
-		switch strings.ToLower(strings.TrimSpace(exec.UDPFlow)) {
+		switch strings.ToLower(strings.TrimSpace(exec.UDP.FlowControl)) {
 		case "bbr":
 			return "bbr"
 		}
@@ -189,23 +191,23 @@ func udpFlowControl(exec *TransferExecutionContext) string {
 	return internal.DefaultTransferRuntimeConfig().UDP.FlowControl
 }
 
-func udpBatchPackets(exec *TransferExecutionContext) int {
-	if exec != nil && exec.UDPBatch > 0 {
-		return exec.UDPBatch
+func udpBatchPackets(exec *Execution) int {
+	if exec != nil && exec.UDP.BatchPackets > 0 {
+		return exec.UDP.BatchPackets
 	}
 	return internal.DefaultTransferRuntimeConfig().UDP.BatchPackets
 }
 
-func udpJobPayloadSize(exec *TransferExecutionContext, relPath string) int {
+func udpJobPayloadSize(exec *Execution, relPath string) int {
 	mtu := internal.DefaultTransferRuntimeConfig().UDP.MTU
-	if exec != nil && exec.UDPPayload > 0 {
-		mtu = exec.UDPPayload
+	if exec != nil && exec.UDP.MTU > 0 {
+		mtu = exec.UDP.MTU
 	}
 	jobLen := 0
 	routeLen := 0
 	if exec != nil {
-		jobLen = len([]byte(exec.JobID))
-		routeLen = len([]byte(exec.RouteID))
+		jobLen = len([]byte(exec.Job.ID))
+		routeLen = len([]byte(exec.Job.RouteID))
 	}
 	headerLen := len(udpJobMagic) + 1 + 4 + 8 + 2 + 4 + 2 + 2 + len([]byte(relPath)) + jobLen + routeLen
 	payload := mtu - headerLen
@@ -222,15 +224,8 @@ func udpJobPayloadSize(exec *TransferExecutionContext, relPath string) int {
 	return payload
 }
 
-func sendUDPJobStartAndWait(ctx context.Context, conn *net.UDPConn, exec *TransferExecutionContext, relPath string, size uint64, sessionKey uint32, streamIDs []uint32) error {
-	packet, err := encodeUDPJobStartPacket(udpJobStartPacket{
-		sessionKey: sessionKey,
-		size:       size,
-		streamIDs:  streamIDs,
-		relPath:    relPath,
-		jobID:      exec.JobID,
-		routeID:    exec.RouteID,
-	})
+func sendUDPJobStartAndWait(ctx context.Context, conn *net.UDPConn, start udpJobStartPacket) error {
+	packet, err := encodeUDPJobStartPacket(start)
 	if err != nil {
 		return err
 	}
@@ -247,7 +242,7 @@ func sendUDPJobStartAndWait(ctx context.Context, conn *net.UDPConn, exec *Transf
 			return err
 		}
 		n, err := conn.Read(buf)
-		if err == nil && isUDPJobReadyPacket(buf[:n], sessionKey) {
+		if err == nil && isUDPJobReadyPacket(buf[:n], start.sessionKey) {
 			return nil
 		}
 		if err != nil {
@@ -257,7 +252,7 @@ func sendUDPJobStartAndWait(ctx context.Context, conn *net.UDPConn, exec *Transf
 			return err
 		}
 	}
-	return fmt.Errorf("timed out waiting for udp transfer endpoint to accept %s", relPath)
+	return fmt.Errorf("timed out waiting for udp transfer endpoint to accept %s", start.relPath)
 }
 
 func waitUDPJobDone(ctx context.Context, conn *net.UDPConn, sessionKey uint32) error {

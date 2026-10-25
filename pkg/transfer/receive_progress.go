@@ -1,4 +1,4 @@
-package gserver
+package transfer
 
 import (
 	"fmt"
@@ -53,7 +53,29 @@ type destinationReceiveStream struct {
 	FinishedAt   time.Time       `json:"finished_at,omitempty"`
 }
 
-func (m *destinationReceiver) beginDestinationReceive(jobID, routeID string, protocol pb.DataProtocol, root, relPath string, totalSize, offset, size uint64, streamID uint32, remote string) {
+// receiveStream describes a received file range, shared by start and completion.
+type receiveStream struct {
+	Job          JobIdentity
+	Protocol     pb.DataProtocol
+	Root         string
+	RelativePath string
+	TotalSize    uint64
+	Range        StreamPlan
+	Remote       string
+}
+
+type receiveResult struct {
+	Stream    receiveStream
+	BytesDone uint64
+	State     pb.RuntimeState
+	Error     string
+}
+
+func (m *destinationReceiver) beginDestinationReceive(receive receiveStream) {
+	jobID, routeID := receive.Job.ID, receive.Job.RouteID
+	protocol, root, relPath := receive.Protocol, receive.Root, receive.RelativePath
+	totalSize, offset, size := receive.TotalSize, receive.Range.Offset, receive.Range.Size
+	streamID, remote := receive.Range.StreamID, receive.Remote
 	jobID = strings.TrimSpace(jobID)
 	if jobID == "" || m == nil {
 		return
@@ -121,7 +143,10 @@ func (m *destinationReceiver) beginDestinationReceive(jobID, routeID string, pro
 	}
 }
 
-func (m *destinationReceiver) finishDestinationReceive(jobID, routeID string, protocol pb.DataProtocol, relPath string, offset uint64, streamID uint32, bytesDone uint64, remote string, state pb.RuntimeState, errText string) {
+func (m *destinationReceiver) finishDestinationReceive(result receiveResult) {
+	jobID, relPath := result.Stream.Job.ID, result.Stream.RelativePath
+	offset, streamID, remote := result.Stream.Range.Offset, result.Stream.Range.StreamID, result.Stream.Remote
+	bytesDone, state, errText := result.BytesDone, result.State, result.Error
 	jobID = strings.TrimSpace(jobID)
 	if jobID == "" || m == nil {
 		return

@@ -9,64 +9,66 @@ import (
 	"github.com/jgoldverg/grover/pkg/metrics"
 )
 
-func retransmitOne(ctx context.Context, transport Transport, remote *net.UDPAddr, pkt *SentPacket, collector *metrics.TransferCollector) error {
+// packetSendConfig binds transport and observability for one send operation.
+// It contains no outstanding queue or congestion state.
+type packetSendConfig struct {
+	Transport Transport
+	Remote    *net.UDPAddr
+	Collector *metrics.TransferCollector
+	Pacer     Pacer
+	SessionID string
+	StreamID  uint32
+}
+
+func retransmitOne(ctx context.Context, cfg packetSendConfig, pkt *SentPacket) error {
 	if pkt == nil {
 		return nil
 	}
-	if err := writePacketWithRetry(ctx, transport, remote, pkt.Data); err != nil {
+	if err := writePacketWithRetry(ctx, cfg.Transport, cfg.Remote, pkt.Data); err != nil {
 		return err
 	}
-	recordSendMetric(collector, pkt.PayloadBytes, true)
-	recordPacketSend(collector)
+	recordSendMetric(cfg.Collector, pkt.PayloadBytes, true)
+	recordPacketSend(cfg.Collector)
 	pkt.SentAt = time.Now()
 	return nil
 }
 
-func writePendingBatch(
-	ctx context.Context,
-	transport Transport,
-	remote *net.UDPAddr,
-	batch []SentPacket,
-	collector *metrics.TransferCollector,
-	pacer Pacer,
-	sessionID string,
-	streamID uint32,
-) error {
+func writePendingBatch(ctx context.Context, cfg packetSendConfig, batch []SentPacket) error {
 	if len(batch) == 0 {
 		return nil
 	}
-	if _, ok := pacer.(NoopPacer); ok && len(batch) > 1 {
+	if _, ok := cfg.Pacer.(NoopPacer); ok && len(batch) > 1 {
 		buffers := make([]PacketBuffer, len(batch))
 		for i := range batch {
 			buffers[i] = PacketBuffer{Bytes: batch[i].Data}
 		}
-		if err := writeBatchWithRetry(ctx, transport, remote, buffers); err != nil {
+		if err := writeBatchWithRetry(ctx, cfg.Transport, cfg.Remote, buffers); err != nil {
 			return err
 		}
 		for i := range batch {
-			recordPacketSent(batch[i], collector, pacer, sessionID, streamID)
+			recordPacketSent(cfg, batch[i])
 		}
 		return nil
 	}
 	for i := range batch {
-		if err := pacer.Wait(ctx, batch[i].PayloadBytes); err != nil {
+		if err := cfg.Pacer.Wait(ctx, batch[i].PayloadBytes); err != nil {
 			return err
 		}
-		if err := writePacketWithRetry(ctx, transport, remote, batch[i].Data); err != nil {
+		if err := writePacketWithRetry(ctx, cfg.Transport, cfg.Remote, batch[i].Data); err != nil {
 			return err
 		}
-		recordPacketSent(batch[i], collector, pacer, sessionID, streamID)
+		recordPacketSent(cfg, batch[i])
 	}
 	return nil
 }
 
-func recordPacketSent(pkt SentPacket, collector *metrics.TransferCollector, pacer Pacer, sessionID string, streamID uint32) {
-	recordPacketSend(collector)
-	recordSendMetric(collector, pkt.PayloadBytes, false)
-	pacer.OnPacketSent(pkt.PayloadBytes)
+func recordPacketSent(cfg packetSendConfig, pkt SentPacket) {
+	recordPacketSend(cfg.Collector)
+	recordSendMetric(cfg.Collector, pkt.PayloadBytes, false)
+	cfg.Pacer.OnPacketSent(pkt.PayloadBytes)
 	internal.Debug("udp data tx", internal.Fields{
-		"session": sessionID,
-		"stream":  streamID,
+		"session": cfg.SessionID,
+		"stream":  cfg.StreamID,
 		"seq":     pkt.Sequence,
 		"bytes":   pkt.PayloadBytes,
 	})

@@ -1,4 +1,4 @@
-package gserver
+package transfer
 
 import (
 	"context"
@@ -51,12 +51,6 @@ type transferJobRuntime struct {
 	streamSample    map[transferStreamKey]uint64
 }
 
-// Compatibility adapter for callers implementing the original combined API.
-type localFilesystemTransferExecutor struct {
-	FilesystemSourcePlanner
-	ProtocolTransferExecutor
-}
-
 type transferStreamKey struct {
 	fileIndex int
 	streamID  uint32
@@ -70,7 +64,7 @@ func (r *transferJobRuntime) addProgress(index int, n uint64) {
 	}
 }
 
-func (r *transferJobRuntime) startStream(index int, plan TransferStreamPlan) {
+func (r *transferJobRuntime) startStream(index int, plan StreamPlan) {
 	if plan.StreamID == 0 {
 		plan.StreamID = 1
 	}

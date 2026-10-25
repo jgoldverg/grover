@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jgoldverg/grover/internal/transferwire"
+
 	"github.com/google/uuid"
 	"github.com/jgoldverg/grover/internal"
 	pb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
@@ -422,9 +424,9 @@ func udpForwardIngressKey(packet []byte) (udpForwardKey, bool) {
 			streamID:  binary.BigEndian.Uint32(packet[6:10]),
 		}, true
 	}
-	if len(packet) >= len(udpJobMagic)+1+4 && string(packet[:len(udpJobMagic)]) == string(udpJobMagic) && packet[len(udpJobMagic)] == udpJobPacketStart {
+	if key, ok := transferwire.RoutingKey(packet, true); ok {
 		return udpForwardKey{
-			sessionID: binary.BigEndian.Uint32(packet[len(udpJobMagic)+1 : len(udpJobMagic)+5]),
+			sessionID: key,
 			streamID:  0,
 		}, true
 	}
@@ -438,14 +440,8 @@ func udpForwardEgressKey(packet []byte) (udpForwardKey, bool) {
 			streamID:  binary.BigEndian.Uint32(packet[6:10]),
 		}, true
 	}
-	if len(packet) == len(udpJobMagic)+1+4 && string(packet[:len(udpJobMagic)]) == string(udpJobMagic) {
-		kind := packet[len(udpJobMagic)]
-		if kind == udpJobPacketReady || kind == udpJobPacketDone {
-			return udpForwardKey{
-				sessionID: binary.BigEndian.Uint32(packet[len(udpJobMagic)+1 : len(udpJobMagic)+5]),
-				streamID:  0,
-			}, true
-		}
+	if key, ok := transferwire.RoutingKey(packet, false); ok {
+		return udpForwardKey{sessionID: key, streamID: 0}, true
 	}
 	return udpForwardKey{}, false
 }

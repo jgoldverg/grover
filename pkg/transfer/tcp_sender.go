@@ -1,4 +1,4 @@
-package gserver
+package transfer
 
 import (
 	"context"
@@ -21,13 +21,13 @@ const (
 	currentTCPJobMagic = tcpJobMagicV4
 )
 
-// TCPTransferExecutor executes file ranges over TCP, including supplied connections.
-type TCPTransferExecutor struct{}
+// TCPExecutor executes file ranges over TCP, including supplied connections.
+type TCPExecutor struct{}
 
-func (TCPTransferExecutor) TransferFile(ctx context.Context, exec *TransferExecutionContext, plan TransferFilePlan) error {
+func (TCPExecutor) TransferFile(ctx context.Context, exec *Execution, plan FilePlan) error {
 	streamCount := 1
-	if exec.StreamsFunc != nil {
-		streamCount = int(exec.StreamsFunc())
+	if exec.Hooks.StreamsPerFile != nil {
+		streamCount = int(exec.Hooks.StreamsPerFile())
 	}
 	if streamCount <= 0 || plan.Size == 0 {
 		streamCount = 1
@@ -68,7 +68,7 @@ func (TCPTransferExecutor) TransferFile(ctx context.Context, exec *TransferExecu
 	return nil
 }
 
-func sendTCPRange(ctx context.Context, exec *TransferExecutionContext, plan TransferFilePlan, streamID uint32, br byteRange) (err error) {
+func sendTCPRange(ctx context.Context, exec *Execution, plan FilePlan, streamID uint32, br byteRange) (err error) {
 	if streamID == 0 {
 		streamID = 1
 	}
@@ -91,15 +91,15 @@ func sendTCPRange(ctx context.Context, exec *TransferExecutionContext, plan Tran
 	}()
 
 	var conn net.Conn
-	if exec.TCPConnProvider != nil {
-		conn, err = exec.TCPConnProvider(ctx)
+	if exec.Hooks.TCPConnProvider != nil {
+		conn, err = exec.Hooks.TCPConnProvider(ctx)
 		if err != nil {
 			return err
 		}
 	}
 	if conn == nil {
 		dialer := net.Dialer{}
-		conn, err = dialer.DialContext(ctx, "tcp", net.JoinHostPort(exec.DestData.GetHost(), fmt.Sprintf("%d", exec.DestData.GetPort())))
+		conn, err = dialer.DialContext(ctx, "tcp", net.JoinHostPort(exec.Target.Data.GetHost(), fmt.Sprintf("%d", exec.Target.Data.GetPort())))
 		if err != nil {
 			return err
 		}
@@ -113,9 +113,9 @@ func sendTCPRange(ctx context.Context, exec *TransferExecutionContext, plan Tran
 	if err := writeFull(ctx, conn, []byte(currentTCPJobMagic)); err != nil {
 		return err
 	}
-	jobBytes := []byte(strings.TrimSpace(exec.JobID))
-	routeBytes := []byte(strings.TrimSpace(exec.RouteID))
-	destRootBytes := []byte(strings.TrimSpace(exec.DestRoot))
+	jobBytes := []byte(strings.TrimSpace(exec.Job.ID))
+	routeBytes := []byte(strings.TrimSpace(exec.Job.RouteID))
+	destRootBytes := []byte(strings.TrimSpace(exec.Paths.DestRoot))
 	if len(jobBytes) > 1<<16-1 || len(routeBytes) > 1<<16-1 || len(destRootBytes) > 1<<20 {
 		return fmt.Errorf("tcp job metadata too long: job_id=%d route_id=%d dest_root=%d", len(jobBytes), len(routeBytes), len(destRootBytes))
 	}

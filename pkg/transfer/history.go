@@ -1,4 +1,4 @@
-package gserver
+package transfer
 
 import (
 	"encoding/csv"
@@ -26,25 +26,27 @@ type transferJobHistory struct {
 	mu           sync.Mutex
 }
 
-type transferJobManifest struct {
-	JobID           string                    `json:"job_id"`
-	RouteID         string                    `json:"route_id,omitempty"`
-	Protocol        string                    `json:"protocol"`
-	SourceRoot      string                    `json:"source_root"`
-	DestinationRoot string                    `json:"destination_root"`
-	DestinationData string                    `json:"destination_data,omitempty"`
-	Concurrency     uint32                    `json:"concurrency"`
-	Parallelism     uint32                    `json:"parallelism_per_file"`
-	ChunkSizeBytes  uint64                    `json:"chunk_size_bytes,omitempty"`
-	FilesInFlight   uint32                    `json:"files_in_flight"`
-	StreamsPerFile  uint32                    `json:"streams_per_file"`
-	TotalFiles      int                       `json:"total_files"`
-	TotalBytes      uint64                    `json:"total_bytes"`
-	CreatedAt       time.Time                 `json:"created_at"`
-	Files           []transferJobManifestFile `json:"files"`
+// Manifest is the persisted manifest.json schema shared with history readers.
+type Manifest struct {
+	JobID           string         `json:"job_id"`
+	RouteID         string         `json:"route_id,omitempty"`
+	Protocol        string         `json:"protocol"`
+	SourceRoot      string         `json:"source_root"`
+	DestinationRoot string         `json:"destination_root"`
+	DestinationData string         `json:"destination_data,omitempty"`
+	Concurrency     uint32         `json:"concurrency"`
+	Parallelism     uint32         `json:"parallelism_per_file"`
+	ChunkSizeBytes  uint64         `json:"chunk_size_bytes,omitempty"`
+	FilesInFlight   uint32         `json:"files_in_flight"`
+	StreamsPerFile  uint32         `json:"streams_per_file"`
+	TotalFiles      int            `json:"total_files"`
+	TotalBytes      uint64         `json:"total_bytes"`
+	CreatedAt       time.Time      `json:"created_at"`
+	Files           []ManifestFile `json:"files"`
 }
 
-type transferJobManifestFile struct {
+// ManifestFile describes one planned file in a persisted manifest.
+type ManifestFile struct {
 	SourcePath   string `json:"source_path"`
 	RelativePath string `json:"relative_path"`
 	Size         uint64 `json:"size"`
@@ -107,19 +109,19 @@ func safeJobLogName(jobID string) string {
 	return b.String()
 }
 
-func (h *transferJobHistory) writeManifest(runtime *transferJobRuntime, plans []TransferFilePlan) error {
+func (h *transferJobHistory) writeManifest(runtime *transferJobRuntime, plans []FilePlan) error {
 	if h == nil {
 		return nil
 	}
-	files := make([]transferJobManifestFile, 0, len(plans))
+	files := make([]ManifestFile, 0, len(plans))
 	for _, plan := range plans {
-		files = append(files, transferJobManifestFile{
+		files = append(files, ManifestFile{
 			SourcePath:   plan.SourcePath,
 			RelativePath: plan.RelativePath,
 			Size:         plan.Size,
 		})
 	}
-	manifest := transferJobManifest{
+	manifest := Manifest{
 		JobID:           runtime.jobID,
 		RouteID:         runtime.routeID,
 		Protocol:        runtime.protocol.String(),
@@ -143,17 +145,17 @@ func (h *transferJobHistory) writeReceiveManifest(job *pb.TransferJob) error {
 	if h == nil || job == nil {
 		return nil
 	}
-	files := make([]transferJobManifestFile, 0, len(job.GetFiles()))
+	files := make([]ManifestFile, 0, len(job.GetFiles()))
 	var totalBytes uint64
 	for _, file := range job.GetFiles() {
-		files = append(files, transferJobManifestFile{
+		files = append(files, ManifestFile{
 			SourcePath:   file.GetPath(),
 			RelativePath: file.GetRelativePath(),
 			Size:         file.GetSize(),
 		})
 		totalBytes += file.GetSize()
 	}
-	manifest := transferJobManifest{
+	manifest := Manifest{
 		JobID:           job.GetJobId(),
 		RouteID:         job.GetRouteId(),
 		Protocol:        job.GetProtocol().String(),

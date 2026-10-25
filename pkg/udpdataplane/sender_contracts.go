@@ -4,13 +4,15 @@ import (
 	"context"
 	"net"
 	"time"
+
+	"github.com/jgoldverg/grover/internal/udpreliability"
 )
 
 // AckSample is the feedback unit consumed by congestion controllers.
-type AckSample struct {
-	RTT   time.Duration
-	Bytes int
-}
+type AckSample = udpreliability.Sample
+
+// SentPacket is an encoded packet retained until acknowledgment.
+type SentPacket = udpreliability.Packet
 
 // SendState is the sender loop's current transmit accounting.
 type SendState struct {

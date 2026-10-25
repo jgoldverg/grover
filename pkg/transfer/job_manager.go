@@ -1,4 +1,4 @@
-package gserver
+package transfer
 
 import (
 	"context"
@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jgoldverg/grover/internal/dataport"
+
 	"github.com/google/uuid"
 	"github.com/jgoldverg/grover/internal"
 	"github.com/jgoldverg/grover/pkg/energy"
@@ -16,16 +18,16 @@ import (
 	"github.com/jgoldverg/grover/pkg/metrics"
 )
 
-// TransferJobManager owns source job lifecycle and composes endpoint,
+// Manager owns source job lifecycle and composes endpoint,
 // destination-receive, planning, execution, and recording components.
-type TransferJobManager struct {
+type Manager struct {
 	mu            sync.RWMutex
 	jobs          map[string]*transferJobRuntime
 	endpointStore *transferEndpointRegistry
 	receiver      *destinationReceiver
-	registry      TransferEndpointRegistry
-	planner       TransferSourcePlanner
-	executor      TransferFileExecutor
+	registry      EndpointRegistry
+	planner       SourcePlanner
+	executor      FileExecutor
 	runtimeCfg    internal.TransferRuntimeConfig
 	jobLogDir     string
 	energy        *energy.RAPLMonitor
@@ -36,22 +38,22 @@ type TransferJobManager struct {
 	closeOnce     sync.Once
 }
 
-func NewTransferJobManager(cfg *internal.ServerConfig, executor TransferJobExecutor) *TransferJobManager {
+func NewManager(cfg *internal.ServerConfig, executor JobExecutor) *Manager {
 	if executor != nil {
-		return NewTransferJobManagerWithComponents(cfg, executor, executor)
+		return NewManagerWithComponents(cfg, executor, executor)
 	}
-	return NewTransferJobManagerWithComponents(cfg, nil, nil)
+	return NewManagerWithComponents(cfg, nil, nil)
 }
 
-// NewTransferJobManagerWithComponents allows source planning and file movement
+// NewManagerWithComponents allows source planning and file movement
 // to be developed and tested independently. Nil components use local sources
 // and the built-in TCP/UDP/local execution dispatcher.
-func NewTransferJobManagerWithComponents(cfg *internal.ServerConfig, planner TransferSourcePlanner, executor TransferFileExecutor) *TransferJobManager {
+func NewManagerWithComponents(cfg *internal.ServerConfig, planner SourcePlanner, executor FileExecutor) *Manager {
 	if planner == nil {
 		planner = FilesystemSourcePlanner{}
 	}
 	if executor == nil {
-		executor = ProtocolTransferExecutor{}
+		executor = ProtocolExecutor{}
 	}
 	runtimeCfg := normalizeTransferRuntimeConfig(internal.DefaultTransferRuntimeConfig())
 	jobLogDir := ""
@@ -71,8 +73,8 @@ func NewTransferJobManagerWithComponents(cfg *internal.ServerConfig, planner Tra
 			}
 		}
 	}
-	ports, portErr := NewDataPortAllocator(cfg)
-	m := &TransferJobManager{
+	ports, portErr := dataport.NewAllocator(cfg)
+	m := &Manager{
 		jobs:        make(map[string]*transferJobRuntime),
 		executor:    executor,
 		planner:     planner,
@@ -105,7 +107,7 @@ func NewTransferJobManagerWithComponents(cfg *internal.ServerConfig, planner Tra
 	return m
 }
 
-func (m *TransferJobManager) Close() {
+func (m *Manager) Close() {
 	m.closeOnce.Do(func() {
 		close(m.stop)
 		m.mu.Lock()
@@ -133,7 +135,7 @@ func (m *TransferJobManager) Close() {
 	})
 }
 
-func (m *TransferJobManager) StartJob(ctx context.Context, req *pb.StartTransferJobRequest) (*pb.TransferJob, error) {
+func (m *Manager) StartJob(ctx context.Context, req *pb.StartTransferJobRequest) (*pb.TransferJob, error) {
 	if req == nil {
 		return nil, errors.New("start transfer job request is required")
 	}
@@ -325,7 +327,7 @@ func (m *TransferJobManager) StartJob(ctx context.Context, req *pb.StartTransfer
 	return runtime.snapshot(), nil
 }
 
-func (m *TransferJobManager) GetJob(jobID string) (*pb.TransferJob, error) {
+func (m *Manager) GetJob(jobID string) (*pb.TransferJob, error) {
 	runtime := m.lookupJob(jobID)
 	if runtime == nil {
 		return nil, fmt.Errorf("transfer job %q not found", jobID)
@@ -333,7 +335,7 @@ func (m *TransferJobManager) GetJob(jobID string) (*pb.TransferJob, error) {
 	return runtime.snapshot(), nil
 }
 
-func (m *TransferJobManager) ListJobs(routeID string) []*pb.TransferJob {
+func (m *Manager) ListJobs(routeID string) []*pb.TransferJob {
 	routeID = strings.TrimSpace(routeID)
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -347,7 +349,7 @@ func (m *TransferJobManager) ListJobs(routeID string) []*pb.TransferJob {
 	return jobs
 }
 
-func (m *TransferJobManager) AbortJob(jobID string) (*pb.TransferJob, error) {
+func (m *Manager) AbortJob(jobID string) (*pb.TransferJob, error) {
 	runtime := m.lookupJob(jobID)
 	if runtime == nil {
 		return nil, fmt.Errorf("transfer job %q not found", jobID)
@@ -362,7 +364,7 @@ func (m *TransferJobManager) AbortJob(jobID string) (*pb.TransferJob, error) {
 	return runtime.snapshot(), nil
 }
 
-func (m *TransferJobManager) lookupJob(jobID string) *transferJobRuntime {
+func (m *Manager) lookupJob(jobID string) *transferJobRuntime {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.jobs[strings.TrimSpace(jobID)]

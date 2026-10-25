@@ -1,4 +1,4 @@
-package gserver
+package transfer
 
 import (
 	"context"
@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jgoldverg/grover/internal/dataport"
 
 	"github.com/google/uuid"
 	"github.com/jgoldverg/grover/internal"
@@ -23,18 +25,18 @@ type transferEndpointRegistry struct {
 	mu         sync.RWMutex
 	endpoints  map[string]*preparedTransferEndpoint
 	reverseTCP map[string]*reverseTCPPool
-	ports      *DataPortAllocator
+	ports      *dataport.Allocator
 	portErr    error
 	runtimeCfg internal.TransferRuntimeConfig
 	receiver   *destinationReceiver
 	stop       <-chan struct{}
 }
 
-func (m *TransferJobManager) PrepareEndpoint(ctx context.Context, req *pb.PrepareTransferEndpointRequest) (*pb.TransferEndpoint, error) {
+func (m *Manager) PrepareEndpoint(ctx context.Context, req *pb.PrepareTransferEndpointRequest) (*pb.TransferEndpoint, error) {
 	return m.registry.PrepareEndpoint(ctx, req)
 }
 
-func (m *TransferJobManager) GetEndpoint(id string) (*pb.TransferEndpoint, bool) {
+func (m *Manager) GetEndpoint(id string) (*pb.TransferEndpoint, bool) {
 	return m.registry.GetEndpoint(id)
 }
 
@@ -52,7 +54,7 @@ func (m *transferEndpointRegistry) close() {
 type preparedTransferEndpoint struct {
 	endpoint *pb.TransferEndpoint
 	expires  time.Time
-	lease    *DataPortLease
+	lease    *dataport.Lease
 	reverse  *reverseTCPPool
 }
 
@@ -94,7 +96,7 @@ func (m *transferEndpointRegistry) PrepareEndpoint(ctx context.Context, req *pb.
 	if sessionID == "" {
 		sessionID = jobID
 	}
-	var lease *DataPortLease
+	var lease *dataport.Lease
 	dataEndpoint := cloneEndpoint(req.GetBind())
 	needsListener := req.GetRole() == pb.TransferEndpointRole_TRANSFER_ENDPOINT_ROLE_DESTINATION &&
 		connectionOrigin == pb.ConnectionOrigin_CONNECTION_ORIGIN_SOURCE &&
@@ -336,6 +338,7 @@ func cloneTransferEndpoint(ep *pb.TransferEndpoint) *pb.TransferEndpoint {
 	}
 }
 
-var _ TransferEndpointRegistry = (*transferEndpointRegistry)(nil)
+var _ EndpointRegistry = (*transferEndpointRegistry)(nil)
 
-var _ TransferJobExecutor = localFilesystemTransferExecutor{}
+var _ SourcePlanner = FilesystemSourcePlanner{}
+var _ FileExecutor = ProtocolExecutor{}

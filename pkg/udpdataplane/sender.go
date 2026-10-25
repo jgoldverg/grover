@@ -87,7 +87,9 @@ func (s *PacketSender) Send(ctx context.Context, cfg SendConfig, src io.Reader) 
 		if len(batch) == 0 {
 			return nil
 		}
-		if err := writePendingBatch(ctx, cfg.Transport, sendRemote, batch, cfg.Collector, pacer, cfg.SessionID, cfg.StreamID); err != nil {
+		send := packetSendConfig{Transport: cfg.Transport, Remote: sendRemote,
+			Collector: cfg.Collector, Pacer: pacer, SessionID: cfg.SessionID, StreamID: cfg.StreamID}
+		if err := writePendingBatch(ctx, send, batch); err != nil {
 			return err
 		}
 		sentAt := time.Now()

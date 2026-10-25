@@ -1,4 +1,4 @@
-package gserver
+package transfer
 
 import (
 	"errors"
@@ -10,7 +10,7 @@ import (
 	pb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
 )
 
-func (m *TransferJobManager) UpdateConcurrency(jobID string, filesInFlight, streamsPerFile uint32) (*pb.TransferJob, error) {
+func (m *Manager) UpdateConcurrency(jobID string, filesInFlight, streamsPerFile uint32) (*pb.TransferJob, error) {
 	return m.UpdateTuning(&pb.UpdateTransferTuningRequest{
 		JobId:              jobID,
 		Concurrency:        filesInFlight,
@@ -18,7 +18,7 @@ func (m *TransferJobManager) UpdateConcurrency(jobID string, filesInFlight, stre
 	})
 }
 
-func (m *TransferJobManager) UpdateTuning(req *pb.UpdateTransferTuningRequest) (*pb.TransferJob, error) {
+func (m *Manager) UpdateTuning(req *pb.UpdateTransferTuningRequest) (*pb.TransferJob, error) {
 	if req == nil {
 		return nil, errors.New("transfer tuning request is required")
 	}

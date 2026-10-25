@@ -1,4 +1,4 @@
-package gserver
+package dataport
 
 import (
 	"net"
@@ -8,7 +8,7 @@ import (
 )
 
 func TestDataPortAllocatorEphemeralAllocation(t *testing.T) {
-	allocator, err := NewDataPortAllocator(&internal.ServerConfig{
+	allocator, err := NewAllocator(&internal.ServerConfig{
 		DataBindHost:      "127.0.0.1",
 		DataAdvertiseHost: "example.test",
 	})
@@ -40,7 +40,7 @@ func TestDataPortAllocatorEphemeralAllocation(t *testing.T) {
 
 func TestDataPortAllocatorRangedAllocationAndExhaustion(t *testing.T) {
 	port := freeTCPPort(t)
-	allocator, err := NewDataPortAllocator(&internal.ServerConfig{
+	allocator, err := NewAllocator(&internal.ServerConfig{
 		DataBindHost: "127.0.0.1",
 		DataPortMin:  port,
 		DataPortMax:  port,
@@ -72,7 +72,7 @@ func TestDataPortAllocatorRangedAllocationAndExhaustion(t *testing.T) {
 
 func TestDataPortAllocatorRangedUDPAllocation(t *testing.T) {
 	port := freeUDPPort(t)
-	allocator, err := NewDataPortAllocator(&internal.ServerConfig{
+	allocator, err := NewAllocator(&internal.ServerConfig{
 		DataBindHost: "127.0.0.1",
 		DataPortMin:  port,
 		DataPortMax:  port,
@@ -92,10 +92,10 @@ func TestDataPortAllocatorRangedUDPAllocation(t *testing.T) {
 }
 
 func TestDataPortAllocatorRejectsInvalidRange(t *testing.T) {
-	if _, err := NewDataPortAllocator(&internal.ServerConfig{DataPortMin: 5000}); err == nil {
+	if _, err := NewAllocator(&internal.ServerConfig{DataPortMin: 5000}); err == nil {
 		t.Fatal("expected error for half-configured range")
 	}
-	if _, err := NewDataPortAllocator(&internal.ServerConfig{DataPortMin: 6000, DataPortMax: 5000}); err == nil {
+	if _, err := NewAllocator(&internal.ServerConfig{DataPortMin: 6000, DataPortMax: 5000}); err == nil {
 		t.Fatal("expected error for inverted range")
 	}
 }

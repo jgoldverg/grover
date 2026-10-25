@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jgoldverg/grover/internal/udpreliability"
+
 	"github.com/jgoldverg/grover/pkg/udpwire"
 )
 
@@ -90,8 +92,10 @@ func TestFastRetransmitMissingRespectsSacksAndLimit(t *testing.T) {
 	transport := &recordingTransport{}
 
 	r := newSACKReliabilityController(SendConfig{Transport: transport}, nil)
-	r.outstanding.packets = pending
-	if err := r.retransmit(context.Background(), (sackRecovery{limit: 2}).OnFeedback(pending, status)); err != nil {
+	for _, p := range pending {
+		r.TrackSent(p)
+	}
+	if err := r.retransmit(context.Background(), (udpreliability.SACKRecovery{Limit: 2}).OnFeedback(pending, status)); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := len(transport.writes), 2; got != want {
@@ -116,8 +120,10 @@ func TestFastRetransmitMissingIgnoresUnprovenTail(t *testing.T) {
 	transport := &recordingTransport{}
 
 	r := newSACKReliabilityController(SendConfig{Transport: transport}, nil)
-	r.outstanding.packets = pending
-	if err := r.retransmit(context.Background(), (sackRecovery{limit: 10}).OnFeedback(pending, status)); err != nil {
+	for _, p := range pending {
+		r.TrackSent(p)
+	}
+	if err := r.retransmit(context.Background(), (udpreliability.SACKRecovery{Limit: 10}).OnFeedback(pending, status)); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := len(transport.writes), 2; got != want {
@@ -141,9 +147,11 @@ func TestDrainStatusPacketsCanStopAfterProgress(t *testing.T) {
 		{Sequence: 2, PayloadBytes: 100, Data: []byte("2"), SentAt: time.Now().Add(-time.Millisecond)},
 	}
 	r := newSACKReliabilityController(SendConfig{Transport: transport, StreamID: 7}, nil)
-	r.outstanding.packets = pending
+	for _, p := range pending {
+		r.TrackSent(p)
+	}
 	acked, err := r.DrainFeedback(context.Background(), time.Millisecond, FeedbackUntilProgress)
-	pending = r.outstanding.packets
+	pending = r.outstanding.Pending()
 	if err != nil {
 		t.Fatal(err)
 	}

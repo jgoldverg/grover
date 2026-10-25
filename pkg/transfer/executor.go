@@ -1,4 +1,4 @@
-package gserver
+package transfer
 
 import (
 	"context"
@@ -31,24 +31,24 @@ func resolveDestinationFilePath(root, relPath string) (string, error) {
 	return filepath.Join(root, rel), nil
 }
 
-// ProtocolTransferExecutor dispatches a file to a transport-specific executor.
+// ProtocolExecutor dispatches a file to a transport-specific executor.
 // Nil fields select the built-in implementation, so the zero value is usable.
-type ProtocolTransferExecutor struct {
-	Local TransferFileExecutor
-	TCP   TransferFileExecutor
-	UDP   TransferFileExecutor
+type ProtocolExecutor struct {
+	Local FileExecutor
+	TCP   FileExecutor
+	UDP   FileExecutor
 }
 
-func (e ProtocolTransferExecutor) TransferFile(ctx context.Context, exec *TransferExecutionContext, plan TransferFilePlan) error {
-	if exec.DestData != nil && strings.TrimSpace(exec.DestData.GetHost()) != "" && exec.DestData.GetPort() != 0 {
-		if exec.Protocol == pb.DataProtocol_DATA_PROTOCOL_UDP {
+func (e ProtocolExecutor) TransferFile(ctx context.Context, exec *Execution, plan FilePlan) error {
+	if exec.Target.Data != nil && strings.TrimSpace(exec.Target.Data.GetHost()) != "" && exec.Target.Data.GetPort() != 0 {
+		if exec.Target.Protocol == pb.DataProtocol_DATA_PROTOCOL_UDP {
 			if e.UDP == nil {
-				e.UDP = UDPTransferExecutor{}
+				e.UDP = UDPExecutor{}
 			}
 			return e.UDP.TransferFile(ctx, exec, plan)
 		}
 		if e.TCP == nil {
-			e.TCP = TCPTransferExecutor{}
+			e.TCP = TCPExecutor{}
 		}
 		return e.TCP.TransferFile(ctx, exec, plan)
 	}
@@ -61,8 +61,8 @@ func (e ProtocolTransferExecutor) TransferFile(ctx context.Context, exec *Transf
 // LocalFileExecutor copies between paths owned by this groverd.
 type LocalFileExecutor struct{}
 
-func (LocalFileExecutor) TransferFile(ctx context.Context, exec *TransferExecutionContext, plan TransferFilePlan) error {
-	dstPath, err := resolveDestinationFilePath(exec.DestRoot, plan.RelativePath)
+func (LocalFileExecutor) TransferFile(ctx context.Context, exec *Execution, plan FilePlan) error {
+	dstPath, err := resolveDestinationFilePath(exec.Paths.DestRoot, plan.RelativePath)
 	if err != nil {
 		return err
 	}
@@ -116,37 +116,37 @@ func (LocalFileExecutor) TransferFile(ctx context.Context, exec *TransferExecuti
 	}
 }
 
-func transferChunkSize(exec *TransferExecutionContext) int {
-	if exec != nil && exec.ChunkSizeBytes > 0 {
-		if exec.ChunkSizeBytes > 1<<30 {
+func transferChunkSize(exec *Execution) int {
+	if exec != nil && exec.IO.ChunkSizeBytes > 0 {
+		if exec.IO.ChunkSizeBytes > 1<<30 {
 			return 1 << 30
 		}
-		return int(exec.ChunkSizeBytes)
+		return int(exec.IO.ChunkSizeBytes)
 	}
 	return internal.DefaultTransferRuntimeConfig().ChunkSizeBytes
 }
 
-func reportStreamStart(exec *TransferExecutionContext, plan TransferFilePlan, streamID uint32, offset uint64, size uint64) {
-	if exec != nil && exec.OnStreamStart != nil {
-		exec.OnStreamStart(plan.SourcePath, TransferStreamPlan{StreamID: streamID, Offset: offset, Size: size})
+func reportStreamStart(exec *Execution, plan FilePlan, streamID uint32, offset uint64, size uint64) {
+	if exec != nil && exec.Progress.OnStreamStart != nil {
+		exec.Progress.OnStreamStart(plan.SourcePath, StreamPlan{StreamID: streamID, Offset: offset, Size: size})
 	}
 }
 
-func reportStreamProgress(exec *TransferExecutionContext, plan TransferFilePlan, streamID uint32, n int) {
+func reportStreamProgress(exec *Execution, plan FilePlan, streamID uint32, n int) {
 	if exec == nil || n <= 0 {
 		return
 	}
-	if exec.OnProgress != nil {
-		exec.OnProgress(plan.SourcePath, n)
+	if exec.Progress.OnProgress != nil {
+		exec.Progress.OnProgress(plan.SourcePath, n)
 	}
-	if exec.OnStreamProgress != nil {
-		exec.OnStreamProgress(plan.SourcePath, streamID, n)
+	if exec.Progress.OnStreamProgress != nil {
+		exec.Progress.OnStreamProgress(plan.SourcePath, streamID, n)
 	}
 }
 
-func reportStreamDone(exec *TransferExecutionContext, plan TransferFilePlan, streamID uint32, state pb.RuntimeState, errText string) {
-	if exec != nil && exec.OnStreamDone != nil {
-		exec.OnStreamDone(plan.SourcePath, streamID, state, errText)
+func reportStreamDone(exec *Execution, plan FilePlan, streamID uint32, state pb.RuntimeState, errText string) {
+	if exec != nil && exec.Progress.OnStreamDone != nil {
+		exec.Progress.OnStreamDone(plan.SourcePath, streamID, state, errText)
 	}
 }
 

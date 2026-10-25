@@ -23,10 +23,10 @@ func (r *SACKReliabilityController) drainFeedback(ctx context.Context, timeout t
 				}
 				attempts++
 				if attempts >= maxAckRetries {
-					pending := r.outstanding.packets
+					pending := r.outstanding.Pending()
 					return totalAcked, fmt.Errorf("failed to receive ack for seq %d after %d attempts", pending[len(pending)-1].Sequence, maxAckRetries)
 				}
-				if err := r.retransmit(ctx, r.recovery.OnTimeout(r.outstanding.packets)); err != nil {
+				if err := r.retransmit(ctx, r.recovery.OnTimeout(r.outstanding.Pending())); err != nil {
 					return totalAcked, err
 				}
 				continue
@@ -37,9 +37,9 @@ func (r *SACKReliabilityController) drainFeedback(ctx context.Context, timeout t
 			continue
 		}
 		attempts = 0
-		acked := r.outstanding.acknowledge(status, sampledAt, r.observeAck)
+		acked := r.outstanding.Acknowledge(status, sampledAt, r.observeAck)
 		totalAcked += acked
-		if err := r.retransmit(ctx, r.recovery.OnFeedback(r.outstanding.packets, status)); err != nil {
+		if err := r.retransmit(ctx, r.recovery.OnFeedback(r.outstanding.Pending(), status)); err != nil {
 			return totalAcked, err
 		}
 		if mode == FeedbackUntilProgress && acked > 0 {

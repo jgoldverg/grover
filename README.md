@@ -4,6 +4,8 @@ Grover is an experimental groverd-owned file transfer system. The CLI is the con
 
 The current focus is benchmarking direct and relay transfers across real nodes, including throughput, per-stream progress, UDP protocol counters, historical job logs, and optional Intel RAPL energy capture.
 
+For code ownership, extension interfaces, and a walkthrough of job execution and UDP ACK handling, start with the [developer architecture guide](docs/architecture.md).
+
 ## Build
 
 Use `make all` from the repo root. It builds both binaries into `./bin`.

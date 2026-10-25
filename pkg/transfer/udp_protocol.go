@@ -1,20 +1,22 @@
-package gserver
+package transfer
 
 import (
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/jgoldverg/grover/internal/transferwire"
 )
 
 const (
 	maxUDPDatagramPayloadSize      = 65507
 	minUDPJobPayloadSize           = 512
-	udpJobMagicV2                  = "GROVERJOBUDP2"
+	udpJobMagicV2                  = transferwire.Magic
 	currentUDPJobMagic             = udpJobMagicV2
-	udpJobPacketStart         byte = 1
-	udpJobPacketReady         byte = 2
-	udpJobPacketDone          byte = 3
+	udpJobPacketStart         byte = transferwire.Start
+	udpJobPacketReady         byte = transferwire.Ready
+	udpJobPacketDone          byte = transferwire.Done
 )
 
 var udpJobMagic = []byte(currentUDPJobMagic)

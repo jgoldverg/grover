@@ -1,4 +1,4 @@
-package gserver
+package transfer
 
 import (
 	"bufio"
@@ -187,14 +187,15 @@ func (m *destinationReceiver) receiveTransferFileTCP(conn net.Conn, root string)
 		"offset":    offset,
 		"stream_id": streamID,
 	})
-	m.beginDestinationReceive(jobID, routeID, pb.DataProtocol_DATA_PROTOCOL_TCP, effectiveRoot, rel, totalSize, offset, size, streamID, remote)
+	received := receiveStream{Job: JobIdentity{ID: jobID, RouteID: routeID}, Protocol: pb.DataProtocol_DATA_PROTOCOL_TCP, Root: effectiveRoot, RelativePath: rel, TotalSize: totalSize, Range: StreamPlan{Offset: offset, Size: size, StreamID: streamID}, Remote: remote}
+	m.beginDestinationReceive(received)
 	if _, err := io.CopyN(dst, reader, int64(size)); err != nil {
-		m.finishDestinationReceive(jobID, routeID, pb.DataProtocol_DATA_PROTOCOL_TCP, rel, offset, streamID, 0, remote, pb.RuntimeState_RUNTIME_STATE_FAILED, err.Error())
+		m.finishDestinationReceive(receiveResult{Stream: received, BytesDone: 0, State: pb.RuntimeState_RUNTIME_STATE_FAILED, Error: err.Error()})
 		internal.Warn("tcp transfer receive failed", internal.Fields{internal.FieldError: err.Error(), "remote": remote, "path": rel, "bytes": size})
 		return
 	}
 	_ = writeFull(context.Background(), conn, []byte("OK"))
-	m.finishDestinationReceive(jobID, routeID, pb.DataProtocol_DATA_PROTOCOL_TCP, rel, offset, streamID, size, remote, pb.RuntimeState_RUNTIME_STATE_DONE, "")
+	m.finishDestinationReceive(receiveResult{Stream: received, BytesDone: size, State: pb.RuntimeState_RUNTIME_STATE_DONE, Error: ""})
 	internal.Info(jobLogMessage(jobID, "tcp receive completed"), internal.Fields{
 		"route_id":  routeID,
 		"remote":    remote,

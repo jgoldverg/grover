@@ -1,4 +1,4 @@
-package gserver
+package transfer
 
 import (
 	"context"
@@ -33,13 +33,22 @@ func (m *destinationReceiver) serveTransferEndpointUDP(conn *net.UDPConn, root s
 			internal.Warn("drop invalid udp transfer start packet", internal.Fields{internal.FieldError: err.Error(), "remote": addr.String()})
 			continue
 		}
-		if err := m.receiveUDPJobFile(context.Background(), conn, root, addr, start, tuning); err != nil {
+		cfg := udpReceiveConfig{Root: root, Remote: addr, Start: start, Tuning: tuning}
+		if err := m.receiveUDPJobFile(context.Background(), conn, cfg); err != nil {
 			internal.Warn("udp transfer receive failed", internal.Fields{internal.FieldError: err.Error(), "remote": addr.String()})
 		}
 	}
 }
 
-func (m *destinationReceiver) receiveUDPJobFile(ctx context.Context, conn *net.UDPConn, root string, remote *net.UDPAddr, start udpJobStartPacket, tuning internal.UDPRuntimeConfig) error {
+type udpReceiveConfig struct {
+	Root   string
+	Remote *net.UDPAddr
+	Start  udpJobStartPacket
+	Tuning internal.UDPRuntimeConfig
+}
+
+func (m *destinationReceiver) receiveUDPJobFile(ctx context.Context, conn *net.UDPConn, cfg udpReceiveConfig) error {
+	root, remote, start, tuning := cfg.Root, cfg.Remote, cfg.Start, cfg.Tuning
 	if remote == nil {
 		return errors.New("udp transfer start missing remote address")
 	}
@@ -68,10 +77,11 @@ func (m *destinationReceiver) receiveUDPJobFile(ctx context.Context, conn *net.U
 		"streams":    len(start.streamIDs),
 		"session_id": start.sessionKey,
 	})
-	m.beginDestinationReceive(jobID, start.routeID, pb.DataProtocol_DATA_PROTOCOL_UDP, root, relPath, start.size, 0, start.size, streamID, remote.String())
+	received := receiveStream{Job: JobIdentity{ID: jobID, RouteID: start.routeID}, Protocol: pb.DataProtocol_DATA_PROTOCOL_UDP, Root: root, RelativePath: relPath, TotalSize: start.size, Range: StreamPlan{Offset: 0, Size: start.size, StreamID: streamID}, Remote: remote.String()}
+	m.beginDestinationReceive(received)
 	f, err := os.OpenFile(dstPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o644)
 	if err != nil {
-		m.finishDestinationReceive(jobID, start.routeID, pb.DataProtocol_DATA_PROTOCOL_UDP, relPath, 0, streamID, 0, remote.String(), pb.RuntimeState_RUNTIME_STATE_FAILED, err.Error())
+		m.finishDestinationReceive(receiveResult{Stream: received, BytesDone: 0, State: pb.RuntimeState_RUNTIME_STATE_FAILED, Error: err.Error()})
 		return err
 	}
 	defer f.Close()
@@ -89,7 +99,7 @@ func (m *destinationReceiver) receiveUDPJobFile(ctx context.Context, conn *net.U
 			return err
 		}
 		sendUDPJobDoneBurst(conn, remote, start.sessionKey)
-		m.finishDestinationReceive(jobID, start.routeID, pb.DataProtocol_DATA_PROTOCOL_UDP, relPath, 0, streamID, start.size, remote.String(), pb.RuntimeState_RUNTIME_STATE_DONE, "")
+		m.finishDestinationReceive(receiveResult{Stream: received, BytesDone: start.size, State: pb.RuntimeState_RUNTIME_STATE_DONE, Error: ""})
 		internal.Info(jobLogMessage(jobID, "udp receive completed"), internal.Fields{
 			"route_id":   start.routeID,
 			"remote":     remote.String(),
@@ -100,7 +110,7 @@ func (m *destinationReceiver) receiveUDPJobFile(ctx context.Context, conn *net.U
 		})
 		return nil
 	}
-	cfg := udpdataplane.ReceiveConfig{
+	receiveCfg := udpdataplane.ReceiveConfig{
 		Transport:       udpdataplane.NewUDPConnTransport(conn),
 		RemoteAddr:      remote,
 		SessionID:       fmt.Sprintf("%d", start.sessionKey),
@@ -116,19 +126,19 @@ func (m *destinationReceiver) receiveUDPJobFile(ctx context.Context, conn *net.U
 	}
 	var receiveErr error
 	if len(start.streamIDs) > 1 {
-		_, receiveErr = udpdataplane.ReceiveMany(ctx, cfg, f)
+		_, receiveErr = udpdataplane.ReceiveMany(ctx, receiveCfg, f)
 	} else {
-		_, receiveErr = udpdataplane.Receive(ctx, cfg, f)
+		_, receiveErr = udpdataplane.Receive(ctx, receiveCfg, f)
 	}
 	if receiveErr != nil {
-		m.finishDestinationReceive(jobID, start.routeID, pb.DataProtocol_DATA_PROTOCOL_UDP, relPath, 0, streamID, 0, remote.String(), pb.RuntimeState_RUNTIME_STATE_FAILED, receiveErr.Error())
+		m.finishDestinationReceive(receiveResult{Stream: received, BytesDone: 0, State: pb.RuntimeState_RUNTIME_STATE_FAILED, Error: receiveErr.Error()})
 		return receiveErr
 	}
 	if err := f.Sync(); err != nil {
 		return err
 	}
 	sendUDPJobDoneBurst(conn, remote, start.sessionKey)
-	m.finishDestinationReceive(jobID, start.routeID, pb.DataProtocol_DATA_PROTOCOL_UDP, relPath, 0, streamID, start.size, remote.String(), pb.RuntimeState_RUNTIME_STATE_DONE, "")
+	m.finishDestinationReceive(receiveResult{Stream: received, BytesDone: start.size, State: pb.RuntimeState_RUNTIME_STATE_DONE, Error: ""})
 	internal.Info(jobLogMessage(jobID, "udp receive completed"), internal.Fields{
 		"route_id":   start.routeID,
 		"remote":     remote.String(),

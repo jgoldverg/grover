@@ -1,4 +1,4 @@
-package gserver
+package dataport
 
 import (
 	"errors"
@@ -10,7 +10,7 @@ import (
 	"github.com/jgoldverg/grover/internal"
 )
 
-type DataPortAllocator struct {
+type Allocator struct {
 	mu            sync.Mutex
 	bindHost      string
 	advertiseHost string
@@ -19,7 +19,7 @@ type DataPortAllocator struct {
 	inUse         map[int]struct{}
 }
 
-type DataPortLease struct {
+type Lease struct {
 	Protocol      string
 	BindHost      string
 	AdvertiseHost string
@@ -28,11 +28,11 @@ type DataPortLease struct {
 	UDPConn     *net.UDPConn
 	TCPListener *net.TCPListener
 
-	allocator *DataPortAllocator
+	allocator *Allocator
 	closed    bool
 }
 
-func NewDataPortAllocator(cfg *internal.ServerConfig) (*DataPortAllocator, error) {
+func NewAllocator(cfg *internal.ServerConfig) (*Allocator, error) {
 	bindHost := "0.0.0.0"
 	advertiseHost := "127.0.0.1"
 	minPort := 0
@@ -50,7 +50,7 @@ func NewDataPortAllocator(cfg *internal.ServerConfig) (*DataPortAllocator, error
 	if err := internal.ValidateDataPortRange(minPort, maxPort); err != nil {
 		return nil, err
 	}
-	return &DataPortAllocator{
+	return &Allocator{
 		bindHost:      bindHost,
 		advertiseHost: advertiseHost,
 		minPort:       minPort,
@@ -59,7 +59,7 @@ func NewDataPortAllocator(cfg *internal.ServerConfig) (*DataPortAllocator, error
 	}, nil
 }
 
-func (a *DataPortAllocator) AllocateUDP() (*DataPortLease, error) {
+func (a *Allocator) AllocateUDP() (*Lease, error) {
 	if a == nil {
 		return nil, errors.New("nil data port allocator")
 	}
@@ -73,7 +73,7 @@ func (a *DataPortAllocator) AllocateUDP() (*DataPortLease, error) {
 			return nil, err
 		}
 		port := conn.LocalAddr().(*net.UDPAddr).Port
-		return &DataPortLease{Protocol: "udp", BindHost: a.bindHost, AdvertiseHost: a.advertiseHost, Port: port, UDPConn: conn, allocator: a}, nil
+		return &Lease{Protocol: "udp", BindHost: a.bindHost, AdvertiseHost: a.advertiseHost, Port: port, UDPConn: conn, allocator: a}, nil
 	}
 
 	a.mu.Lock()
@@ -91,12 +91,12 @@ func (a *DataPortAllocator) AllocateUDP() (*DataPortLease, error) {
 			continue
 		}
 		a.inUse[port] = struct{}{}
-		return &DataPortLease{Protocol: "udp", BindHost: a.bindHost, AdvertiseHost: a.advertiseHost, Port: port, UDPConn: conn, allocator: a}, nil
+		return &Lease{Protocol: "udp", BindHost: a.bindHost, AdvertiseHost: a.advertiseHost, Port: port, UDPConn: conn, allocator: a}, nil
 	}
 	return nil, fmt.Errorf("no available udp data ports in range %d-%d", a.minPort, a.maxPort)
 }
 
-func (a *DataPortAllocator) AllocateTCP() (*DataPortLease, error) {
+func (a *Allocator) AllocateTCP() (*Lease, error) {
 	if a == nil {
 		return nil, errors.New("nil data port allocator")
 	}
@@ -110,7 +110,7 @@ func (a *DataPortAllocator) AllocateTCP() (*DataPortLease, error) {
 			return nil, err
 		}
 		port := listener.Addr().(*net.TCPAddr).Port
-		return &DataPortLease{Protocol: "tcp", BindHost: a.bindHost, AdvertiseHost: a.advertiseHost, Port: port, TCPListener: listener, allocator: a}, nil
+		return &Lease{Protocol: "tcp", BindHost: a.bindHost, AdvertiseHost: a.advertiseHost, Port: port, TCPListener: listener, allocator: a}, nil
 	}
 
 	a.mu.Lock()
@@ -128,16 +128,16 @@ func (a *DataPortAllocator) AllocateTCP() (*DataPortLease, error) {
 			continue
 		}
 		a.inUse[port] = struct{}{}
-		return &DataPortLease{Protocol: "tcp", BindHost: a.bindHost, AdvertiseHost: a.advertiseHost, Port: port, TCPListener: listener, allocator: a}, nil
+		return &Lease{Protocol: "tcp", BindHost: a.bindHost, AdvertiseHost: a.advertiseHost, Port: port, TCPListener: listener, allocator: a}, nil
 	}
 	return nil, fmt.Errorf("no available tcp data ports in range %d-%d", a.minPort, a.maxPort)
 }
 
-func (a *DataPortAllocator) hasRange() bool {
+func (a *Allocator) hasRange() bool {
 	return a.minPort > 0 || a.maxPort > 0
 }
 
-func (l *DataPortLease) Close() error {
+func (l *Lease) Close() error {
 	if l == nil {
 		return nil
 	}
@@ -160,7 +160,7 @@ func (l *DataPortLease) Close() error {
 	return err
 }
 
-func (a *DataPortAllocator) release(port int) {
+func (a *Allocator) release(port int) {
 	a.mu.Lock()
 	delete(a.inUse, port)
 	a.mu.Unlock()

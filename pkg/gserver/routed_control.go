@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/jgoldverg/grover/pkg/transfer"
+
 	"github.com/jgoldverg/grover/internal"
 	groverPb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
 	"google.golang.org/grpc/codes"
@@ -173,11 +175,11 @@ func (s *RelayControlService) StreamForwardStats(req *groverPb.StreamForwardStat
 type TransferJobControlService struct {
 	groverPb.UnimplementedTransferJobControlServer
 
-	manager *TransferJobManager
+	manager *transfer.Manager
 }
 
 func NewTransferJobControlService(cfg *internal.ServerConfig) *TransferJobControlService {
-	return &TransferJobControlService{manager: NewTransferJobManager(cfg, nil)}
+	return &TransferJobControlService{manager: transfer.NewManager(cfg, nil)}
 }
 
 func (s *TransferJobControlService) PrepareTransferEndpoint(ctx context.Context, req *groverPb.PrepareTransferEndpointRequest) (*groverPb.PrepareTransferEndpointResponse, error) {

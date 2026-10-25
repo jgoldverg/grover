@@ -1,4 +1,4 @@
-package gserver
+package transfer
 
 import (
 	"encoding/csv"
@@ -30,7 +30,7 @@ type activeEnergyJob struct {
 	routeID string
 }
 
-func (m *TransferJobManager) nodeEnergyLoop() {
+func (m *Manager) nodeEnergyLoop() {
 	defer close(m.energyDone)
 	interval := m.energyEvery
 	if interval <= 0 {
@@ -48,14 +48,14 @@ func (m *TransferJobManager) nodeEnergyLoop() {
 	}
 }
 
-func (m *TransferJobManager) appendNodeEnergy(now time.Time) {
+func (m *Manager) appendNodeEnergy(now time.Time) {
 	if m == nil || m.nodeEnergy == nil {
 		return
 	}
 	m.nodeEnergy.append(now, m.activeEnergyJobs())
 }
 
-func (m *TransferJobManager) activeEnergyJobs() []activeEnergyJob {
+func (m *Manager) activeEnergyJobs() []activeEnergyJob {
 	if m == nil {
 		return nil
 	}
