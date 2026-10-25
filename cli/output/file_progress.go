@@ -170,6 +170,18 @@ func (cw *countingWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+func (cw *countingWriter) WriteAt(p []byte, off int64) (int, error) {
+	wa, ok := cw.writer.(io.WriterAt)
+	if !ok {
+		return 0, io.ErrUnexpectedEOF
+	}
+	n, err := wa.WriteAt(p, off)
+	if n > 0 && cw.hook != nil {
+		cw.hook(n)
+	}
+	return n, err
+}
+
 type countingReader struct {
 	reader io.Reader
 	hook   func(int)
@@ -177,6 +189,18 @@ type countingReader struct {
 
 func (cr *countingReader) Read(p []byte) (int, error) {
 	n, err := cr.reader.Read(p)
+	if n > 0 && cr.hook != nil {
+		cr.hook(n)
+	}
+	return n, err
+}
+
+func (cr *countingReader) ReadAt(p []byte, off int64) (int, error) {
+	ra, ok := cr.reader.(io.ReaderAt)
+	if !ok {
+		return 0, io.ErrUnexpectedEOF
+	}
+	n, err := ra.ReadAt(p, off)
 	if n > 0 && cr.hook != nil {
 		cr.hook(n)
 	}

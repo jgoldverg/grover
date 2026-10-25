@@ -5,9 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"io"
-	"net"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -16,18 +13,13 @@ import (
 	"github.com/jgoldverg/grover/backend"
 	"github.com/jgoldverg/grover/backend/filesystem"
 	"github.com/jgoldverg/grover/internal"
-	pb "github.com/jgoldverg/grover/pkg/groverpb/groverudpv1"
 	groverpb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
 	"github.com/jgoldverg/grover/pkg/util"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
-
-type TransferAPI interface {
-	Get(ctx context.Context, path string, w io.Writer) error
-	Put(ctx context.Context, path string, r io.Reader, size int64, overwrite backend.OverwritePolicy) error
-	Enumerate(ctx context.Context, path string, recursive bool) ([]RemoteFile, error)
-}
 
 type FilesAPI interface {
 	List(ctx context.Context, endpoint backend.Endpoint) ([]filesystem.FileInfo, error)
@@ -42,45 +34,80 @@ type CredentialsAPI interface {
 	DeleteCredential(ctx context.Context, credUUID uuid.UUID, credName string) error
 }
 
-type MTUAPI interface {
-	DiscoverPMTU(ctx context.Context, server string, port int, minSize, maxSize int, perTry time.Duration) (int, error)
+type RoutedTransferAPI interface {
+	PrepareTransferEndpoint(ctx context.Context, req *groverpb.PrepareTransferEndpointRequest) (*groverpb.TransferEndpoint, error)
+	StartTransferJob(ctx context.Context, req *groverpb.StartTransferJobRequest) (*groverpb.TransferJob, error)
+	GetTransferJob(ctx context.Context, jobID string) (*groverpb.TransferJob, error)
+	ListTransferJobs(ctx context.Context, routeID string) ([]*groverpb.TransferJob, error)
+	AbortTransferJob(ctx context.Context, jobID string) (*groverpb.TransferJob, error)
+	UpdateTransferConcurrency(ctx context.Context, jobID string, filesInFlight, streamsPerFile uint32) (*groverpb.TransferJob, error)
+	UpdateTransferTuning(ctx context.Context, req *groverpb.UpdateTransferTuningRequest) (*groverpb.TransferJob, error)
+	StreamTransferStats(ctx context.Context, jobID, routeID string) (groverpb.TransferJobControl_StreamTransferStatsClient, error)
 }
 
-type ServerAPI interface {
-	CreatePorts(ctx context.Context, portCount uint32) ([]uint32, error)
-	DeletePorts(ctx context.Context, ports []uint32) (bool, error)
-	ListPorts(ctx context.Context) ([]uint32, error)
-	StartServer(ctx context.Context) (uint32, error)
-	StopServer(ctx context.Context) (string, error)
+type RelayControlAPI interface {
+	CreateForward(ctx context.Context, req *groverpb.CreateForwardRequest) (*groverpb.ForwardSession, error)
+	GetForward(ctx context.Context, forwardID string) (*groverpb.ForwardSession, error)
+	ListForwards(ctx context.Context, routeID, jobID string) ([]*groverpb.ForwardSession, error)
+	DeleteForward(ctx context.Context, forwardID string) (bool, error)
+	StreamForwardStats(ctx context.Context, forwardID, routeID, jobID string) (groverpb.RelayControl_StreamForwardStatsClient, error)
+}
+
+type RouteSessionAPI interface {
+	CreateRouteSession(ctx context.Context, req *groverpb.CreateRouteSessionRequest) (*groverpb.RouteSession, error)
+	GetRouteSession(ctx context.Context, sessionID string) (*groverpb.RouteSession, error)
+	ListRouteSessions(ctx context.Context, routeID, jobID string) ([]*groverpb.RouteSession, error)
+	DeleteRouteSession(ctx context.Context, sessionID string) (bool, error)
+	AbortRouteSession(ctx context.Context, sessionID string) (*groverpb.RouteSession, error)
+	UpdateRouteSessionState(ctx context.Context, sessionID string, state groverpb.RuntimeState, errText string) (*groverpb.RouteSession, error)
+	StreamRouteSessionStats(ctx context.Context, sessionID, routeID, jobID string) (groverpb.RouteSessionControl_StreamRouteSessionStatsClient, error)
+}
+
+type RouteConfigAPI interface {
+	PutRoute(ctx context.Context, route *groverpb.RouteConfig) (*groverpb.RouteConfig, error)
+	GetRoute(ctx context.Context, name string) (*groverpb.RouteConfig, error)
+	ListRoutes(ctx context.Context) ([]*groverpb.RouteConfig, error)
+	DeleteRoute(ctx context.Context, name string) (bool, error)
+}
+
+type JobHistoryAPI interface {
+	ListJobHistory(ctx context.Context, req *groverpb.ListJobHistoryRequest) ([]*groverpb.JobHistoryEntry, error)
+	GetJobManifest(ctx context.Context, jobID string) (*groverpb.JobHistoryManifest, error)
+	GetJobFinal(ctx context.Context, jobID string) (*groverpb.TransferJob, error)
+	ListJobSnapshots(ctx context.Context, req *groverpb.ListJobSnapshotsRequest) ([]*groverpb.TransferJob, error)
+	ListJobEnergy(ctx context.Context, req *groverpb.ListJobEnergyRequest) (*groverpb.ListJobEnergyResponse, error)
 }
 
 type Client struct {
 	cfg  internal.AppConfig
 	conn *grpc.ClientConn
 
-	mtu MTUAPI
-
 	files       FilesAPI
 	credentials CredentialsAPI
-	server      ServerAPI
-	transfer    TransferAPI
+	routed      RoutedTransferAPI
+	relay       RelayControlAPI
+	route       RouteSessionAPI
+	routeConfig RouteConfigAPI
+	history     JobHistoryAPI
 }
 
 func NewClient(cfg internal.AppConfig) *Client {
-	return &Client{
-		cfg: cfg,
-	}
+	return &Client{cfg: cfg}
 }
 
 func (c *Client) Files() FilesAPI { return c.files }
 
 func (c *Client) Credentials() CredentialsAPI { return c.credentials }
 
-func (c *Client) Server() ServerAPI { return c.server }
+func (c *Client) RoutedTransfer() RoutedTransferAPI { return c.routed }
 
-func (c *Client) MTU() MTUAPI { return c.mtu }
+func (c *Client) RelayControl() RelayControlAPI { return c.relay }
 
-func (c *Client) Transfer() TransferAPI { return c.transfer }
+func (c *Client) RouteSessionControl() RouteSessionAPI { return c.route }
+
+func (c *Client) RouteConfigControl() RouteConfigAPI { return c.routeConfig }
+
+func (c *Client) JobHistoryControl() JobHistoryAPI { return c.history }
 
 func (c *Client) Initialize(ctx context.Context, policy util.RoutePolicy) error {
 	var (
@@ -92,16 +119,25 @@ func (c *Client) Initialize(ctx context.Context, policy util.RoutePolicy) error 
 	)
 
 	if wantRemote {
-		internal.Info("dialing the remote server", internal.Fields{
+		internal.Debug("control-plane dial started", internal.Fields{
 			"server_url":   c.cfg.ServerURL,
 			"ca_cert_file": c.cfg.CACertFile,
+			"insecure":     c.cfg.InsecureControl,
 		})
-		cc, err = c.dialTLS(ctx, c.cfg.ServerURL, c.cfg.CACertFile)
+		started := time.Now()
+		cc, err = c.dialControl(ctx, c.cfg.ServerURL, c.cfg.CACertFile, c.cfg.InsecureControl)
 		if err != nil {
 			return err
 		}
-		cc.Connect()
-		internal.Info(cc.GetState().String(), nil)
+		if err := waitForReady(ctx, cc, 10*time.Second); err != nil {
+			_ = cc.Close()
+			return err
+		}
+		internal.Debug("control-plane connection ready", internal.Fields{
+			"server_url": c.cfg.ServerURL,
+			"state":      cc.GetState().String(),
+			"elapsed_ms": time.Since(started).Milliseconds(),
+		})
 
 		ci = cc
 	}
@@ -114,9 +150,17 @@ func (c *Client) Initialize(ctx context.Context, policy util.RoutePolicy) error 
 		return e
 	}
 	if c.conn != nil {
-		c.server = NewServerService(&c.cfg, c.conn)
+		c.routed = NewRoutedTransferService(c.conn)
+		c.relay = NewRelayControlService(c.conn)
+		c.route = NewRouteSessionService(c.conn)
+		c.routeConfig = NewRouteConfigService(c.conn)
+		c.history = NewJobHistoryService(c.conn)
 	} else {
-		c.server = nil
+		c.routed = nil
+		c.relay = nil
+		c.route = nil
+		c.routeConfig = nil
+		c.history = nil
 	}
 
 	fileStore, err := backend.NewTomlCredentialStorage(c.cfg.CredentialsFile)
@@ -128,10 +172,6 @@ func (c *Client) Initialize(ctx context.Context, policy util.RoutePolicy) error 
 		fileServiceClient = groverpb.NewFileServiceClient(ci)
 	}
 	c.files = NewFileService(c, fileServiceClient, fileStore)
-	if wantRemote {
-		udpConfig, _ := internal.LoadUdpClientConfig("")
-		c.transfer = NewTransferAPI(udpConfig, pb.NewTransferControlClient(cc), hostFromTarget(c.cfg.ServerURL))
-	}
 	return nil
 }
 
@@ -142,7 +182,13 @@ func (c *Client) Close() error {
 	return nil
 }
 
-func (c *Client) dialTLS(ctx context.Context, target, caPath string) (*grpc.ClientConn, error) {
+func (c *Client) dialControl(ctx context.Context, target, caPath string, insecureControl bool) (*grpc.ClientConn, error) {
+	if insecureControl {
+		return grpc.NewClient(
+			target,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		)
+	}
 	// Build root pool: system roots by default; add custom CA if provided.
 	roots, _ := x509.SystemCertPool()
 	if caPath != "" {
@@ -170,35 +216,23 @@ func (c *Client) dialTLS(ctx context.Context, target, caPath string) (*grpc.Clie
 	)
 }
 
-func hostFromTarget(target string) string {
-	host := strings.TrimSpace(target)
-	if host == "" {
-		return ""
+func waitForReady(ctx context.Context, cc *grpc.ClientConn, timeout time.Duration) error {
+	if _, ok := ctx.Deadline(); !ok && timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
 	}
-
-	if strings.HasPrefix(host, "dns:///") {
-		host = strings.TrimPrefix(host, "dns:///")
-	} else if strings.HasPrefix(host, "passthrough:///") {
-		host = strings.TrimPrefix(host, "passthrough:///")
-	}
-
-	if strings.Contains(host, "://") {
-		if u, err := url.Parse(host); err == nil {
-			if h := u.Hostname(); h != "" {
-				return h
+	cc.Connect()
+	for {
+		state := cc.GetState()
+		if state == connectivity.Ready {
+			return nil
+		}
+		if !cc.WaitForStateChange(ctx, state) {
+			if err := ctx.Err(); err != nil {
+				return err
 			}
-			if path := strings.Trim(u.Path, "/"); path != "" {
-				return path
-			}
+			return context.DeadlineExceeded
 		}
 	}
-
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		return h
-	}
-
-	if idx := strings.LastIndex(host, "/"); idx >= 0 && idx < len(host)-1 {
-		return host[idx+1:]
-	}
-	return host
 }

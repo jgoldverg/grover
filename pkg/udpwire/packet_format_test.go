@@ -4,6 +4,31 @@ import (
 	"testing"
 )
 
+func TestEncodeDataPacketInPlace(t *testing.T) {
+	payload := []byte("hello")
+	buf := make([]byte, DataHeaderLen+len(payload)+4)
+	copy(buf[DataHeaderLen:], payload)
+	n, err := EncodeDataPacketInPlace(buf, 11, 22, 33, 44, len(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var pkt DataPacket
+	read, err := pkt.Decode(buf[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read != n {
+		t.Fatalf("decoded %d bytes, want %d", read, n)
+	}
+	if pkt.SessionID != 11 || pkt.StreamID != 22 || pkt.Seq != 33 || pkt.Offset != 44 {
+		t.Fatalf("decoded header mismatch: %+v", pkt)
+	}
+	if string(pkt.Payload) != string(payload) {
+		t.Fatalf("decoded payload = %q, want %q", string(pkt.Payload), string(payload))
+	}
+}
+
 func TestStatusPacketEncodeDecodeWithSacks(t *testing.T) {
 	original := StatusPacket{
 		SessionID: 0xdeadbeef,

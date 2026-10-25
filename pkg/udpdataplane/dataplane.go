@@ -11,33 +11,52 @@ import (
 )
 
 const (
-	defaultReadTimeout   = 2 * time.Second
-	defaultWriteTimeout  = 2 * time.Second
-	maxAckRetries        = 5
-	enobufsRetryInterval = 5 * time.Millisecond
+	defaultReadTimeout           = 2 * time.Second
+	defaultWriteTimeout          = 2 * time.Second
+	maxAckRetries                = 5
+	enobufsRetryInterval         = 5 * time.Millisecond
+	defaultAckPollEvery          = 64
+	defaultDataBatchSize         = 64
+	defaultFastRetransmitPackets = 32
 )
 
 // SendConfig captures the parameters needed to transmit data over UDP.
 type SendConfig struct {
-	Transport  Transport
-	RemoteAddr *net.UDPAddr
-	SessionID  string
-	SessionKey uint32
-	StreamID   uint32
-	MTU        int
-	Collector  *metrics.TransferCollector
+	Transport             Transport
+	RemoteAddr            *net.UDPAddr
+	SessionID             string
+	SessionKey            uint32
+	StreamID              uint32
+	BaseOffset            uint64
+	MTU                   int
+	Collector             *metrics.TransferCollector
+	FlowControl           string
+	WindowPackets         int
+	WindowBytes           int
+	BatchPackets          int
+	FastRetransmitPackets int
+	RequireFinalAck       bool
 }
 
 // ReceiveConfig controls how UDP payloads are ingested.
 type ReceiveConfig struct {
-	Transport    Transport
-	RemoteAddr   *net.UDPAddr
-	SessionID    string
-	SessionKey   uint32
-	StreamID     uint32
-	BufferSize   int
-	Collector    *metrics.TransferCollector
-	ExpectedSize uint64
+	Transport       Transport
+	RemoteAddr      *net.UDPAddr
+	SessionID       string
+	SessionKey      uint32
+	StreamID        uint32
+	StreamIDs       []uint32
+	BufferSize      int
+	Collector       *metrics.TransferCollector
+	ExpectedSize    uint64
+	AckEveryPackets int
+	AckEvery        time.Duration
+	BatchPackets    int
+	// WriteFlushBytes enables receive-side payload coalescing before WriteAt.
+	// A zero value preserves direct packet-sized writes.
+	WriteFlushBytes uint64
+	// MaxBufferedWriteBytes bounds coalescing memory. A zero value derives from WriteFlushBytes.
+	MaxBufferedWriteBytes uint64
 	// OnRemoteAddr is called the first time we learn the peer address (for unconnected sockets).
 	OnRemoteAddr func(*net.UDPAddr)
 }
@@ -48,7 +67,7 @@ type Sender interface {
 }
 
 // DefaultSender implements a SACK-aware congestion-controlled sender.
-var DefaultSender Sender = NewBBRSender()
+var DefaultSender Sender = NewPacketSender()
 
 // Send reads from src and sends UDP data packets using the configured sender.
 func Send(ctx context.Context, cfg SendConfig, src io.Reader) (uint64, error) {
@@ -56,6 +75,20 @@ func Send(ctx context.Context, cfg SendConfig, src io.Reader) (uint64, error) {
 		return 0, errors.New("no UDP sender configured")
 	}
 	return DefaultSender.Send(ctx, cfg, src)
+}
+
+func batchPacketCount(n int) int {
+	if n <= 0 {
+		return defaultDataBatchSize
+	}
+	return n
+}
+
+func fastRetransmitPacketCount(n int) int {
+	if n <= 0 {
+		return defaultFastRetransmitPackets
+	}
+	return n
 }
 
 func recordSendMetric(col *metrics.TransferCollector, bytes int, retrans bool) {
@@ -70,6 +103,13 @@ func recordReceiveMetric(col *metrics.TransferCollector, bytes int) {
 		return
 	}
 	col.ObserveReceive(bytes)
+}
+
+func recordNetworkReceiveMetric(col *metrics.TransferCollector, bytes int) {
+	if col == nil || bytes <= 0 {
+		return
+	}
+	col.ObserveNetworkReceive(bytes)
 }
 
 func recordPacketSend(col *metrics.TransferCollector) {

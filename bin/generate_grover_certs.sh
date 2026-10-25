@@ -13,9 +13,10 @@ Options:
   -o, --output      Output directory (default: ~/.grover/certs)
       --force       Overwrite existing files if they already exist
 
-This script creates a small CA (NAME_PREFIX-ca.key/.crt) and a server key/csr/cert
-signed by that CA (NAME_PREFIX-server.*). Supply all hostnames/IPs the server
-will be accessed with via --sans so the resulting certificate validates in TLS.
+This script creates or reuses a small CA stored as grover-ca.key/.crt/.srl in the
+output directory, as well as a server key/csr/cert signed by that CA
+(NAME_PREFIX-server.*). Supply all hostnames/IPs the server will be accessed
+with via --sans so the resulting certificate validates in TLS.
 EOF
 }
 
@@ -64,9 +65,10 @@ fi
 
 mkdir -p "$OUT_DIR"
 
-CA_KEY="${OUT_DIR}/${NAME}-ca.key"
-CA_CRT="${OUT_DIR}/${NAME}-ca.crt"
-CA_SRL="${OUT_DIR}/${NAME}-ca.srl"
+CA_BASENAME="grover-ca"
+CA_KEY="${OUT_DIR}/${CA_BASENAME}.key"
+CA_CRT="${OUT_DIR}/${CA_BASENAME}.crt"
+CA_SRL="${OUT_DIR}/${CA_BASENAME}.srl"
 SRV_KEY="${OUT_DIR}/${NAME}-server.key"
 SRV_CSR="${OUT_DIR}/${NAME}-server.csr"
 SRV_CRT="${OUT_DIR}/${NAME}-server.crt"
@@ -79,19 +81,24 @@ maybe_overwrite() {
 	fi
 }
 
-maybe_overwrite "$CA_KEY"
-maybe_overwrite "$CA_CRT"
-maybe_overwrite "$CA_SRL"
 maybe_overwrite "$SRV_KEY"
 maybe_overwrite "$SRV_CSR"
 maybe_overwrite "$SRV_CRT"
 
-echo "Generating CA key: $CA_KEY"
-openssl genrsa -out "$CA_KEY" 4096 >/dev/null 2>&1
+if [[ -f "$CA_KEY" && -f "$CA_CRT" && -f "$CA_SRL" ]]; then
+	echo "Using existing CA certificate: $CA_CRT"
+else
+	maybe_overwrite "$CA_KEY"
+	maybe_overwrite "$CA_CRT"
+	maybe_overwrite "$CA_SRL"
 
-echo "Generating CA certificate: $CA_CRT"
-openssl req -x509 -new -nodes -key "$CA_KEY" -sha256 -days "$DAYS" \
-	-subj "/CN=${NAME}-ca" -out "$CA_CRT" >/dev/null 2>&1
+	echo "Generating CA key: $CA_KEY"
+	openssl genrsa -out "$CA_KEY" 4096 >/dev/null 2>&1
+
+	echo "Generating CA certificate: $CA_CRT"
+	openssl req -x509 -new -nodes -key "$CA_KEY" -sha256 -days "$DAYS" \
+		-subj "/CN=${CA_BASENAME}" -out "$CA_CRT" >/dev/null 2>&1
+fi
 
 echo "Generating server key: $SRV_KEY"
 openssl genrsa -out "$SRV_KEY" 4096 >/dev/null 2>&1
@@ -134,9 +141,12 @@ openssl req -new -key "$SRV_KEY" -out "$SRV_CSR" \
 	-subj "/CN=${NAME}-server" -config "$SAN_CONFIG" >/dev/null 2>&1
 
 echo "Signing server certificate: $SRV_CRT"
-openssl x509 -req -in "$SRV_CSR" -CA "$CA_CRT" -CAkey "$CA_KEY" \
-	-CAcreateserial -CAserial "$CA_SRL" -out "$SRV_CRT" -days "$DAYS" \
-	-sha256 -extensions req_ext -extfile "$SAN_CONFIG" >/dev/null 2>&1
+OPENSSL_CA_ARGS=(-CA "$CA_CRT" -CAkey "$CA_KEY" -CAserial "$CA_SRL")
+if [[ ! -f "$CA_SRL" ]]; then
+	OPENSSL_CA_ARGS+=(-CAcreateserial)
+fi
+openssl x509 -req -in "$SRV_CSR" "${OPENSSL_CA_ARGS[@]}" -out "$SRV_CRT" \
+	-days "$DAYS" -sha256 -extensions req_ext -extfile "$SAN_CONFIG" >/dev/null 2>&1
 
 echo "Certificates created in $OUT_DIR:"
 printf "  CA key:        %s\n" "$CA_KEY"

@@ -4,6 +4,9 @@
 BIN_DIR    := bin
 PROTO_SRC  := api/proto
 PB_OUT     := pkg/groverpb
+TOOLS_BIN  ?= $(HOME)/.grover-tools/bin
+
+export PATH := $(TOOLS_BIN):$(PATH)
 
 ## Binaries
 SERVER_DIR := cmd/groverd
@@ -13,9 +16,7 @@ SERVER_BIN := $(BIN_DIR)/groverd
 CLIENT_BIN := $(BIN_DIR)/grover
 
 ## Proto files (flat layout)
-PROTO_FILES := \
-  $(PROTO_SRC)/grover.proto \
-  $(PROTO_SRC)/grover_udp.proto
+PROTO_FILES := $(PROTO_SRC)/grover.proto
 
 ## Discover module path for protoc-gen-go (trims output dirs correctly)
 MODULE := $(shell go list -m)
@@ -25,24 +26,26 @@ LDFLAGS := -s -w
 GOFLAGS :=
 BUILD_TAGS :=
 
-.PHONY: all proto server client clean test fmt vet tools proto-clean
+.PHONY: all proto generate server client clean test fmt vet tools proto-clean
 
-all: proto server client
+all: server client
+
+generate: proto
 
 tools:
+	@mkdir -p $(TOOLS_BIN)
 	@command -v protoc >/dev/null 2>&1 || { echo "Error: protoc not found. Install protoc first."; exit 1; }
 	@command -v protoc-gen-go >/dev/null 2>&1 || { \
 		echo "Installing protoc-gen-go..."; \
-		GOBIN=$$(go env GOPATH)/bin go install google.golang.org/protobuf/cmd/protoc-gen-go@latest; }
+		GOBIN=$(TOOLS_BIN) go install google.golang.org/protobuf/cmd/protoc-gen-go@latest; }
 	@command -v protoc-gen-go-grpc >/dev/null 2>&1 || { \
 		echo "Installing protoc-gen-go-grpc..."; \
-		GOBIN=$$(go env GOPATH)/bin go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest; }
+		GOBIN=$(TOOLS_BIN) go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest; }
 
 PB_OUT := .
 
 proto: tools
 	@echo "Generating protobuf Go code..."
-	PATH="$$(go env GOPATH)/bin:$$PATH" \
 	protoc -I $(PROTO_SRC) \
 	  --go_out=$(PB_OUT)      --go_opt=module=$(MODULE) \
 	  --go-grpc_out=$(PB_OUT) --go-grpc_opt=module=$(MODULE) \
@@ -77,7 +80,7 @@ proto-clean:
 	find $(PB_OUT) -name '*.pb.go' -type f -delete
 	@echo "Proto clean complete."
 
-clean: proto-clean
+clean:
 	@echo "Cleaning binaries..."
-	rm -rf $(BIN_DIR)
+	rm -f $(SERVER_BIN) $(CLIENT_BIN)
 	@echo "Clean complete."

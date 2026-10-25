@@ -3,7 +3,7 @@ package gserver
 
 import (
 	"context"
-	"fmt"
+	"time"
 
 	"github.com/jgoldverg/grover/backend"
 	fs "github.com/jgoldverg/grover/backend/filesystem"
@@ -29,85 +29,139 @@ func NewFileService(cfg *internal.ServerConfig) (*FileService, error) {
 }
 
 func (s *FileService) List(ctx context.Context, in *pb.ListFilesRequest) (*pb.ListFilesResponse, error) {
+	const rpcName = "FileService.List"
+	started := time.Now()
 	bt := backend.PbTypeToBackendType(in.GetType())
-	internal.Debug("list request received", internal.Fields{
-		internal.FieldMsg: fmt.Sprintf("%+v", in),
+	internal.RPCReceived(rpcName, internal.Fields{
+		"backend": in.GetType().String(),
+		"path":    in.GetPath(),
 	})
 	cred, err := util.ResolveCredentialProto(s.storage, in.GetCredentialRef())
 	if err != nil {
+		internal.RPCRejected(rpcName, err, internal.Fields{"backend": in.GetType().String(), "path": in.GetPath()}, time.Since(started))
 		return nil, err
 	}
 
 	ops, err := backend.OpsFactory(bt, cred)
 	if err != nil {
+		internal.RPCFailed(rpcName, err, internal.Fields{"backend": in.GetType().String(), "path": in.GetPath()}, time.Since(started))
 		return nil, status.Errorf(codes.Internal, "init backend ops: %v", err)
 	}
 
 	files, err := ops.List(ctx, in.GetPath(), false)
 	if err != nil {
+		internal.RPCFailed(rpcName, err, internal.Fields{"backend": in.GetType().String(), "path": in.GetPath()}, time.Since(started))
 		return nil, status.Errorf(codes.Internal, "list: %v", err)
 	}
 
+	internal.RPCCompleted(rpcName, internal.Fields{
+		"backend": in.GetType().String(),
+		"path":    in.GetPath(),
+		"files":   len(files),
+	}, time.Since(started))
 	return &pb.ListFilesResponse{Files: toPBFiles(files)}, nil
 }
 
 func (s *FileService) Rename(ctx context.Context, in *pb.RenameRequest) (*pb.RenameResponse, error) {
+	const rpcName = "FileService.Rename"
+	started := time.Now()
 	bt := backend.PbTypeToBackendType(in.GetType())
+	internal.RPCReceived(rpcName, internal.Fields{
+		"backend":  in.GetType().String(),
+		"old_path": in.GetOldPath(),
+		"new_path": in.GetNewPath(),
+	})
 	if bt == backend.UnknownBackend {
-		return nil, status.Errorf(codes.InvalidArgument, "unsupported endpoint type %s", in.GetType().String())
+		err := status.Errorf(codes.InvalidArgument, "unsupported endpoint type %s", in.GetType().String())
+		internal.RPCRejected(rpcName, err, internal.Fields{"backend": in.GetType().String()}, time.Since(started))
+		return nil, err
 	}
 	cred, err := util.ResolveCredentialProto(s.storage, in.GetCredentialRef())
 	if err != nil {
+		internal.RPCRejected(rpcName, err, internal.Fields{"backend": in.GetType().String()}, time.Since(started))
 		return nil, err
 	}
 	ops, err := backend.OpsFactory(bt, cred)
 	if err != nil {
+		internal.RPCFailed(rpcName, err, internal.Fields{"backend": in.GetType().String()}, time.Since(started))
 		return nil, err
 	}
 	err = ops.Rename(ctx, in.GetOldPath(), in.GetNewPath())
 	if err != nil {
+		internal.RPCFailed(rpcName, err, internal.Fields{
+			"backend":  in.GetType().String(),
+			"old_path": in.GetOldPath(),
+			"new_path": in.GetNewPath(),
+		}, time.Since(started))
 		return nil, err
 	}
 
+	internal.RPCCompleted(rpcName, internal.Fields{
+		"backend":  in.GetType().String(),
+		"old_path": in.GetOldPath(),
+		"new_path": in.GetNewPath(),
+	}, time.Since(started))
 	return &pb.RenameResponse{}, nil
 }
 
 func (s *FileService) Mkdir(ctx context.Context, in *pb.MkdirRequest) (*pb.MkdirResponse, error) {
+	const rpcName = "FileService.Mkdir"
+	started := time.Now()
 	bt := backend.PbTypeToBackendType(in.GetType())
+	internal.RPCReceived(rpcName, internal.Fields{
+		"backend": in.GetType().String(),
+		"path":    in.GetPath(),
+	})
 	if bt == backend.UnknownBackend {
-		return nil, status.Errorf(codes.InvalidArgument, "unsupported endpoint type %s", in.GetType().String())
+		err := status.Errorf(codes.InvalidArgument, "unsupported endpoint type %s", in.GetType().String())
+		internal.RPCRejected(rpcName, err, internal.Fields{"backend": in.GetType().String(), "path": in.GetPath()}, time.Since(started))
+		return nil, err
 	}
 	cred, err := util.ResolveCredentialProto(s.storage, in.GetCredentialRef())
 	if err != nil {
+		internal.RPCRejected(rpcName, err, internal.Fields{"backend": in.GetType().String(), "path": in.GetPath()}, time.Since(started))
 		return nil, err
 	}
 	ops, err := backend.OpsFactory(bt, cred)
 	if err != nil {
+		internal.RPCFailed(rpcName, err, internal.Fields{"backend": in.GetType().String(), "path": in.GetPath()}, time.Since(started))
 		return nil, err
 	}
 	err = ops.Mkdir(ctx, in.GetPath())
 	if err != nil {
+		internal.RPCFailed(rpcName, err, internal.Fields{"backend": in.GetType().String(), "path": in.GetPath()}, time.Since(started))
 		return nil, err
 	}
+	internal.RPCCompleted(rpcName, internal.Fields{"backend": in.GetType().String(), "path": in.GetPath()}, time.Since(started))
 	return &pb.MkdirResponse{}, nil
 }
 
 func (s *FileService) Remove(ctx context.Context, in *pb.RemoveFileRequest) (*pb.RemoveFileResponse, error) {
+	const rpcName = "FileService.Remove"
+	started := time.Now()
 	bt := backend.PbTypeToBackendType(in.GetType())
+	internal.RPCReceived(rpcName, internal.Fields{
+		"backend": in.GetType().String(),
+		"path":    in.GetPath(),
+	})
 
 	cred, err := util.ResolveCredentialProto(s.storage, in.GetCredentialRef())
 	if err != nil {
+		internal.RPCRejected(rpcName, err, internal.Fields{"backend": in.GetType().String(), "path": in.GetPath()}, time.Since(started))
 		return nil, err
 	}
 
 	ops, err := backend.OpsFactory(bt, cred)
 	if err != nil {
+		internal.RPCFailed(rpcName, err, internal.Fields{"backend": in.GetType().String(), "path": in.GetPath()}, time.Since(started))
 		return nil, status.Errorf(codes.Internal, "init backend ops: %v", err)
 	}
 
 	if err := ops.Remove(ctx, in.GetPath()); err != nil {
+		internal.RPCFailed(rpcName, err, internal.Fields{"backend": in.GetType().String(), "path": in.GetPath()}, time.Since(started))
 		return &pb.RemoveFileResponse{Success: false}, status.Errorf(codes.Internal, "remove: %v", err)
 	}
+	internal.RPCCompleted(rpcName, internal.Fields{"backend": in.GetType().String(), "path": in.GetPath()}, time.Since(started))
 	return &pb.RemoveFileResponse{Success: true}, nil
 }
 

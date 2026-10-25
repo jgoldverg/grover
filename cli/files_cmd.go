@@ -52,8 +52,8 @@ func BackendCommand() *cobra.Command {
 		},
 	}
 
-	cmd.PersistentFlags().String("via", "", "Where to execute: auto|client|server")
-	cmd.PersistentFlags().Lookup("via").NoOptDefVal = "auto"
+	cmd.PersistentFlags().String("execution", "", "Where to execute metadata operations: auto|client|server")
+	cmd.PersistentFlags().Lookup("execution").NoOptDefVal = "auto"
 	cmd.AddCommand(listResources())
 	cmd.AddCommand(deleteResource())
 	cmd.AddCommand(mkdirResource())
@@ -363,7 +363,7 @@ func newFileCommandContext(cmd *cobra.Command, endpointType backend.BackendType,
 		return nil, fmt.Errorf("--credential-name or --credential-uuid is required for %s backends", endpointType)
 	}
 
-	policy := resolveRoutePolicy(cmd, appConfig.Route)
+	policy := resolveRoutePolicy(cmd, appConfig.Execution)
 	useRemote := policy == util.RouteForceRemote ||
 		(policy == util.RouteAuto && strings.TrimSpace(appConfig.ServerURL) != "")
 

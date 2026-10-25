@@ -25,6 +25,7 @@ type TransferCollector struct {
 	bytesSent       uint64
 	bytesRetransmit uint64
 	bytesReceived   uint64
+	networkReceived uint64
 	diskReadBytes   uint64
 	diskWriteBytes  uint64
 	packetsSent     uint64
@@ -42,6 +43,7 @@ type TransferSnapshot struct {
 	Elapsed         time.Duration
 	BytesSent       uint64
 	BytesReceived   uint64
+	NetworkReceived uint64
 	DiskReadBytes   uint64
 	DiskWriteBytes  uint64
 	BytesRetransmit uint64
@@ -112,6 +114,19 @@ func (c *TransferCollector) ObserveReceive(bytes int) {
 
 	c.ensureStartTimeLocked()
 	c.bytesReceived += uint64(bytes)
+}
+
+// ObserveNetworkReceive records raw bytes received from the network. For UDP this
+// can exceed goodput when duplicates or out-of-range packets arrive.
+func (c *TransferCollector) ObserveNetworkReceive(bytes int) {
+	if bytes <= 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.ensureStartTimeLocked()
+	c.networkReceived += uint64(bytes)
 }
 
 // ObservePacketSend records a network packet transmission.
@@ -188,17 +203,26 @@ func (c *TransferCollector) Snapshot() TransferSnapshot {
 }
 
 func (c *TransferCollector) buildSnapshotLocked(now time.Time) TransferSnapshot {
-	primaryBytes := c.bytesSent
+	networkBytes := c.bytesSent
+	goodBytes := c.bytesSent
 	retransBytes := c.bytesRetransmit
 	direction := "idle"
 
-	if c.bytesReceived > primaryBytes {
-		primaryBytes = c.bytesReceived
-		retransBytes = 0
+	if c.bytesReceived > goodBytes || c.networkReceived > 0 {
+		goodBytes = c.bytesReceived
+		networkBytes = c.networkReceived
+		if networkBytes < goodBytes {
+			networkBytes = goodBytes
+		}
+		if networkBytes > goodBytes {
+			retransBytes = networkBytes - goodBytes
+		} else {
+			retransBytes = 0
+		}
 		if c.bytesReceived > 0 {
 			direction = "download"
 		}
-	} else if primaryBytes > 0 {
+	} else if goodBytes > 0 {
 		direction = "upload"
 	}
 
@@ -207,12 +231,18 @@ func (c *TransferCollector) buildSnapshotLocked(now time.Time) TransferSnapshot 
 		elapsed = now.Sub(c.startTime)
 	}
 
-	throughput := rateFromBytes(primaryBytes+retransBytes, elapsed)
-	goodput := rateFromBytes(primaryBytes, elapsed)
+	throughput := rateFromBytes(networkBytes+retransBytes, elapsed)
+	if direction == "download" {
+		throughput = rateFromBytes(networkBytes, elapsed)
+	}
+	goodput := rateFromBytes(goodBytes, elapsed)
 
 	var retransRatio float64
-	if primaryBytes+retransBytes > 0 {
-		retransRatio = float64(retransBytes) / float64(primaryBytes+retransBytes)
+	if networkBytes+retransBytes > 0 {
+		retransRatio = float64(retransBytes) / float64(networkBytes+retransBytes)
+		if direction == "download" && networkBytes > 0 {
+			retransRatio = float64(retransBytes) / float64(networkBytes)
+		}
 	}
 
 	txPktRate := rateFromPackets(c.packetsSent, elapsed)
@@ -223,6 +253,7 @@ func (c *TransferCollector) buildSnapshotLocked(now time.Time) TransferSnapshot 
 		Elapsed:         elapsed,
 		BytesSent:       c.bytesSent,
 		BytesReceived:   c.bytesReceived,
+		NetworkReceived: networkBytes,
 		DiskReadBytes:   c.diskReadBytes,
 		DiskWriteBytes:  c.diskWriteBytes,
 		BytesRetransmit: c.bytesRetransmit,
@@ -336,11 +367,20 @@ func (c *TransferCollector) registerMetrics() {
 	))
 	c.registry.MustRegister(makeCounter(
 		"bytes_received_total",
-		"Total bytes received by the client.",
+		"Total accepted payload bytes received by the client.",
 		func() float64 {
 			c.mu.RLock()
 			defer c.mu.RUnlock()
 			return float64(c.bytesReceived)
+		},
+	))
+	c.registry.MustRegister(makeCounter(
+		"network_received_bytes_total",
+		"Total raw network payload bytes received by the client.",
+		func() float64 {
+			c.mu.RLock()
+			defer c.mu.RUnlock()
+			return float64(c.networkReceived)
 		},
 	))
 	c.registry.MustRegister(makeCounter(

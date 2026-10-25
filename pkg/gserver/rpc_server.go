@@ -13,7 +13,6 @@ import (
 
 	"github.com/jgoldverg/grover/backend"
 	"github.com/jgoldverg/grover/internal"
-	udpPb "github.com/jgoldverg/grover/pkg/groverpb/groverudpv1"
 	groverPb "github.com/jgoldverg/grover/pkg/groverpb/groverv1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -28,15 +27,23 @@ type GroverServer struct {
 }
 
 func NewGroverServer(ctx context.Context, serverConfig *internal.ServerConfig) *GroverServer {
-	certs, err := serverConfig.LoadTLSCredentials()
-	if err != nil {
-		internal.Error("failed to load grover certificates", internal.Fields{
-			internal.ServerCertificatePath: serverConfig.ServerCertificatePath,
-			internal.ServerKeyPath:         serverConfig.ServerKeyPath,
-			internal.FieldError:            err.Error(),
-		})
+	var opts []grpc.ServerOption
+	if !serverConfig.InsecureControl {
+		certs, err := serverConfig.LoadTLSCredentials()
+		if err != nil {
+			internal.Error("failed to load grover certificates", internal.Fields{
+				internal.ServerCertificatePath: serverConfig.ServerCertificatePath,
+				internal.ServerKeyPath:         serverConfig.ServerKeyPath,
+				internal.FieldError:            err.Error(),
+			})
+		}
+		if certs != nil {
+			opts = append(opts, grpc.Creds(certs))
+		}
+	} else {
+		internal.Warn("starting control-plane gRPC in insecure mode (no TLS)", nil)
 	}
-	server := grpc.NewServer(grpc.Creds(certs))
+	server := grpc.NewServer(opts...)
 	reflection.Register(server)
 	store, err := backend.NewTomlCredentialStorage(serverConfig.CredentialsFile)
 	if err != nil {
@@ -46,11 +53,28 @@ func NewGroverServer(ctx context.Context, serverConfig *internal.ServerConfig) *
 	}
 	fs, _ := NewFileService(serverConfig)
 	cs := NewCredentialOps(store)
-	udpControl := NewGUdpControl(serverConfig)
+	relayControl, err := NewRelayControlService(serverConfig)
+	if err != nil {
+		internal.Error("failed to initialize relay control service", internal.Fields{
+			internal.FieldError: err.Error(),
+		})
+		relayControl = &RelayControlService{}
+	}
+	routeControl, err := NewRouteConfigControlService(serverConfig)
+	if err != nil {
+		internal.Error("failed to initialize route config service", internal.Fields{
+			internal.FieldError: err.Error(),
+		})
+		routeControl = &RouteConfigControlService{}
+	}
 
 	groverPb.RegisterFileServiceServer(server, fs)
 	groverPb.RegisterCredentialServiceServer(server, cs)
-	udpPb.RegisterTransferControlServer(server, udpControl)
+	groverPb.RegisterRouteConfigControlServer(server, routeControl)
+	groverPb.RegisterRelayControlServer(server, relayControl)
+	groverPb.RegisterRouteSessionControlServer(server, NewRouteSessionControlService())
+	groverPb.RegisterTransferJobControlServer(server, NewTransferJobControlService(serverConfig))
+	groverPb.RegisterJobHistoryControlServer(server, NewJobHistoryControlService(serverConfig))
 
 	return &GroverServer{
 		config:       serverConfig,

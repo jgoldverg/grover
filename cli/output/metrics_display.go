@@ -37,6 +37,15 @@ func NewMetricsDisplay(title string, collector *metrics.TransferCollector) *Metr
 	}
 }
 
+// WithInterval controls how often the live dashboard redraws.
+func (d *MetricsDisplay) WithInterval(interval time.Duration) *MetricsDisplay {
+	if d == nil || interval <= 0 {
+		return d
+	}
+	d.interval = interval
+	return d
+}
+
 // WithWriter allows rendering into an existing writer (e.g. MultiPrinter section).
 func (d *MetricsDisplay) WithWriter(w io.Writer) *MetricsDisplay {
 	d.writer = w
@@ -171,7 +180,8 @@ func (d *MetricsDisplay) tableString(snap metrics.TransferSnapshot) string {
 		{"Retransmissions", fmt.Sprintf("%d (%s)", snap.Retransmissions, formatPercent(snap.RetransmitRate))},
 		{"Retransmitted Bytes", formatBytes(snap.BytesRetransmit)},
 		{"Bytes Sent", formatBytes(snap.BytesSent)},
-		{"Bytes Received", formatBytes(snap.BytesReceived)},
+		{"Good Bytes Received", formatBytes(snap.BytesReceived)},
+		{"Network Bytes Received", formatBytes(snap.NetworkReceived)},
 		{"Disk Read Bytes", formatBytes(snap.DiskReadBytes)},
 		{"Disk Write Bytes", formatBytes(snap.DiskWriteBytes)},
 	}

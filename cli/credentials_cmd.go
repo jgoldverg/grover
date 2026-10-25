@@ -69,7 +69,7 @@ func CredentialCommand() *cobra.Command {
 	// Add persistent flags
 	cmd.PersistentFlags().StringVarP(&commonOpts.URL, "--server-url", "u", "", "Backend URL")
 	cmd.PersistentFlags().StringVarP(&commonOpts.CredentialName, "name", "n", "", "Credential name")
-	cmd.PersistentFlags().String("via", "", "Where to execute: auto|client|server")
+	cmd.PersistentFlags().String("execution", "", "Where to execute metadata operations: auto|client|server")
 
 	// Store subcommand constructors (not instances)
 	cmd.AddCommand(ListCredentialCommand())
@@ -119,7 +119,7 @@ func AddBasicCredentialCommand(commonOpts *AddCredentialOpts) *cobra.Command {
 			}
 
 			cfg := GetAppConfig(cmd)
-			policy := resolveRoutePolicy(cmd, cfg.Route)
+			policy := resolveRoutePolicy(cmd, cfg.Execution)
 			gc := gclient.NewClient(*cfg)
 			err = gc.Initialize(cmd.Context(), policy)
 			if err != nil {
@@ -179,7 +179,7 @@ func AddSShCredentialCommand(commonOpts *AddCredentialOpts) *cobra.Command {
 				return errors.New("Failed in validating SSH credential: " + err.Error())
 			}
 			cfg := GetAppConfig(cmd)
-			policy := resolveRoutePolicy(cmd, cfg.Route)
+			policy := resolveRoutePolicy(cmd, cfg.Execution)
 			gc := gclient.NewClient(*cfg)
 			err = gc.Initialize(cmd.Context(), policy)
 			if err != nil {
@@ -209,7 +209,7 @@ func ListCredentialCommand() *cobra.Command {
 		Short:   "List credentials stored in the credential storage",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := GetAppConfig(cmd)
-			policy := resolveRoutePolicy(cmd, cfg.Route)
+			policy := resolveRoutePolicy(cmd, cfg.Execution)
 			gc := gclient.NewClient(*cfg)
 			err := gc.Initialize(cmd.Context(), policy)
 			if err != nil {
@@ -246,7 +246,7 @@ func DeleteCredentialCommand() *cobra.Command {
 			}
 
 			cfg := GetAppConfig(cmd)
-			policy := resolveRoutePolicy(cmd, cfg.Route)
+			policy := resolveRoutePolicy(cmd, cfg.Execution)
 			gc := gclient.NewClient(*cfg)
 			if err := gc.Initialize(cmd.Context(), policy); err != nil {
 				return err

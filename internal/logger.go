@@ -2,6 +2,8 @@ package internal
 
 import (
 	"fmt"
+	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -15,6 +17,9 @@ type FieldKey string
 const (
 	FieldError            FieldKey = "error"
 	FieldMsg              FieldKey = "message"
+	FieldRPC              FieldKey = "rpc"
+	FieldStage            FieldKey = "stage"
+	FieldElapsedMS        FieldKey = "elapsed_ms"
 	FieldRtt              FieldKey = "rtt"
 	FieldServer           FieldKey = "server"
 	FieldPort             FieldKey = "port"
@@ -100,7 +105,7 @@ func shouldLog(level Level) bool {
 	return level >= getLevel()
 }
 
-func log(level Level, msg string, fields Fields) {
+func log(level Level, msg string, fields Fields, callerSkip int) {
 	if !shouldLog(level) {
 		return
 	}
@@ -109,6 +114,7 @@ func log(level Level, msg string, fields Fields) {
 	logger := baseLogger.WithLevel(pterm.LogLevel(currentLevel))
 	loggerMu.RUnlock()
 
+	msg = callerPrefix(callerSkip) + " " + msg
 	args := makeLoggerArgs(fields)
 
 	switch level {
@@ -125,6 +131,14 @@ func log(level Level, msg string, fields Fields) {
 	default:
 		logger.Info(msg, args)
 	}
+}
+
+func callerPrefix(skip int) string {
+	_, file, line, ok := runtime.Caller(skip)
+	if !ok {
+		return "[unknown:0]"
+	}
+	return fmt.Sprintf("[%s:%d]", filepath.Base(file), line)
 }
 
 func makeLoggerArgs(fields Fields) []pterm.LoggerArgument {
@@ -145,7 +159,47 @@ func makeLoggerArgs(fields Fields) []pterm.LoggerArgument {
 	return args
 }
 
-func Debug(msg string, fields Fields) { log(LevelDebug, msg, fields) }
-func Info(msg string, fields Fields)  { log(LevelInfo, msg, fields) }
-func Warn(msg string, fields Fields)  { log(LevelWarn, msg, fields) }
-func Error(msg string, fields Fields) { log(LevelError, msg, fields) }
+func Debug(msg string, fields Fields) { log(LevelDebug, msg, fields, 3) }
+func Info(msg string, fields Fields)  { log(LevelInfo, msg, fields, 3) }
+func Warn(msg string, fields Fields)  { log(LevelWarn, msg, fields, 3) }
+func Error(msg string, fields Fields) { log(LevelError, msg, fields, 3) }
+
+func RPCReceived(name string, fields Fields) {
+	log(LevelDebug, "rpc received", rpcFields(name, "received", fields, 0, ""), 3)
+}
+
+func RPCCompleted(name string, fields Fields, elapsed time.Duration) {
+	log(LevelDebug, "rpc completed", rpcFields(name, "completed", fields, elapsed, ""), 3)
+}
+
+func RPCRejected(name string, err error, fields Fields, elapsed time.Duration) {
+	log(LevelWarn, "rpc rejected", rpcFields(name, "rejected", fields, elapsed, errorText(err)), 3)
+}
+
+func RPCFailed(name string, err error, fields Fields, elapsed time.Duration) {
+	log(LevelWarn, "rpc failed", rpcFields(name, "failed", fields, elapsed, errorText(err)), 3)
+}
+
+func rpcFields(name, stage string, fields Fields, elapsed time.Duration, errText string) Fields {
+	out := Fields{
+		FieldRPC:   name,
+		FieldStage: stage,
+	}
+	if elapsed > 0 {
+		out[FieldElapsedMS] = elapsed.Milliseconds()
+	}
+	if errText != "" {
+		out[FieldError] = errText
+	}
+	for k, v := range fields {
+		out[k] = v
+	}
+	return out
+}
+
+func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
