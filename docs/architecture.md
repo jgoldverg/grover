@@ -1,190 +1,143 @@
-# Developing Grover
+# Architecture
 
-Grover has one Go module with focused packages. Package imports enforce the
-boundaries below; related implementations stay together instead of having one
-package per interface or file.
+## Layers
 
-## Package map
-
-| Package | Owns | Does not own |
-| --- | --- | --- |
-| `pkg/gserver` | RPC adapters, route/session control, relay forwarding, history queries | Transfer execution and UDP recovery algorithms |
-| `pkg/transfer` | Job scheduling, source planning, file execution, destination reception, progress and recording | RPC registration, relay forwarding |
-| `pkg/udpdataplane` | UDP sender/receiver loops, feedback I/O, congestion, flow control, pacing, socket transport | Files, job scheduling, route configuration |
-| `internal/udpreliability` | Outstanding packet accounting and SACK recovery selection | Sockets, metrics, congestion control |
-| `internal/dataport` | TCP/UDP listener leases and port allocation | Files, jobs, routes |
-| `internal/transferwire` | Existing UDP transfer control envelope and opaque routing key extraction | File execution or relay state |
-| `pkg/udpwire` | Data/status packet formats and receiver SACK tracking | Transfer jobs |
-
-```text
-CLI / gclient --control RPC--> gserver
-                                |
-                                v
-                             transfer -----> udpdataplane -----> udpreliability
-                                |                 |                    |
-                                v                 +------> udpwire <---+
-                             dataport
-
-gserver relay ----------------> dataport
-gserver relay / transfer -----> transferwire (opaque control header)
+```
+grover CLI ──gRPC──> groverd (every node runs every service)
+  internal/cli          internal/server      thin gRPC adapters + logging interceptor
+  internal/orchestrate  internal/routes      route definitions (JSON file)
+  internal/client       internal/session     prepared sessions on the source node
+                        internal/relay       dumb TCP/UDP forwards
+                        internal/transfer    jobs, endpoints, receive side, job logs
+                        internal/udpdataplane reliable UDP streams (SACK, windows)
+                        internal/wire        TCP range framing, UDP control packets
 ```
 
-`pkg/transfer` has no dependency on `gserver`. Neither UDP reliability nor port
-allocation imports a job manager. `internal` packages are repository implementation
-details rather than a promise of a separately supported public library.
+There are two layers, kept strictly apart:
 
-## Trace a transfer job
+1. **Route/session fabric.** Relays and endpoints know addresses, tokens, and
+   byte counters. They never see file names.
+2. **Transfer jobs.** Jobs know files, ranges, progress, and logs. They run over
+   a session (or copy locally) and never create network paths themselves.
 
-1. `gserver.TransferJobControlService` validates/adapts RPC calls and delegates to
-   `transfer.Manager`.
-2. `Manager.StartJob` resolves endpoints and calls the `SourcePlanner` to discover
-   files or synthetic payloads.
-3. The scheduler chooses files according to concurrency and passes a `FilePlan`
-   and `Execution` to the `FileExecutor`.
-4. `ProtocolExecutor` selects local, TCP, or UDP movement. UDP performs its file
-   handshake here, then delegates packet movement to `udpdataplane.Send`.
-5. Destination handlers write incoming streams and report into a separate
-   `destinationReceiver` state owner.
-6. Source progress callbacks update `transferJobRuntime`; snapshots feed history
-   recording. The manager determines the terminal job state.
+The CLI orchestrates across nodes (`internal/orchestrate`) and moves no data.
 
-Route sessions and relay forwards represent the network path. They do not plan
-files or byte ranges. A transfer endpoint owns listeners/reverse connections,
-while a destination receiver owns file reception. These are distinct objects
-even when they live in the same groverd process.
+## Preparing a session
 
-## Where to edit transfer behavior
+`orchestrate.Prepare` creates everything a session needs and records it on the
+route's **source** node. If any step fails, the steps already done are rolled back.
 
-Paths in this table are relative to `pkg/transfer/`.
+**connect-from source** (the source dials):
 
-| Change | Start here | Owner |
-| --- | --- | --- |
-| Job lifecycle | `job_manager.go` | `Manager`, source job map |
-| File concurrency | `scheduler.go` | Manager schedules; runtime tracks each job |
-| Progress and snapshots | `runtime.go` | Per-job mutex, files and streams |
-| Runtime tuning | `tuning.go` | Job settings and validation |
-| Extension interfaces | `contracts.go` | Consumer-owned planner/executor contracts |
-| Execution configuration | `config.go`, `execution.go` | Focused settings and per-file snapshot construction |
-| File/synthetic source discovery | `source.go` | `FilesystemSourcePlanner` |
-| Dispatch and local copying | `executor.go` | `ProtocolExecutor`, `LocalFileExecutor` |
-| TCP sending / receiving | `tcp_sender.go`, `tcp_receiver.go` | `TCPExecutor`, destination receiver |
-| UDP handshake and sending | `udp_sender.go`, `udp_protocol.go` | `UDPExecutor`, transfer wire codec |
-| UDP reception | `udp_receiver.go` | Destination receiver |
-| Listener TTL and reverse connections | `endpoints.go` | Endpoint registry with its own mutex/maps |
-| Destination progress/finalization | `receive_progress.go` | Receiver with its own mutex/map |
-| Job logs | `history.go` | Recorder owns files and serialization |
-| Continuous energy log | `energy.go` | Node logger; manager supplies active job IDs |
-
-Use the package's shorter, qualified names when developing new components:
-
-```go
-manager := transfer.NewManagerWithComponents(config, planner, executor)
-defer manager.Close()
+```
+1. destination.PrepareEndpoint(DESTINATION)   -> listener D + token
+2. relays, last to first: CreateForward(egress = next)  -> ingress
+3. source.CreateSession{data = first ingress (or D), destination token}
+data:  source ──dial──> relay1 ──> relay2 ──> D
 ```
 
-Implement `transfer.SourcePlanner` for discovery or `transfer.FileExecutor` for
-movement. Nil components select defaults. `transfer.ProtocolExecutor` accepts
-independent `Local`, `TCP`, and `UDP` executors; nil fields select defaults.
-Executors use progress callbacks rather than mutating the manager's state.
+**connect-from destination** (the destination dials; for outbound-only nodes):
 
-`Execution` groups values explicitly rather than promoting fields through
-embedding. `Job`, `Paths`, and `Target` describe the transfer; `IO`, `TCP`, and
-`UDP` hold tuning snapshots. `Hooks` holds runtime dependencies, and `Progress`
-holds callbacks. For example:
-
-```go
-execution := transfer.Execution{
-    Job: transfer.JobIdentity{ID: "job-1", RouteID: "route-1"},
-    Paths: transfer.PathConfig{SourceRoot: "/source", DestRoot: "/destination"},
-    IO: transfer.IOConfig{ChunkSizeBytes: 128 * 1024},
-    UDP: transfer.UDPConfig{MTU: 1400, WindowPackets: 4096},
-    Progress: transfer.ProgressCallbacks{
-        OnProgress: func(path string, bytesRead int) { /* record progress */ },
-    },
-}
+```
+1. source.PrepareEndpoint(SOURCE)             -> listener S + token
+2. relays, first to last: CreateForward(egress = next)  -> ingress
+3. destination.PrepareEndpoint(DESTINATION, dial = last ingress, token, N)
+   -> destination keeps N connections open to S, redialing when one drops
+4. source.CreateSession{source endpoint}
+data:  D ──dial──> relayN ──> … ──> S;  bytes then flow S -> D on those connections
 ```
 
-`executionForFile` snapshots tuning under the job lock. Existing execution
-configs do not change when a job is tuned; `Hooks.StreamsPerFile` deliberately
-reads live parallelism for future scheduling. Executors still accept
-`TransferFile(ctx, execution, plan)`, keeping cancellation separate from config.
+Endpoints and forwards have no TTL. They live until `route close`, which deletes
+the session record first (refused while a job is running), then the forwards,
+then the endpoints. Everything is in memory, so a groverd restart drops its
+sessions. Run `route prepare` again afterwards.
 
-Migration from flat execution fields is explicit: `exec.UDPPayload` becomes
-`exec.UDP.MTU`, `exec.DestData` becomes `exec.Target.Data`, and `exec.OnProgress`
-becomes `exec.Progress.OnProgress`. The old gserver type aliases remain, but
-Go callers constructing the old flat struct literals must update their fields.
-The CLI and protobuf APIs are unchanged.
+## Running a job
 
-Receive progress uses `receiveStream` and `receiveResult` records so job/range
-identity is shared between start and completion. UDP handshake code accepts its
-existing typed start packet; packet transmission accepts `packetSendConfig`.
+`TransferControl.StartJob` on the source node:
 
-Existing `gserver.TransferJobManager`, `TransferFilePlan`, constructors, and related
-names remain compatibility aliases/wrappers in `gserver/transfer.go`. New code
-should import `pkg/transfer` directly. The combined `JobExecutor` interface is
-retained for compatibility; planner and executor can be supplied independently.
+1. Plan sources into files (`transfer/plan.go`). Paths are validated so nothing
+   can escape the destination directory.
+2. Claim the session (`session.Store.Claim`). One job per session at a time.
+3. Schedule files with live `concurrency` (`transfer/manager.go`). Each file
+   gets a tuning snapshot and goes to an executor:
+   - **local** – copy on this node.
+   - **tcp** (`tcp_send.go`) – split into `parallelism` ranges. Each range is
+     sent on a pooled, authenticated connection and acknowledged by the
+     destination after `fsync`. Broken connections are retried on a fresh one.
+     Errors the destination reports are not retried.
+   - **udp** (`udp_send.go`) – START → READY handshake on a control socket,
+     one `udpdataplane` stream per range, then START until DONE (the file is
+     synced).
+4. Release resources, then publish the terminal state. A client that sees
+   DONE can immediately start the next job on the session.
 
-## Trace a UDP acknowledgment
+`TuneJob` changes tuning: concurrency applies at once, everything else applies
+to files that start afterwards.
 
-```text
-udpdataplane/sender.go: encode, send, TrackSent
-  -> reliability.go: owns one stream's tracker and recovery policy
-     -> ack.go: coordinate poll/progress/completion behavior
-        -> status_reader.go: deadline, read, peer/stream filter, decode
-        -> udpreliability.Tracker.Acknowledge: remove ACK/SACK coverage
-        -> udpreliability.SACKRecovery: select retransmission indices
-        -> packet_transmitter.go: send selected packets, record metrics
-     -> congestion.go: consume samples, calculate in-flight target
+## Data-plane wire formats (`internal/wire`)
+
+**TCP**, per connection:
+
+```
+dialer → listener   "GRVR" v2 token[16]
+listener → dialer   status byte (0 ok)
+then repeatedly, source → destination:
+   "RNG2" stream u32 | file_size u64 | offset u64 | length u64 |
+   len(job) len(route) len(dest_dir) len(rel_path) u16 each | strings | <length bytes>
+destination → source: status u8 | msg_len u16 | msg
 ```
 
-`AckSeq` acknowledges outstanding sequences up to that value. SACK ranges cover
-additional inclusive ranges. A hole before a higher SACK can trigger fast
-retransmission; the unproven tail waits for timeout. Timeout recovery selects all
-outstanding packets, with the existing retry limit enforced by `ack.go`.
+The destination directory travels with each range, so one prepared session can
+serve any destination path. The token gates every connection, so an
+unauthenticated peer cannot write files.
 
-`udpreliability.Tracker` is a concrete per-stream type, not a socket abstraction.
-`SACKRecovery` only selects indices. The small `recoveryPolicy` interface lives
-in `udpdataplane`, where it is consumed. This keeps policy tests independent of
-network I/O. Borrowed packet slices have documented ownership and lifetime rules.
+**UDP.** Each destination endpoint is one socket with one dispatcher goroutine
+(`udp_recv.go`). It routes datagrams by session key to per-file receivers, so
+many files can be in flight. Control packets (`"GRVRUDP2" kind key …`) are
+START (token, size, stream ids, receiver tuning, destination, path), READY,
+DONE, and ERROR. A repeated START is answered with the session's current state,
+so lost control packets only cost a resend interval. Data and status packets
+are `internal/udpwire`.
 
-`PacketSender` runs both fixed and BBR-like modes. `BBRSender` and `NewBBRSender`
-remain compatibility names. Use `NewPacketSender()` and `sender.Factories` to
-replace reliability, congestion, flow control, or pacing. Factories construct a
-fresh controller for each stream; configure them before concurrent use.
+Relays route UDP replies using only the session key and stream id in headers
+(`wire.RoutingKey`, `udpwire`).
 
-Receiver ingestion remains in `udpdataplane/receiver.go`. ACK coalescing, payload
-buffering, and shared-socket feedback routing have their own concrete components
-in `ack_coalescer.go`, `payload_writer.go`, and `status_demux.go`.
+## UDP reliability (`internal/udpdataplane`)
 
-## Compatibility and remaining coupling
+- **Sender.** Packetize → batch send → track outstanding packets (`Tracker`) →
+  drain status packets → retransmit (`SACKRecovery`).
+  - The flow controller caps in-flight packets/bytes.
+  - The congestion controller (`fixed` or BBR-like) sets the in-flight target.
+  - RTT is sampled from the newest never-retransmitted packet per ACK (Karn's rule).
+  - A packet is not resent again within ~2×SRTT.
+  - A stream fails only after 15 s without any receiver feedback.
+- **Receiver.** One `Receive` for any number of streams of a file.
+  - Writes go through a coalescing writer that writes out-of-order data where it
+    belongs instead of buffering without bound.
+  - ACK cadence is set by `udp_ack_every_packets` / `udp_ack_every_ms`.
+  - After completion: `OnComplete` (fsync + DONE), then a short linger that
+    re-ACKs retransmissions.
 
-CLI commands, RPC schemas, transfer framing, and default transport policy remain
-unchanged. Relays read only the opaque control envelope's routing key through
-`transferwire.RoutingKey`; they do not import the transfer execution package.
+The pieces (reliability, congestion, flow, pacing) are separate interfaces in
+`sender_contracts.go`, so they can be tuned or replaced one at a time.
 
-The execution config now separates protocol tuning but still uses protobuf
-endpoint/state types. History and energy are concrete components within
-`pkg/transfer`. Further separation should follow a specific use case rather than
-introducing a generic services or utilities package.
+## Observability
 
-This is not a new reliability protocol. Feedback still filters by peer/stream
-without adding session-key validation, preserves the existing pre-read RTT
-sampling point, and retransmissions bypass the original-packet pacer. Sequence
-wraparound and stronger loss/finalization policies remain transport work.
+- **Live.** `Job` snapshots (source and destination views), and relay `Forward`
+  stats per hop. Current throughput is sampled by one ticker per node, so watching
+  a job does not change its numbers.
+- **Logs.** `slog` key/value lines. Every RPC is logged by an interceptor: debug
+  on success, warn with code and message on error.
+- **History.** Per-job directories plus a continuous node `energy.csv` (see
+  README), served read-only by `HistoryControl`.
 
-## Tests
+## Known limits and next steps
 
-- `pkg/transfer/components_test.go` uses the public API from `transfer_test`:
-  independent planner/executor composition and protocol dispatch.
-- `pkg/transfer/unit_test.go` covers source planning, path handling, tuning, framing.
-- `pkg/gserver/transfer_job_manager_test.go` retains cross-component direct,
-  reverse, relayed, synthetic, tuning, history, abort, and expiry tests.
-- `internal/udpreliability/tracker_test.go` covers ACK/SACK accounting and recovery.
-- `pkg/udpdataplane/ack_test.go`, `outstanding_packets_test.go`, and
-  `sender_components_test.go` cover feedback I/O, retries, cancellation and injection.
-- `internal/dataport/allocator_test.go` covers listener lease allocation/release.
-- `internal/transferwire/header_test.go` covers opaque relay routing envelopes.
-
-Run `go test ./...`. For ownership and concurrency changes, also run
-`go test -race ./pkg/gserver ./pkg/transfer ./pkg/udpdataplane ./internal/dataport ./internal/udpreliability`.
-Network tests require permission to bind local TCP/UDP sockets.
+- UDP still loses heavily when the first window overruns the receiver (jumbo
+  datagrams, large windows). It recovers, but pacing, a startup window, and
+  receive-queue backpressure are the next tuning work.
+- UDP with `connect-from destination` is not implemented. Routes reject it.
+- Sessions are not persisted. After a groverd restart, run `route prepare` again.
+- Control-plane TLS authenticates the server only. Any client that can reach the
+  control port can drive the node.

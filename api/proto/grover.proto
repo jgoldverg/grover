@@ -1,7 +1,20 @@
 syntax = "proto3";
 
+// Grover control plane.
+//
+// Layering:
+//   RelayControl    - dumb byte/datagram forwards on relay nodes.
+//   RouteControl    - named network paths (source, relays, destination). No file data.
+//   SessionControl  - materialized routes, stored on the route's source node.
+//   TransferControl - data endpoints and transfer jobs.
+//   HistoryControl  - read-only access to on-disk job logs.
+//
+// Conventions: zero values mean "unset" in requests. Every node runs every service.
 package grover.v1;
-option go_package = "github.com/jgoldverg/grover/pkg/groverpb/groverv1;groverv1";
+
+option go_package = "github.com/jgoldverg/grover/internal/pb;pb";
+
+message Empty {}
 
 enum DataProtocol {
   DATA_PROTOCOL_UNSPECIFIED = 0;
@@ -9,15 +22,21 @@ enum DataProtocol {
   DATA_PROTOCOL_UDP = 2;
 }
 
+// ConnectionOrigin says which side dials the data connection. Bytes always flow
+// source -> destination. DESTINATION is for nodes that can only dial outbound.
+enum ConnectionOrigin {
+  CONNECTION_ORIGIN_UNSPECIFIED = 0;
+  CONNECTION_ORIGIN_SOURCE = 1;
+  CONNECTION_ORIGIN_DESTINATION = 2;
+}
+
 enum RuntimeState {
   RUNTIME_STATE_UNSPECIFIED = 0;
-  RUNTIME_STATE_PREPARING = 1;
-  RUNTIME_STATE_READY = 2;
-  RUNTIME_STATE_RUNNING = 3;
-  RUNTIME_STATE_DONE = 4;
-  RUNTIME_STATE_ABORTED = 5;
-  RUNTIME_STATE_FAILED = 6;
-  RUNTIME_STATE_EXPIRED = 7;
+  RUNTIME_STATE_READY = 1;
+  RUNTIME_STATE_RUNNING = 2;
+  RUNTIME_STATE_DONE = 3;
+  RUNTIME_STATE_ABORTED = 4;
+  RUNTIME_STATE_FAILED = 5;
 }
 
 message DataEndpoint {
@@ -25,671 +44,319 @@ message DataEndpoint {
   uint32 port = 2;
 }
 
-message StatsSnapshot {
-  uint64 ingress_bytes = 1;
-  uint64 egress_bytes = 2;
-  uint64 packets = 3;
-  double current_throughput_bps = 4;
-  double average_throughput_bps = 5;
-  uint32 active_connections = 6;
-  uint32 active_streams = 7;
-  uint64 errors = 8;
-  uint64 drops = 9;
-  double latency_ms = 10;
-  int64 sampled_at_unix_nano = 11;
+// Tuning is the single representation of transfer tuning. Zero means "inherit".
+message Tuning {
+  uint32 concurrency = 1;           // files in flight
+  uint32 parallelism = 2;           // streams per file
+  uint64 chunk_size_bytes = 3;      // read/write buffer size
+  uint32 udp_mtu = 4;               // UDP datagram size
+  uint32 udp_window_packets = 5;    // max in-flight packets per UDP stream
+  uint32 udp_batch_packets = 6;     // packets per sendmmsg/recvmmsg
+  uint32 udp_ack_every_packets = 7;
+  uint32 udp_ack_every_ms = 8;
+  uint64 udp_socket_read_bytes = 9;
+  uint64 udp_socket_write_bytes = 10;
+  uint64 udp_write_flush_bytes = 11; // receive-side write coalescing
+  string udp_flow_control = 12;      // fixed | bbr
 }
 
-message ForwardSession {
+message Stats {
+  uint64 bytes_in = 1;
+  uint64 bytes_out = 2;
+  uint64 packets = 3;
+  uint64 errors = 4;
+  uint32 active_connections = 5;
+  double average_bps = 6;
+}
+
+// ---------------------------------------------------------------- relays
+
+message Forward {
   string forward_id = 1;
   string route_id = 2;
-  string job_id = 3;
+  string session_id = 3;
   uint32 hop_index = 4;
   DataProtocol protocol = 5;
   DataEndpoint ingress = 6;
   DataEndpoint egress = 7;
   RuntimeState state = 8;
-  uint32 ttl_seconds = 9;
-  int64 expires_at_unix = 10;
-  StatsSnapshot stats = 11;
-  string error_message = 12;
+  Stats stats = 9;
+  string error = 10;
+  int64 created_at_unix_nano = 11;
 }
 
 message CreateForwardRequest {
   string route_id = 1;
-  string job_id = 2;
+  string session_id = 2;
   uint32 hop_index = 3;
   DataProtocol protocol = 4;
-  DataEndpoint bind = 5;
-  DataEndpoint egress = 6;
-  uint32 ttl_seconds = 7;
+  DataEndpoint egress = 5;
 }
 
-message CreateForwardResponse {
-  ForwardSession forward = 1;
-}
-
-message GetForwardRequest {
-  string forward_id = 1;
-}
-
-message GetForwardResponse {
-  ForwardSession forward = 1;
-}
-
-message ListForwardsRequest {
-  string route_id = 1;
-  string job_id = 2;
-}
-
-message ListForwardsResponse {
-  repeated ForwardSession forwards = 1;
-}
-
-message DeleteForwardRequest {
-  string forward_id = 1;
-}
-
-message DeleteForwardResponse {
-  bool ok = 1;
-}
-
-message RenewForwardRequest {
-  string forward_id = 1;
-  uint32 ttl_seconds = 2;
-}
-
-message RenewForwardResponse {
-  ForwardSession forward = 1;
-}
-
-message StreamForwardStatsRequest {
-  string forward_id = 1;
-  string route_id = 2;
-  string job_id = 3;
-}
+message ForwardRef { string forward_id = 1; }
+message ListForwardsRequest { string route_id = 1; string session_id = 2; }
+message ForwardList { repeated Forward forwards = 1; }
 
 service RelayControl {
-  rpc CreateForward (CreateForwardRequest) returns (CreateForwardResponse);
-  rpc GetForward (GetForwardRequest) returns (GetForwardResponse);
-  rpc ListForwards (ListForwardsRequest) returns (ListForwardsResponse);
-  rpc DeleteForward (DeleteForwardRequest) returns (DeleteForwardResponse);
-  rpc RenewForward (RenewForwardRequest) returns (RenewForwardResponse);
-  rpc StreamForwardStats (StreamForwardStatsRequest) returns (stream ForwardSession);
+  rpc CreateForward(CreateForwardRequest) returns (Forward);
+  rpc GetForward(ForwardRef) returns (Forward);
+  rpc ListForwards(ListForwardsRequest) returns (ForwardList);
+  rpc DeleteForward(ForwardRef) returns (Empty);
 }
 
-enum ConnectionOrigin {
-  CONNECTION_ORIGIN_UNSPECIFIED = 0;
-  CONNECTION_ORIGIN_SOURCE = 1;
-  CONNECTION_ORIGIN_DESTINATION = 2;
-}
+// ---------------------------------------------------------------- routes
 
-enum DataDirection {
-  DATA_DIRECTION_UNSPECIFIED = 0;
-  DATA_DIRECTION_SOURCE_TO_DESTINATION = 1;
-  DATA_DIRECTION_DESTINATION_TO_SOURCE = 2;
-}
-
-message RouteConfig {
+// Route is a named network path. source/destination/via are groverd control
+// addresses (host:port). Routes never carry file paths.
+message Route {
   string name = 1;
   string source = 2;
   string destination = 3;
-  repeated string via = 4;
+  repeated string via = 4; // ordered from source toward destination
   DataProtocol protocol = 5;
-  ConnectionOrigin connection_origin = 6;
-  DataDirection data_direction = 7;
-  int64 created_at_unix_nano = 8;
-  int64 updated_at_unix_nano = 9;
+  ConnectionOrigin connect_from = 6;
+  int64 created_at_unix_nano = 7;
+  int64 updated_at_unix_nano = 8;
 }
 
-message PutRouteRequest {
-  RouteConfig route = 1;
+message RouteRef { string name = 1; }
+message RouteList { repeated Route routes = 1; }
+
+service RouteControl {
+  rpc PutRoute(Route) returns (Route);
+  rpc GetRoute(RouteRef) returns (Route);
+  rpc ListRoutes(Empty) returns (RouteList);
+  rpc DeleteRoute(RouteRef) returns (Empty);
 }
 
-message PutRouteResponse {
-  RouteConfig route = 1;
+// ---------------------------------------------------------------- sessions
+
+enum EndpointRole {
+  ENDPOINT_ROLE_UNSPECIFIED = 0;
+  ENDPOINT_ROLE_SOURCE = 1;
+  ENDPOINT_ROLE_DESTINATION = 2;
 }
 
-message GetRouteRequest {
-  string name = 1;
-}
-
-message GetRouteResponse {
-  RouteConfig route = 1;
-}
-
-message ListRoutesRequest {}
-
-message ListRoutesResponse {
-  repeated RouteConfig routes = 1;
-}
-
-message DeleteRouteRequest {
-  string name = 1;
-}
-
-message DeleteRouteResponse {
-  bool ok = 1;
-}
-
-service RouteConfigControl {
-  rpc PutRoute (PutRouteRequest) returns (PutRouteResponse);
-  rpc GetRoute (GetRouteRequest) returns (GetRouteResponse);
-  rpc ListRoutes (ListRoutesRequest) returns (ListRoutesResponse);
-  rpc DeleteRoute (DeleteRouteRequest) returns (DeleteRouteResponse);
-}
-
-enum TransferEndpointRole {
-  TRANSFER_ENDPOINT_ROLE_UNSPECIFIED = 0;
-  TRANSFER_ENDPOINT_ROLE_SOURCE = 1;
-  TRANSFER_ENDPOINT_ROLE_DESTINATION = 2;
-}
-
+// TransferEndpoint is a prepared data-plane resource on one node.
+//   DESTINATION + origin SOURCE:      listener at `data`; senders dial it.
+//   SOURCE + origin DESTINATION:      listener at `data`; the destination dials it.
+//   DESTINATION + origin DESTINATION: dials `data` and keeps a connection pool open.
+// Every data connection/stream must present `token`.
 message TransferEndpoint {
   string endpoint_id = 1;
-  string route_id = 2;
-  string job_id = 3;
-  TransferEndpointRole role = 4;
+  string session_id = 2;
+  string route_id = 3;
+  EndpointRole role = 4;
   DataProtocol protocol = 5;
-  DataEndpoint data_endpoint = 6;
-  string root_path = 7;
-  uint32 ttl_seconds = 8;
-  int64 expires_at_unix = 9;
-  string session_id = 10;
+  ConnectionOrigin connect_from = 6;
+  DataEndpoint data = 7;
+  bytes token = 8;
+  int64 created_at_unix_nano = 9;
 }
 
-message RouteSessionHop {
-  uint32 hop_index = 1;
-  string node_id = 2;
-  string control_endpoint = 3;
+message Hop {
+  uint32 index = 1;          // 1-based, ordered source -> destination
+  string control = 2;        // relay groverd control address
+  string forward_id = 3;
   DataEndpoint ingress = 4;
   DataEndpoint egress = 5;
-  RuntimeState state = 6;
-  StatsSnapshot stats = 7;
-  string error_message = 8;
 }
 
+// RouteSession is a materialized route. It lives on the route's source node,
+// which uses it to run jobs. `state` and `active_job_id` are computed by the
+// source node: RUNNING while a job is using the session, READY otherwise.
 message RouteSession {
   string session_id = 1;
   string route_id = 2;
-  string job_id = 3;
-  DataProtocol protocol = 4;
-  ConnectionOrigin connection_origin = 5;
-  DataDirection data_direction = 6;
-  TransferEndpoint source = 7;
+  DataProtocol protocol = 3;
+  ConnectionOrigin connect_from = 4;
+  string source_control = 5;
+  string destination_control = 6;
+  TransferEndpoint source = 7;      // set when connect_from = DESTINATION
   TransferEndpoint destination = 8;
-  repeated RouteSessionHop hops = 9;
-  RuntimeState state = 10;
-  StatsSnapshot stats = 11;
-  string error_message = 12;
+  repeated Hop hops = 9;
+  DataEndpoint data = 10;           // where the source sends (origin SOURCE)
+  RuntimeState state = 11;
+  string active_job_id = 12;
   int64 created_at_unix_nano = 13;
-  int64 updated_at_unix_nano = 14;
-  TransferEndpoint reverse_source = 15;
-  TransferEndpoint reverse_destination = 16;
-  repeated RouteSessionHop reverse_hops = 17;
 }
 
-message CreateRouteSessionRequest {
+message SessionRef { string session_id = 1; }
+message ListSessionsRequest { string route_id = 1; }
+message SessionList { repeated RouteSession sessions = 1; }
+
+service SessionControl {
+  rpc CreateSession(RouteSession) returns (RouteSession);
+  rpc GetSession(SessionRef) returns (RouteSession);
+  rpc ListSessions(ListSessionsRequest) returns (SessionList);
+  rpc DeleteSession(SessionRef) returns (Empty);
+}
+
+// ---------------------------------------------------------------- transfers
+
+message PrepareEndpointRequest {
   string session_id = 1;
   string route_id = 2;
-  string job_id = 3;
+  EndpointRole role = 3;
   DataProtocol protocol = 4;
-  ConnectionOrigin connection_origin = 5;
-  DataDirection data_direction = 6;
-  TransferEndpoint source = 7;
-  TransferEndpoint destination = 8;
-  repeated RouteSessionHop hops = 9;
-  TransferEndpoint reverse_source = 10;
-  TransferEndpoint reverse_destination = 11;
-  repeated RouteSessionHop reverse_hops = 12;
+  ConnectionOrigin connect_from = 5;
+  // DESTINATION + origin DESTINATION only: where to dial, the token the
+  // source listener expects, and how many connections to keep open.
+  DataEndpoint dial = 6;
+  bytes token = 7;
+  uint32 connections = 8;
 }
 
-message CreateRouteSessionResponse {
-  RouteSession session = 1;
-}
+message EndpointRef { string endpoint_id = 1; }
 
-message GetRouteSessionRequest {
-  string session_id = 1;
-}
-
-message GetRouteSessionResponse {
-  RouteSession session = 1;
-}
-
-message ListRouteSessionsRequest {
-  string route_id = 1;
-  string job_id = 2;
-}
-
-message ListRouteSessionsResponse {
-  repeated RouteSession sessions = 1;
-}
-
-message DeleteRouteSessionRequest {
-  string session_id = 1;
-}
-
-message DeleteRouteSessionResponse {
-  bool ok = 1;
-}
-
-message AbortRouteSessionRequest {
-  string session_id = 1;
-}
-
-message AbortRouteSessionResponse {
-  RouteSession session = 1;
-}
-
-message UpdateRouteSessionStateRequest {
-  string session_id = 1;
-  RuntimeState state = 2;
-  string error_message = 3;
-}
-
-message UpdateRouteSessionStateResponse {
-  RouteSession session = 1;
-}
-
-message StreamRouteSessionStatsRequest {
-  string session_id = 1;
-  string route_id = 2;
-  string job_id = 3;
-}
-
-service RouteSessionControl {
-  rpc CreateRouteSession (CreateRouteSessionRequest) returns (CreateRouteSessionResponse);
-  rpc GetRouteSession (GetRouteSessionRequest) returns (GetRouteSessionResponse);
-  rpc ListRouteSessions (ListRouteSessionsRequest) returns (ListRouteSessionsResponse);
-  rpc DeleteRouteSession (DeleteRouteSessionRequest) returns (DeleteRouteSessionResponse);
-  rpc AbortRouteSession (AbortRouteSessionRequest) returns (AbortRouteSessionResponse);
-  rpc UpdateRouteSessionState (UpdateRouteSessionStateRequest) returns (UpdateRouteSessionStateResponse);
-  rpc StreamRouteSessionStats (StreamRouteSessionStatsRequest) returns (stream RouteSession);
-}
-
-message TransferStreamState {
+message StreamState {
   uint32 stream_id = 1;
   uint64 offset = 2;
   uint64 size = 3;
   uint64 bytes_done = 4;
   RuntimeState state = 5;
-  uint64 network_bytes = 6;
-  uint64 retransmits = 7;
-  uint64 packets = 8;
-  double current_throughput_bps = 9;
-  double average_throughput_bps = 10;
-  double latency_ms = 11;
-  string error_message = 12;
+  double current_bps = 6;
+  string error = 7;
 }
 
-message TransferFileState {
-  string path = 1;
+message FileState {
+  string source_path = 1;
   string relative_path = 2;
   uint64 size = 3;
   uint64 bytes_done = 4;
   RuntimeState state = 5;
-  string error_message = 6;
-  repeated TransferStreamState streams = 7;
+  string error = 6;
+  repeated StreamState streams = 7;
 }
 
-message TransferJob {
+enum FileView {
+  FILE_VIEW_NONE = 0;
+  FILE_VIEW_ACTIVE = 1; // running and failed files only
+  FILE_VIEW_ALL = 2;
+}
+
+// Job is a transfer job as seen by one node. role SOURCE is the sending job;
+// role DESTINATION is the receive-side view of the same job id.
+message Job {
   string job_id = 1;
   string route_id = 2;
-  RuntimeState state = 3;
-  DataProtocol protocol = 4;
-  TransferEndpoint source = 5;
-  TransferEndpoint destination = 6;
-  uint32 files_in_flight = 7;
-  uint32 streams_per_file = 8;
-  uint64 good_bytes = 9;
-  uint64 network_bytes = 10;
-  uint64 disk_read_bytes = 11;
-  uint64 disk_write_bytes = 12;
-  uint32 files_done = 13;
-  uint32 files_active = 14;
-  uint32 streams_active = 15;
-  uint64 retransmits = 16;
-  repeated TransferFileState files = 17;
-  StatsSnapshot stats = 18;
-  string error_message = 19;
-  string session_id = 20;
-  uint32 concurrency = 21;
-  uint32 parallelism_per_file = 22;
-  uint64 chunk_size_bytes = 23;
-  uint64 tcp_buffer_bytes = 24;
-  uint32 udp_mtu_bytes = 25;
-  uint32 udp_window_packets = 26;
-  uint32 udp_batch_packets = 27;
-  uint32 udp_ack_every_packets = 28;
-  uint32 udp_ack_every_ms = 29;
-  uint64 udp_socket_read_buffer_bytes = 30;
-  uint64 udp_socket_write_buffer_bytes = 31;
-  string udp_flow_control = 32;
+  string session_id = 3;
+  EndpointRole role = 4;
+  RuntimeState state = 5;
+  DataProtocol protocol = 6;
+  string destination = 7;
+  DataEndpoint destination_data = 8;
+  Tuning tuning = 9;
+  uint32 files_total = 10;
+  uint32 files_done = 11;
+  uint32 files_failed = 12;
+  uint32 files_active = 13;
+  uint32 streams_active = 14;
+  uint64 bytes_total = 15;
+  uint64 bytes_done = 16;
+  uint64 network_bytes = 17;
+  uint64 disk_read_bytes = 18;
+  uint64 disk_write_bytes = 19;
+  uint64 retransmits = 20;
+  double current_bps = 21;
+  double average_bps = 22;
+  double rtt_ms = 23;
+  int64 started_at_unix_nano = 24;
+  int64 finished_at_unix_nano = 25;
+  int64 sampled_at_unix_nano = 26;
+  string error = 27;
+  repeated FileState files = 28;
 }
 
-message PrepareTransferEndpointRequest {
-  string route_id = 1;
-  string job_id = 2;
-  TransferEndpointRole role = 3;
-  DataProtocol protocol = 4;
-  string root_path = 5;
-  DataEndpoint bind = 6;
-  uint32 ttl_seconds = 7;
-  ConnectionOrigin connection_origin = 8;
-  string session_id = 9;
+message StartJobRequest {
+  string job_id = 1;          // optional; generated when empty
+  string session_id = 2;      // empty: copy locally on this node
+  repeated string sources = 3; // absolute paths on this node, or synthetic://<bytes>/<rel/path>
+  string destination = 4;     // absolute directory on the destination node
+  Tuning tuning = 5;
 }
 
-message PrepareTransferEndpointResponse {
-  TransferEndpoint endpoint = 1;
+message GetJobRequest { string job_id = 1; FileView files = 2; }
+message ListJobsRequest { string route_id = 1; }
+message JobList { repeated Job jobs = 1; }
+message JobRef { string job_id = 1; }
+message TuneJobRequest { string job_id = 1; Tuning tuning = 2; }
+message WatchJobRequest { string job_id = 1; uint32 interval_ms = 2; FileView files = 3; }
+message DeletePathRequest { string path = 1; }
+
+service TransferControl {
+  rpc PrepareEndpoint(PrepareEndpointRequest) returns (TransferEndpoint);
+  rpc CloseEndpoint(EndpointRef) returns (Empty);
+  rpc StartJob(StartJobRequest) returns (Job);
+  rpc GetJob(GetJobRequest) returns (Job);
+  rpc ListJobs(ListJobsRequest) returns (JobList);
+  rpc AbortJob(JobRef) returns (Job);
+  rpc TuneJob(TuneJobRequest) returns (Job);
+  rpc WatchJob(WatchJobRequest) returns (stream Job);
+  // DeletePath removes one regular file. Used to clean up synthetic schedule output.
+  rpc DeletePath(DeletePathRequest) returns (Empty);
 }
 
-message StartTransferJobRequest {
-  string route_id = 1;
-  string job_id = 2;
-  TransferEndpoint source = 3;
-  TransferEndpoint destination = 4;
-  repeated string paths = 5;
-  uint32 files_in_flight = 6;
-  uint32 streams_per_file = 7;
-  ConnectionOrigin connection_origin = 8;
-  string session_id = 9;
-  uint32 concurrency = 10;
-  uint32 parallelism_per_file = 11;
-  uint64 chunk_size_bytes = 12;
-  uint64 tcp_buffer_bytes = 13;
-  uint32 udp_mtu_bytes = 14;
-  uint32 udp_window_packets = 15;
-  uint32 udp_batch_packets = 16;
-  uint32 udp_ack_every_packets = 17;
-  uint32 udp_ack_every_ms = 18;
-  uint64 udp_socket_read_buffer_bytes = 19;
-  uint64 udp_socket_write_buffer_bytes = 20;
-  string udp_flow_control = 21;
-}
+// ---------------------------------------------------------------- history
 
-message StartTransferJobResponse {
-  TransferJob job = 1;
-}
-
-message GetTransferJobRequest {
-  string job_id = 1;
-}
-
-message GetTransferJobResponse {
-  TransferJob job = 1;
-}
-
-message ListTransferJobsRequest {
-  string route_id = 1;
-}
-
-message ListTransferJobsResponse {
-  repeated TransferJob jobs = 1;
-}
-
-message AbortTransferJobRequest {
-  string job_id = 1;
-}
-
-message AbortTransferJobResponse {
-  TransferJob job = 1;
-}
-
-message UpdateTransferConcurrencyRequest {
-  string job_id = 1;
-  uint32 files_in_flight = 2;
-  uint32 streams_per_file = 3;
-}
-
-message UpdateTransferConcurrencyResponse {
-  TransferJob job = 1;
-}
-
-message UpdateTransferTuningRequest {
-  string job_id = 1;
-  uint32 concurrency = 2;
-  uint32 parallelism_per_file = 3;
-  uint64 chunk_size_bytes = 4;
-  uint64 tcp_buffer_bytes = 5;
-  uint32 udp_mtu_bytes = 6;
-  uint32 udp_window_packets = 7;
-  uint32 udp_batch_packets = 8;
-  uint32 udp_ack_every_packets = 9;
-  uint32 udp_ack_every_ms = 10;
-  uint64 udp_socket_read_buffer_bytes = 11;
-  uint64 udp_socket_write_buffer_bytes = 12;
-  string udp_flow_control = 13;
-}
-
-message UpdateTransferTuningResponse {
-  TransferJob job = 1;
-}
-
-message StreamTransferStatsRequest {
-  string job_id = 1;
-  string route_id = 2;
-}
-
-service TransferJobControl {
-  rpc PrepareTransferEndpoint (PrepareTransferEndpointRequest) returns (PrepareTransferEndpointResponse);
-  rpc StartTransferJob (StartTransferJobRequest) returns (StartTransferJobResponse);
-  rpc GetTransferJob (GetTransferJobRequest) returns (GetTransferJobResponse);
-  rpc ListTransferJobs (ListTransferJobsRequest) returns (ListTransferJobsResponse);
-  rpc AbortTransferJob (AbortTransferJobRequest) returns (AbortTransferJobResponse);
-  rpc UpdateTransferConcurrency (UpdateTransferConcurrencyRequest) returns (UpdateTransferConcurrencyResponse);
-  rpc UpdateTransferTuning (UpdateTransferTuningRequest) returns (UpdateTransferTuningResponse);
-  rpc StreamTransferStats (StreamTransferStatsRequest) returns (stream TransferJob);
-}
-
-message JobHistoryManifest {
-  string job_id = 1;
-  string route_id = 2;
-  string protocol = 3;
-  string source_root = 4;
-  string destination_root = 5;
-  string destination_data = 6;
-  uint32 concurrency = 7;
-  uint32 parallelism_per_file = 8;
-  uint32 files_in_flight = 9;
-  uint32 streams_per_file = 10;
-  uint64 chunk_size_bytes = 11;
-  uint32 total_files = 12;
-  uint64 total_bytes = 13;
-  int64 created_at_unix_nano = 14;
-}
-
-message JobHistoryEntry {
-  string job_id = 1;
-  string route_id = 2;
-  string state = 3;
-  string error_message = 4;
-  uint64 total_bytes = 5;
-  uint64 good_bytes = 6;
-  uint64 network_bytes = 7;
-  int64 created_at_unix_nano = 8;
-  string path = 9;
-  JobHistoryManifest manifest = 10;
-  double duration_seconds = 11;
-  double throughput_mbps = 12;
-  double energy_joules = 13;
-}
-
-message ListJobHistoryRequest {
-  string route_id = 1;
-  int64 since_unix_nano = 2;
-  int64 until_unix_nano = 3;
-  uint32 limit = 4;
-}
-
-message ListJobHistoryResponse {
-  repeated JobHistoryEntry jobs = 1;
-}
-
-message GetJobManifestRequest {
-  string job_id = 1;
-}
-
-message GetJobManifestResponse {
-  JobHistoryManifest manifest = 1;
-}
-
-message GetJobFinalRequest {
-  string job_id = 1;
-}
-
-message GetJobFinalResponse {
-  TransferJob job = 1;
-}
-
-message ListJobSnapshotsRequest {
-  string job_id = 1;
-  int64 since_unix_nano = 2;
-  int64 until_unix_nano = 3;
-  uint32 limit = 4;
-}
-
-message ListJobSnapshotsResponse {
-  repeated TransferJob snapshots = 1;
-}
-
-message ListJobEnergyRequest {
-  string job_id = 1;
-  uint32 limit = 2;
-}
-
-message JobEnergyRecord {
-  string csv = 1;
-}
-
-message ListJobEnergyResponse {
-  string header = 1;
-  repeated JobEnergyRecord records = 2;
-}
-
-service JobHistoryControl {
-  rpc ListJobHistory (ListJobHistoryRequest) returns (ListJobHistoryResponse);
-  rpc GetJobManifest (GetJobManifestRequest) returns (GetJobManifestResponse);
-  rpc GetJobFinal (GetJobFinalRequest) returns (GetJobFinalResponse);
-  rpc ListJobSnapshots (ListJobSnapshotsRequest) returns (ListJobSnapshotsResponse);
-  rpc ListJobEnergy (ListJobEnergyRequest) returns (ListJobEnergyResponse);
-}
-
-enum EndpointType {
-  ENDPOINT_TYPE_UNSPECIFIED = 0;  // default value, must be 0
-  HTTP = 1;
-  LOCAL_FS = 2;
-}
-
-message CredentialRef {
-  oneof ref {
-    string credential_uuid = 1;
-    string credential_name = 2;
-  }
-}
-
-service FileService {
-  rpc List   (ListFilesRequest)   returns (ListFilesResponse);
-  rpc Remove (RemoveFileRequest)  returns (RemoveFileResponse);
-  rpc Mkdir (MkdirRequest) returns (MkdirResponse);
-  rpc Rename (RenameRequest) returns (RenameResponse);
-}
-
-message MkdirRequest {
-  EndpointType type = 1;
-  string path = 2;
-  CredentialRef CredentialRef = 3;
-}
-
-message MkdirResponse {
-
-}
-
-message RenameRequest {
-  EndpointType type = 1;
-  string oldPath = 2;
-  string newPath = 3;
-  CredentialRef credentialRef = 4;
-}
-
-message RenameResponse {
-
-}
-message FileInfo {
-  string path = 1;
-  string id = 2;
+message ManifestFile {
+  string source_path = 1;
+  string relative_path = 2;
   uint64 size = 3;
 }
 
-message ListFilesRequest {
-  EndpointType type = 1;
-  string       path = 2;
-  CredentialRef credential_ref = 3; // optional for localfs; required for some remote backends
+// Manifest is written to <job_log_dir>/<job>/manifest.json when a job starts.
+message Manifest {
+  string job_id = 1;
+  string route_id = 2;
+  string session_id = 3;
+  EndpointRole role = 4;
+  DataProtocol protocol = 5;
+  string destination = 6;
+  Tuning tuning = 7;
+  uint32 files_total = 8;
+  uint64 bytes_total = 9;
+  int64 created_at_unix_nano = 10;
+  repeated ManifestFile files = 11;
 }
 
-message ListFilesResponse {
-  repeated FileInfo files = 1;
+message HistoryEntry {
+  string job_id = 1;
+  string route_id = 2;
+  EndpointRole role = 3;
+  RuntimeState state = 4;
+  string error = 5;
+  uint64 bytes_total = 6;
+  uint64 bytes_done = 7;
+  int64 started_at_unix_nano = 8;
+  double duration_seconds = 9;
+  double throughput_bps = 10;
+  double energy_joules = 11;
+  string dir = 12;
 }
 
-message RemoveFileRequest {
-  EndpointType type = 1;
-  string       path = 2;
-  CredentialRef credential_ref = 3; // may be required depending on backend
+message ListHistoryRequest {
+  string route_id = 1;
+  int64 since_unix_nano = 2;
+  int64 until_unix_nano = 3;
+  uint32 limit = 4;
+}
+message HistoryList { repeated HistoryEntry jobs = 1; }
+
+message HistoryRef { string job_id = 1; EndpointRole role = 2; }
+message HistoryRecord {
+  HistoryEntry entry = 1;
+  Manifest manifest = 2;
+  Job final = 3;
 }
 
-message RemoveFileResponse {
-  bool success = 1;
+message ListSnapshotsRequest { string job_id = 1; EndpointRole role = 2; uint32 limit = 3; }
+message EnergyRequest { string job_id = 1; EndpointRole role = 2; uint32 limit = 3; }
+message EnergyCSV { string header = 1; repeated string rows = 2; }
+
+service HistoryControl {
+  rpc ListHistory(ListHistoryRequest) returns (HistoryList);
+  rpc GetHistory(HistoryRef) returns (HistoryRecord);
+  rpc ListSnapshots(ListSnapshotsRequest) returns (JobList);
+  rpc GetEnergy(EnergyRequest) returns (EnergyCSV);
 }
-
-service CredentialService {
-  rpc Create (CreateCredentialRequest)  returns (CreateCredentialResponse);
-  rpc Get    (GetCredentialRequest)     returns (GetCredentialResponse);
-  rpc List   (ListCredentialsRequest)   returns (ListCredentialsResponse);
-  rpc Delete (DeleteCredentialRequest)  returns (DeleteCredentialResponse);
-}
-
-enum CredentialType {
-  CREDENTIAL_TYPE_UNSPECIFIED = 0;
-  SSH_CREDENTIAL_TYPE = 1;
-  BASIC_CREDENTIAL_TYPE = 2;
-}
-
-// Full credential (includes secrets by design).
-message Credential {
-  string         credential_uuid = 1;
-  string         credential_name = 2;
-  CredentialType type = 3;
-
-  oneof details {
-    BasicDetails basic = 10; // for BASIC
-    SshDetails   ssh = 11; // for SSH
-  }
-}
-
-message BasicDetails {
-  string username = 1;
-  string password = 2; // secret
-  string url = 3;
-}
-
-message SshDetails {
-  string username = 1;
-  string host = 2;
-  int32  port = 3;
-  string public_key = 4;
-  string private_key = 5; // secret
-  bool   use_agent = 6;
-}
-
-message CreateCredentialRequest  {Credential   credential = 1;}
-message CreateCredentialResponse {}
-
-message GetCredentialRequest     {CredentialRef ref = 1;}
-message GetCredentialResponse    {Credential   credential = 1;}
-
-message ListCredentialsRequest   {CredentialType type = 1;}
-message ListCredentialsResponse  {
-  repeated Credential credentials = 1;
-  string             next_page_token = 2;
-}
-
-message DeleteCredentialRequest  {CredentialRef ref = 1;}
-message DeleteCredentialResponse {}

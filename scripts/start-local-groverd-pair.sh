@@ -4,7 +4,6 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN_DIR="$ROOT_DIR/bin"
 STATE_DIR="${STATE_DIR:-$ROOT_DIR/.grover-local}"
-PROTOCOL="${1:-${PROTOCOL:-udp}}"
 ROLE="${ROLE:-both}"
 
 SOURCE_PORT="${SOURCE_PORT:-22444}"
@@ -16,10 +15,6 @@ DEST_DATA_MAX="${DEST_DATA_MAX:-30199}"
 DATA_ADVERTISE_HOST="${DATA_ADVERTISE_HOST:-127.0.0.1}"
 DATA_BIND_HOST="${DATA_BIND_HOST:-127.0.0.1}"
 
-case "$PROTOCOL" in
-  tcp|udp) ;;
-  *) echo "protocol must be tcp or udp" >&2; exit 2 ;;
-esac
 case "$ROLE" in
   source|dest|both) ;;
   *) echo "ROLE must be source, dest, or both" >&2; exit 2 ;;
@@ -27,19 +22,13 @@ esac
 
 mkdir -p "$BIN_DIR" "$STATE_DIR"
 
-if [[ ! -x "$BIN_DIR/groverd" ]]; then
-  (cd "$ROOT_DIR" && go build -o "$BIN_DIR/groverd" ./cmd/groverd)
-fi
-if [[ ! -x "$BIN_DIR/grover" ]]; then
-  (cd "$ROOT_DIR" && go build -o "$BIN_DIR/grover" ./cmd/grover)
-fi
+(cd "$ROOT_DIR" && make build >/dev/null)
 
 start_one() {
   local name="$1"
   local port="$2"
   local data_min="$3"
   local data_max="$4"
-  local cred_file="$STATE_DIR/$name-credentials.toml"
   local log_file="$STATE_DIR/$name.log"
   local pid_file="$STATE_DIR/$name.pid"
 
@@ -48,18 +37,16 @@ start_one() {
     return
   fi
 
-  printf '[credentials]\n' > "$cred_file"
-
   "$BIN_DIR/groverd" \
     --port="$port" \
-    --protocol="$PROTOCOL" \
     --insecure-control \
-    --log-level=warn \
+    --log-level=info \
     --data-bind-host="$DATA_BIND_HOST" \
     --data-advertise-host="$DATA_ADVERTISE_HOST" \
     --data-port-min="$data_min" \
     --data-port-max="$data_max" \
-    --credentials-file="$cred_file" \
+    --job-log-dir="$STATE_DIR/$name-jobs" \
+    --route-store-file="$STATE_DIR/$name-routes.json" \
     --udp-mtu="${UDP_MTU:-8972}" \
     --udp-window-packets="${UDP_WINDOW_PACKETS:-65536}" \
     --udp-batch-packets="${UDP_BATCH_PACKETS:-64}" \
@@ -86,7 +73,9 @@ cat <<EOF
 Stop them with:
   kill \$(cat "$STATE_DIR"/*.pid)
 
-Local test endpoints:
-  source: 127.0.0.1:$SOURCE_PORT:$HOME/data/grover-src/file-128m.bin
-  dest:   127.0.0.1:$DEST_PORT:$HOME/data/grover-dst/file-128m.bin
+Point the CLI at them:
+  bin/grover profile set src --server 127.0.0.1:$SOURCE_PORT --insecure-control
+  bin/grover profile set dst --server 127.0.0.1:$DEST_PORT --insecure-control
+  bin/grover transfer src:\$HOME/data/file.bin dst:/tmp/grover-dst/
+  bin/grover transfer --protocol udp src:synthetic://1073741824/1g.bin dst:/tmp/grover-dst/
 EOF

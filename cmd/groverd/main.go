@@ -1,224 +1,101 @@
+// Command groverd is the Grover node daemon: it serves the control API and
+// moves data for transfer jobs and relay forwards.
 package main
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
-	"github.com/jgoldverg/grover/internal"
-	"github.com/jgoldverg/grover/pkg/energy"
-	gs "github.com/jgoldverg/grover/pkg/gserver"
 	"github.com/spf13/pflag"
+
+	"github.com/jgoldverg/grover/internal/config"
+	"github.com/jgoldverg/grover/internal/energy"
+	"github.com/jgoldverg/grover/internal/logging"
+	"github.com/jgoldverg/grover/internal/server"
 )
 
 func main() {
-	var (
-		configPath      string
-		serverConfig    string
-		port            int
-		protocol        string
-		insecureControl bool
-		credentialsFile string
-		logLevel        string
-		certFile        string
-		keyFile         string
-		dataBindHost    string
-		dataAdvertise   string
-		dataPortMin     int
-		dataPortMax     int
-		routeStoreFile  string
-		jobLogDir       string
-		energyMonitor   bool
-		energySampleMs  int
-		udpMTU          int
-		udpFlowControl  string
-		udpWindow       int
-		udpAckPackets   int
-		udpAckMs        int
-		udpBatchPackets int
-		udpWriteFlush   int
-		udpReadBuffer   int
-		udpWriteBuffer  int
-	)
-	flags := pflag.NewFlagSet("groverd", pflag.ContinueOnError)
-	flags.SortFlags = false
-	flags.SetOutput(os.Stderr)
-	flags.StringVar(&configPath, "config", "", "Path to server config file (TOML)")
-	flags.StringVar(&serverConfig, "server-config", "", "Path to server config file (TOML)")
-	flags.IntVar(&port, "port", 0, "gRPC control-plane listen port")
-	flags.StringVar(&protocol, "protocol", "", "Transfer data-plane protocol (udp|tcp)")
-	flags.BoolVar(&insecureControl, "insecure-control", false, "Start gRPC control-plane without TLS")
-	flags.StringVar(&credentialsFile, "credentials-file", "", "Path to credential store file")
-	flags.StringVar(&logLevel, "log-level", "", "Log level")
-	flags.StringVar(&certFile, "server-cert", "", "Path to TLS certificate PEM")
-	flags.StringVar(&keyFile, "server-key", "", "Path to TLS private key PEM")
-	flags.StringVar(&dataBindHost, "data-bind-host", "", "Data-plane bind host")
-	flags.StringVar(&dataAdvertise, "data-advertise-host", "", "Data-plane advertised host")
-	flags.IntVar(&dataPortMin, "data-port-min", 0, "Minimum server-allocated data-plane port (0 uses OS ephemeral ports)")
-	flags.IntVar(&dataPortMax, "data-port-max", 0, "Maximum server-allocated data-plane port (0 uses OS ephemeral ports)")
-	flags.StringVar(&routeStoreFile, "route-store-file", "", "Path to server route JSON file")
-	flags.StringVar(&jobLogDir, "job-log-dir", "", "Directory for historical transfer job logs")
-	flags.BoolVar(&energyMonitor, "energy-monitor", false, "Enable per-job Intel RAPL energy capture; server startup fails if RAPL is unavailable")
-	flags.IntVar(&energySampleMs, "energy-sample-ms", 0, "Per-job energy sampling interval in milliseconds")
-	flags.IntVar(&udpMTU, "udp-mtu", 0, "UDP datagram MTU for server-sent transfers")
-	flags.StringVar(&udpFlowControl, "udp-flow-control", "", "UDP flow-control mode for server-sent transfers (fixed|bbr)")
-	flags.IntVar(&udpWindow, "udp-window-packets", 0, "UDP max in-flight packets per stream for server-sent transfers")
-	flags.IntVar(&udpAckPackets, "udp-ack-every-packets", 0, "UDP ACK every N packets for server receive path")
-	flags.IntVar(&udpAckMs, "udp-ack-every-ms", 0, "UDP ACK interval in milliseconds for server receive path")
-	flags.IntVar(&udpBatchPackets, "udp-batch-packets", 0, "UDP packets per kernel batch call")
-	flags.IntVar(&udpWriteFlush, "udp-write-flush-bytes", 0, "UDP receive bytes to coalesce before filesystem WriteAt")
-	flags.IntVar(&udpReadBuffer, "udp-read-buffer", 0, "UDP socket read buffer bytes")
-	flags.IntVar(&udpWriteBuffer, "udp-write-buffer", 0, "UDP socket write buffer bytes")
-	if err := flags.Parse(os.Args[1:]); err != nil {
+	if err := run(os.Args[1:]); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
-			os.Exit(0)
+			return
 		}
-		os.Exit(2)
+		fmt.Fprintln(os.Stderr, "groverd:", err)
+		os.Exit(1)
 	}
-	if strings.TrimSpace(serverConfig) != "" {
-		configPath = serverConfig
-	}
+}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+func run(args []string) error {
+	// Find --config first so the file's values become the flag defaults.
+	pre := pflag.NewFlagSet("groverd", pflag.ContinueOnError)
+	pre.ParseErrorsWhitelist.UnknownFlags = true
+	pre.Usage = func() {}
+	configPath := pre.String("config", "", "")
+	_ = pre.Parse(args)
 
-	// Setup signal handling
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
-	// Start server
-	cfg, err := internal.LoadServerConfig(configPath)
+	cfg, err := config.LoadServer(*configPath)
 	if err != nil {
-		internal.Error("failed to load server config", internal.Fields{
-			internal.FieldError: err.Error(),
-		})
-		return
+		return err
 	}
-	if port != 0 {
-		cfg.Port = port
+	fs := pflag.NewFlagSet("groverd", pflag.ContinueOnError)
+	fs.SortFlags = false
+	fs.String("config", "", "server config TOML (default ~/.grover/server_config.toml)")
+	fs.IntVar(&cfg.Port, "port", cfg.Port, "gRPC control port")
+	fs.BoolVar(&cfg.InsecureControl, "insecure-control", cfg.InsecureControl, "serve the control API without TLS")
+	fs.StringVar(&cfg.CertFile, "server-cert", cfg.CertFile, "TLS certificate PEM")
+	fs.StringVar(&cfg.KeyFile, "server-key", cfg.KeyFile, "TLS private key PEM")
+	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "debug|info|warn|error")
+	fs.StringVar(&cfg.LogFormat, "log-format", cfg.LogFormat, "text|json")
+	fs.StringVar(&cfg.DataBindHost, "data-bind-host", cfg.DataBindHost, "address data sockets bind to")
+	fs.StringVar(&cfg.DataAdvertiseHost, "data-advertise-host", cfg.DataAdvertiseHost, "address peers dial for data (must be reachable from other nodes)")
+	fs.IntVar(&cfg.DataPortMin, "data-port-min", cfg.DataPortMin, "lowest data port (0 = OS ephemeral ports)")
+	fs.IntVar(&cfg.DataPortMax, "data-port-max", cfg.DataPortMax, "highest data port")
+	fs.StringVar(&cfg.RouteStoreFile, "route-store-file", cfg.RouteStoreFile, "route definitions JSON")
+	fs.StringVar(&cfg.JobLogDir, "job-log-dir", cfg.JobLogDir, "job log directory (empty disables job logs)")
+	fs.BoolVar(&cfg.EnergyMonitor, "energy-monitor", cfg.EnergyMonitor, "sample Intel RAPL energy; startup fails if unavailable")
+	fs.IntVar(&cfg.EnergySampleMs, "energy-sample-ms", cfg.EnergySampleMs, "energy sampling interval in ms")
+	t := &cfg.Tuning
+	fs.Uint32Var(&t.Concurrency, "concurrency", t.Concurrency, "default files in flight per job")
+	fs.Uint32Var(&t.Parallelism, "parallelism", t.Parallelism, "default streams per file")
+	fs.Uint64Var(&t.ChunkSizeBytes, "chunk-size-bytes", t.ChunkSizeBytes, "default read/write buffer size")
+	fs.Uint32Var(&t.UDPMTU, "udp-mtu", t.UDPMTU, "default UDP datagram size")
+	fs.StringVar(&t.UDPFlowControl, "udp-flow-control", t.UDPFlowControl, "default UDP flow control: fixed|bbr")
+	fs.Uint32Var(&t.UDPWindowPackets, "udp-window-packets", t.UDPWindowPackets, "default UDP in-flight packets per stream")
+	fs.Uint32Var(&t.UDPBatchPackets, "udp-batch-packets", t.UDPBatchPackets, "UDP packets per sendmmsg/recvmmsg")
+	fs.Uint32Var(&t.UDPAckEveryPackets, "udp-ack-every-packets", t.UDPAckEveryPackets, "default UDP ACK every N packets")
+	fs.Uint32Var(&t.UDPAckEveryMs, "udp-ack-every-ms", t.UDPAckEveryMs, "default UDP ACK interval in ms")
+	fs.Uint64Var(&t.UDPWriteFlushBytes, "udp-write-flush-bytes", t.UDPWriteFlushBytes, "default UDP receive write coalescing")
+	fs.Uint64Var(&t.UDPSocketRead, "udp-read-buffer", t.UDPSocketRead, "UDP socket receive buffer bytes")
+	fs.Uint64Var(&t.UDPSocketWrite, "udp-write-buffer", t.UDPSocketWrite, "UDP socket send buffer bytes")
+	if err := fs.Parse(args); err != nil {
+		return err
 	}
-	if strings.TrimSpace(protocol) != "" {
-		p := strings.ToLower(strings.TrimSpace(protocol))
-		if p != "udp" && p != "tcp" {
-			fmt.Fprintf(os.Stderr, "invalid --protocol %q: must be udp or tcp\n", protocol)
-			os.Exit(2)
-		}
-		cfg.TransferProtocol = p
+	if err := cfg.Validate(); err != nil {
+		return err
 	}
-	if insecureControl {
-		cfg.InsecureControl = true
+	if err := logging.Setup(cfg.LogLevel, cfg.LogFormat, os.Stderr); err != nil {
+		return err
 	}
-	if strings.TrimSpace(credentialsFile) != "" {
-		cfg.CredentialsFile = credentialsFile
-	}
-	if strings.TrimSpace(logLevel) != "" {
-		cfg.LogLevel = logLevel
-	}
-	if strings.TrimSpace(certFile) != "" {
-		cfg.ServerCertificatePath = certFile
-	}
-	if strings.TrimSpace(keyFile) != "" {
-		cfg.ServerKeyPath = keyFile
-	}
-	if strings.TrimSpace(dataBindHost) != "" {
-		cfg.DataBindHost = dataBindHost
-	}
-	if strings.TrimSpace(dataAdvertise) != "" {
-		cfg.DataAdvertiseHost = dataAdvertise
-	}
-	if dataPortMin != 0 {
-		cfg.DataPortMin = dataPortMin
-	}
-	if dataPortMax != 0 {
-		cfg.DataPortMax = dataPortMax
-	}
-	if strings.TrimSpace(routeStoreFile) != "" {
-		cfg.RouteStoreFile = routeStoreFile
-	}
-	if strings.TrimSpace(jobLogDir) != "" {
-		cfg.JobLogDir = jobLogDir
-	}
-	if flags.Changed("energy-monitor") {
-		cfg.EnergyMonitor = energyMonitor
-	}
-	if energySampleMs > 0 {
-		cfg.EnergySampleMs = energySampleMs
-	}
-	if udpMTU > 0 {
-		cfg.UDPMTUSize = udpMTU
-	}
-	if strings.TrimSpace(udpFlowControl) != "" {
-		mode := strings.ToLower(strings.TrimSpace(udpFlowControl))
-		if mode != "fixed" && mode != "bbr" {
-			fmt.Fprintf(os.Stderr, "invalid --udp-flow-control %q: must be fixed or bbr\n", udpFlowControl)
-			os.Exit(2)
-		}
-		cfg.UDPFlowControl = mode
-	}
-	if udpWindow > 0 {
-		cfg.UDPWindowPackets = udpWindow
-	}
-	if udpAckPackets > 0 {
-		cfg.UDPAckEveryPackets = udpAckPackets
-	}
-	if udpAckMs > 0 {
-		cfg.UDPAckEveryMs = udpAckMs
-	}
-	if udpBatchPackets > 0 {
-		cfg.UDPBatchPackets = udpBatchPackets
-	}
-	if udpWriteFlush > 0 {
-		cfg.UDPWriteFlushBytes = udpWriteFlush
-	}
-	if udpReadBuffer > 0 {
-		cfg.UDPReadBufferSize = udpReadBuffer
-	}
-	if udpWriteBuffer > 0 {
-		cfg.UDPWriteBufferSize = udpWriteBuffer
-	}
-	if err := internal.ConfigureLogger(cfg.LogLevel); err != nil {
-		internal.Warn("invalid log level in server config, defaulting to info", internal.Fields{
-			internal.FieldError: err.Error(),
-		})
-	}
-	if cfg.EnergyMonitor {
-		monitor, err := energy.NewRAPLMonitor("")
-		if err != nil {
-			internal.Error("energy monitor requested but unavailable", internal.Fields{
-				internal.FieldError: err.Error(),
-			})
-			os.Exit(1)
-		}
-		internal.Info("energy monitor enabled", internal.Fields{
-			"domains":          len(monitor.Domains()),
-			"sample_interval":  cfg.EnergySampleMs,
-			"job_log_dir":      cfg.JobLogDir,
-			"powercap_backend": "rapl",
-		})
-	}
-	server := gs.NewGroverServer(ctx, cfg)
-	go func() {
-		if err := server.StartServer(ctx); err != nil {
-			internal.Error("grover server exited with error", internal.Fields{
-				internal.FieldError: err.Error(),
-			})
-			cancel()
-		}
-	}()
 
-	// Wait for shutdown signal
-	select {
-	case <-ctx.Done():
-		internal.Info("context cancelled - shutting down", nil)
-	case sig := <-sigChan:
-		internal.Info("received shutdown signal", internal.Fields{
-			"signal": sig.String(),
-		})
-		cancel()
+	var monitor *energy.RAPLMonitor
+	if cfg.EnergyMonitor {
+		if monitor, err = energy.NewRAPLMonitor(""); err != nil {
+			return fmt.Errorf("--energy-monitor: %w", err)
+		}
+		if cfg.JobLogDir == "" {
+			return errors.New("--energy-monitor needs --job-log-dir to write energy.csv")
+		}
+		slog.Info("energy monitor on", "domains", len(monitor.Domains()), "sample_ms", cfg.EnergySampleMs)
 	}
-	internal.Info("grover-server shutdown complete", nil)
+	srv, err := server.New(cfg, monitor)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return srv.Run(ctx)
 }
