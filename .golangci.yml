@@ -1,0 +1,9 @@
+version: "2"
+linters:
+  enable:
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+  disable:
+    - errcheck # deferred Close() noise; real write/sync errors are checked explicitly

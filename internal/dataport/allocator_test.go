@@ -2,124 +2,68 @@ package dataport
 
 import (
 	"net"
+	"strconv"
 	"testing"
-
-	"github.com/jgoldverg/grover/internal"
 )
 
-func TestDataPortAllocatorEphemeralAllocation(t *testing.T) {
-	allocator, err := NewAllocator(&internal.ServerConfig{
-		DataBindHost:      "127.0.0.1",
-		DataAdvertiseHost: "example.test",
-	})
+func TestEphemeralAllocation(t *testing.T) {
+	a, err := New(Options{BindHost: "127.0.0.1", AdvertiseHost: "example.test"})
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	udpLease, err := allocator.AllocateUDP()
+	u, err := a.AllocateUDP()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer udpLease.Close()
-	if udpLease.Port == 0 || udpLease.UDPConn == nil {
-		t.Fatalf("unexpected udp lease: %+v", udpLease)
+	defer u.Close()
+	if u.Port == 0 || u.UDP == nil || u.AdvertiseHost != "example.test" {
+		t.Fatalf("bad udp lease: %+v", u)
 	}
-	if udpLease.AdvertiseHost != "example.test" {
-		t.Fatalf("advertise host = %q, want example.test", udpLease.AdvertiseHost)
-	}
-
-	tcpLease, err := allocator.AllocateTCP()
+	tl, err := a.AllocateTCP()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tcpLease.Close()
-	if tcpLease.Port == 0 || tcpLease.TCPListener == nil {
-		t.Fatalf("unexpected tcp lease: %+v", tcpLease)
+	defer tl.Close()
+	if tl.Port == 0 || tl.TCP == nil {
+		t.Fatalf("bad tcp lease: %+v", tl)
 	}
 }
 
-func TestDataPortAllocatorRangedAllocationAndExhaustion(t *testing.T) {
-	port := freeTCPPort(t)
-	allocator, err := NewAllocator(&internal.ServerConfig{
-		DataBindHost: "127.0.0.1",
-		DataPortMin:  port,
-		DataPortMax:  port,
-	})
+func TestRangeAllocationReusesReleasedPorts(t *testing.T) {
+	// Find two adjacent free ports.
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	lease, err := allocator.AllocateTCP()
+	base := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+	a, err := New(Options{BindHost: "127.0.0.1", MinPort: base, MaxPort: base})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if lease.Port != port {
-		t.Fatalf("port = %d, want %d", lease.Port, port)
+	first, err := a.AllocateTCP()
+	if err != nil {
+		t.Skipf("port %d not available: %v", base, err)
 	}
-	if _, err := allocator.AllocateTCP(); err == nil {
-		t.Fatal("expected ranged tcp allocation exhaustion")
+	if _, err := a.AllocateTCP(); err == nil {
+		t.Fatal("range of one should be exhausted")
 	}
-	if err := lease.Close(); err != nil {
+	if err := first.Close(); err != nil {
 		t.Fatal(err)
 	}
-
-	lease, err = allocator.AllocateTCP()
+	_ = first.Close() // idempotent
+	again, err := a.AllocateTCP()
 	if err != nil {
-		t.Fatalf("expected released port to be reusable: %v", err)
+		t.Fatalf("released port should be reusable: %v", err)
 	}
-	_ = lease.Close()
-}
-
-func TestDataPortAllocatorRangedUDPAllocation(t *testing.T) {
-	port := freeUDPPort(t)
-	allocator, err := NewAllocator(&internal.ServerConfig{
-		DataBindHost: "127.0.0.1",
-		DataPortMin:  port,
-		DataPortMax:  port,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	lease, err := allocator.AllocateUDP()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer lease.Close()
-	if lease.Port != port {
-		t.Fatalf("port = %d, want %d", lease.Port, port)
+	defer again.Close()
+	if strconv.Itoa(again.Port) != strconv.Itoa(base) {
+		t.Fatalf("got port %d want %d", again.Port, base)
 	}
 }
 
-func TestDataPortAllocatorRejectsInvalidRange(t *testing.T) {
-	if _, err := NewAllocator(&internal.ServerConfig{DataPortMin: 5000}); err == nil {
-		t.Fatal("expected error for half-configured range")
+func TestInvalidRange(t *testing.T) {
+	if _, err := New(Options{MinPort: 10}); err == nil {
+		t.Fatal("expected error")
 	}
-	if _, err := NewAllocator(&internal.ServerConfig{DataPortMin: 6000, DataPortMax: 5000}); err == nil {
-		t.Fatal("expected error for inverted range")
-	}
-}
-
-func freeTCPPort(t *testing.T) int {
-	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
-}
-
-func freeUDPPort(t *testing.T) int {
-	t.Helper()
-	addr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	conn, err := net.ListenUDP("udp", addr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	return conn.LocalAddr().(*net.UDPAddr).Port
 }

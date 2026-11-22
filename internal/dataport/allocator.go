@@ -1,167 +1,131 @@
+// Package dataport hands out TCP listeners and UDP sockets for the data plane.
+// Leases come from [min,max] when a range is configured (so firewalls can be
+// opened for a known range), otherwise from OS ephemeral ports. It has no job
+// or file semantics; transfer endpoints and relay forwards both use it.
 package dataport
 
 import (
-	"errors"
 	"fmt"
 	"net"
-	"strings"
+	"strconv"
 	"sync"
 
-	"github.com/jgoldverg/grover/internal"
+	"github.com/jgoldverg/grover/internal/config"
 )
 
-type Allocator struct {
-	mu            sync.Mutex
-	bindHost      string
-	advertiseHost string
-	minPort       int
-	maxPort       int
-	inUse         map[int]struct{}
+// Options configures an Allocator.
+type Options struct {
+	BindHost      string // local address to bind, e.g. 0.0.0.0
+	AdvertiseHost string // address peers should dial
+	MinPort       int    // 0,0 means OS ephemeral ports
+	MaxPort       int
 }
 
+type Allocator struct {
+	opts  Options
+	mu    sync.Mutex
+	inUse map[int]struct{}
+}
+
+// Lease is one bound socket. Exactly one of TCP or UDP is set.
 type Lease struct {
-	Protocol      string
-	BindHost      string
 	AdvertiseHost string
 	Port          int
+	TCP           *net.TCPListener
+	UDP           *net.UDPConn
 
-	UDPConn     *net.UDPConn
-	TCPListener *net.TCPListener
-
-	allocator *Allocator
-	closed    bool
+	alloc *Allocator
+	once  sync.Once
 }
 
-func NewAllocator(cfg *internal.ServerConfig) (*Allocator, error) {
-	bindHost := "0.0.0.0"
-	advertiseHost := "127.0.0.1"
-	minPort := 0
-	maxPort := 0
-	if cfg != nil {
-		if strings.TrimSpace(cfg.DataBindHost) != "" {
-			bindHost = strings.TrimSpace(cfg.DataBindHost)
-		}
-		if strings.TrimSpace(cfg.DataAdvertiseHost) != "" {
-			advertiseHost = strings.TrimSpace(cfg.DataAdvertiseHost)
-		}
-		minPort = cfg.DataPortMin
-		maxPort = cfg.DataPortMax
+func New(opts Options) (*Allocator, error) {
+	if opts.BindHost == "" {
+		opts.BindHost = "0.0.0.0"
 	}
-	if err := internal.ValidateDataPortRange(minPort, maxPort); err != nil {
+	if opts.AdvertiseHost == "" {
+		opts.AdvertiseHost = "127.0.0.1"
+	}
+	if err := config.ValidatePortRange(opts.MinPort, opts.MaxPort); err != nil {
 		return nil, err
 	}
-	return &Allocator{
-		bindHost:      bindHost,
-		advertiseHost: advertiseHost,
-		minPort:       minPort,
-		maxPort:       maxPort,
-		inUse:         make(map[int]struct{}),
-	}, nil
-}
-
-func (a *Allocator) AllocateUDP() (*Lease, error) {
-	if a == nil {
-		return nil, errors.New("nil data port allocator")
-	}
-	if !a.hasRange() {
-		addr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(a.bindHost, "0"))
-		if err != nil {
-			return nil, err
-		}
-		conn, err := net.ListenUDP("udp", addr)
-		if err != nil {
-			return nil, err
-		}
-		port := conn.LocalAddr().(*net.UDPAddr).Port
-		return &Lease{Protocol: "udp", BindHost: a.bindHost, AdvertiseHost: a.advertiseHost, Port: port, UDPConn: conn, allocator: a}, nil
-	}
-
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	for port := a.minPort; port <= a.maxPort; port++ {
-		if _, ok := a.inUse[port]; ok {
-			continue
-		}
-		addr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(a.bindHost, fmt.Sprintf("%d", port)))
-		if err != nil {
-			return nil, err
-		}
-		conn, err := net.ListenUDP("udp", addr)
-		if err != nil {
-			continue
-		}
-		a.inUse[port] = struct{}{}
-		return &Lease{Protocol: "udp", BindHost: a.bindHost, AdvertiseHost: a.advertiseHost, Port: port, UDPConn: conn, allocator: a}, nil
-	}
-	return nil, fmt.Errorf("no available udp data ports in range %d-%d", a.minPort, a.maxPort)
+	return &Allocator{opts: opts, inUse: make(map[int]struct{})}, nil
 }
 
 func (a *Allocator) AllocateTCP() (*Lease, error) {
-	if a == nil {
-		return nil, errors.New("nil data port allocator")
-	}
-	if !a.hasRange() {
-		addr, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(a.bindHost, "0"))
+	return a.allocate("tcp", func(port int) (*Lease, error) {
+		ln, err := net.Listen("tcp", net.JoinHostPort(a.opts.BindHost, strconv.Itoa(port)))
 		if err != nil {
 			return nil, err
 		}
-		listener, err := net.ListenTCP("tcp", addr)
-		if err != nil {
-			return nil, err
-		}
-		port := listener.Addr().(*net.TCPAddr).Port
-		return &Lease{Protocol: "tcp", BindHost: a.bindHost, AdvertiseHost: a.advertiseHost, Port: port, TCPListener: listener, allocator: a}, nil
-	}
+		tcp := ln.(*net.TCPListener)
+		return &Lease{TCP: tcp, Port: tcp.Addr().(*net.TCPAddr).Port}, nil
+	})
+}
 
+func (a *Allocator) AllocateUDP() (*Lease, error) {
+	return a.allocate("udp", func(port int) (*Lease, error) {
+		addr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(a.opts.BindHost, strconv.Itoa(port)))
+		if err != nil {
+			return nil, err
+		}
+		conn, err := net.ListenUDP("udp", addr)
+		if err != nil {
+			return nil, err
+		}
+		return &Lease{UDP: conn, Port: conn.LocalAddr().(*net.UDPAddr).Port}, nil
+	})
+}
+
+func (a *Allocator) allocate(network string, bind func(port int) (*Lease, error)) (*Lease, error) {
+	finish := func(l *Lease) *Lease {
+		l.AdvertiseHost = a.opts.AdvertiseHost
+		l.alloc = a
+		return l
+	}
+	if a.opts.MinPort == 0 {
+		l, err := bind(0)
+		if err != nil {
+			return nil, fmt.Errorf("bind %s data port: %w", network, err)
+		}
+		return finish(l), nil
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	for port := a.minPort; port <= a.maxPort; port++ {
-		if _, ok := a.inUse[port]; ok {
+	for port := a.opts.MinPort; port <= a.opts.MaxPort; port++ {
+		if _, busy := a.inUse[port]; busy {
 			continue
 		}
-		addr, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(a.bindHost, fmt.Sprintf("%d", port)))
+		l, err := bind(port)
 		if err != nil {
-			return nil, err
-		}
-		listener, err := net.ListenTCP("tcp", addr)
-		if err != nil {
-			continue
+			continue // in use by another process
 		}
 		a.inUse[port] = struct{}{}
-		return &Lease{Protocol: "tcp", BindHost: a.bindHost, AdvertiseHost: a.advertiseHost, Port: port, TCPListener: listener, allocator: a}, nil
+		return finish(l), nil
 	}
-	return nil, fmt.Errorf("no available tcp data ports in range %d-%d", a.minPort, a.maxPort)
+	return nil, fmt.Errorf("no free %s data ports in range %d-%d", network, a.opts.MinPort, a.opts.MaxPort)
 }
 
-func (a *Allocator) hasRange() bool {
-	return a.minPort > 0 || a.maxPort > 0
-}
+// Endpoint returns the advertised host and port.
+func (l *Lease) Endpoint() (string, uint32) { return l.AdvertiseHost, uint32(l.Port) }
 
+// Close releases the socket and its port. Safe to call more than once.
 func (l *Lease) Close() error {
 	if l == nil {
 		return nil
 	}
-	if l.closed {
-		return nil
-	}
-	l.closed = true
 	var err error
-	if l.UDPConn != nil {
-		err = l.UDPConn.Close()
-	}
-	if l.TCPListener != nil {
-		if closeErr := l.TCPListener.Close(); err == nil {
-			err = closeErr
+	l.once.Do(func() {
+		if l.TCP != nil {
+			err = l.TCP.Close()
 		}
-	}
-	if l.allocator != nil && l.allocator.hasRange() {
-		l.allocator.release(l.Port)
-	}
+		if l.UDP != nil {
+			err = l.UDP.Close()
+		}
+		if a := l.alloc; a != nil && a.opts.MinPort != 0 {
+			a.mu.Lock()
+			delete(a.inUse, l.Port)
+			a.mu.Unlock()
+		}
+	})
 	return err
-}
-
-func (a *Allocator) release(port int) {
-	a.mu.Lock()
-	delete(a.inUse, port)
-	a.mu.Unlock()
 }

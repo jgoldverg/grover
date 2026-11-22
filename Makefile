@@ -1,86 +1,49 @@
-# Makefile
+# Grover build. `make` builds both binaries into bin/ (not committed).
+BIN      := bin
+LDFLAGS  := -s -w
+PROTO    := api/proto/grover.proto
+MODULE   := github.com/jgoldverg/grover
 
-## Directories
-BIN_DIR    := bin
-PROTO_SRC  := api/proto
-PB_OUT     := pkg/groverpb
-TOOLS_BIN  ?= $(HOME)/.grover-tools/bin
+.PHONY: all build grover groverd test test-race lint fmt vet proto clean linux
 
-export PATH := $(TOOLS_BIN):$(PATH)
+all: build
 
-## Binaries
-SERVER_DIR := cmd/groverd
-CLIENT_DIR := cmd/grover
+build: grover groverd
 
-SERVER_BIN := $(BIN_DIR)/groverd
-CLIENT_BIN := $(BIN_DIR)/grover
+grover:
+	go build -ldflags '$(LDFLAGS)' -o $(BIN)/grover ./cmd/grover
 
-## Proto files (flat layout)
-PROTO_FILES := $(PROTO_SRC)/grover.proto
+groverd:
+	go build -ldflags '$(LDFLAGS)' -o $(BIN)/groverd ./cmd/groverd
 
-## Discover module path for protoc-gen-go (trims output dirs correctly)
-MODULE := $(shell go list -m)
+# Cross-compile for Linux nodes (FABRIC, TACC, UC, ...).
+linux:
+	GOOS=linux GOARCH=amd64 go build -ldflags '$(LDFLAGS)' -o $(BIN)/linux-amd64/grover ./cmd/grover
+	GOOS=linux GOARCH=amd64 go build -ldflags '$(LDFLAGS)' -o $(BIN)/linux-amd64/groverd ./cmd/groverd
 
-## Go flags
-LDFLAGS := -s -w
-GOFLAGS :=
-BUILD_TAGS :=
+# Unit + in-process integration tests (they bind loopback sockets).
+test:
+	go test ./...
 
-.PHONY: all proto generate server client clean test fmt vet tools proto-clean
-
-all: server client
-
-generate: proto
-
-tools:
-	@mkdir -p $(TOOLS_BIN)
-	@command -v protoc >/dev/null 2>&1 || { echo "Error: protoc not found. Install protoc first."; exit 1; }
-	@command -v protoc-gen-go >/dev/null 2>&1 || { \
-		echo "Installing protoc-gen-go..."; \
-		GOBIN=$(TOOLS_BIN) go install google.golang.org/protobuf/cmd/protoc-gen-go@latest; }
-	@command -v protoc-gen-go-grpc >/dev/null 2>&1 || { \
-		echo "Installing protoc-gen-go-grpc..."; \
-		GOBIN=$(TOOLS_BIN) go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest; }
-
-PB_OUT := .
-
-proto: tools
-	@echo "Generating protobuf Go code..."
-	protoc -I $(PROTO_SRC) \
-	  --go_out=$(PB_OUT)      --go_opt=module=$(MODULE) \
-	  --go-grpc_out=$(PB_OUT) --go-grpc_opt=module=$(MODULE) \
-	  $(PROTO_FILES)
-	@echo "Protobuf generation complete."
-
-
-server:
-	@mkdir -p $(BIN_DIR)
-	@echo "Building server binary -> $(SERVER_BIN)"
-	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(SERVER_BIN) ./$(SERVER_DIR)
-
-client:
-	@mkdir -p $(BIN_DIR)
-	@echo "Building client binary -> $(CLIENT_BIN)"
-	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(CLIENT_BIN) ./$(CLIENT_DIR)
-
-fmt:
-	@echo "Formatting code..."
-	go fmt ./...
+test-race:
+	go test -race ./...
 
 vet:
-	@echo "Running go vet..."
 	go vet ./...
 
-test:
-	@echo "Running all Go tests..."
-	go test $(GOFLAGS) ./...
+fmt:
+	gofmt -w cmd internal integration
 
-proto-clean:
-	@echo "Cleaning generated protobuf files..."
-	find $(PB_OUT) -name '*.pb.go' -type f -delete
-	@echo "Proto clean complete."
+lint:
+	golangci-lint run ./...
+
+# Regenerate internal/pb from api/proto/grover.proto.
+# Needs protoc, protoc-gen-go and protoc-gen-go-grpc on PATH.
+proto:
+	protoc -I api/proto \
+	  --go_out=. --go_opt=module=$(MODULE) \
+	  --go-grpc_out=. --go-grpc_opt=module=$(MODULE) \
+	  $(PROTO)
 
 clean:
-	@echo "Cleaning binaries..."
-	rm -f $(SERVER_BIN) $(CLIENT_BIN)
-	@echo "Clean complete."
+	rm -rf $(BIN)
